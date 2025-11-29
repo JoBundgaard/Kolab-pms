@@ -987,56 +987,13 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   
-  // Local Storage Data Initialization
-  const [bookings, setBookings] = useState(() => {
-    const saved = localStorage.getItem('kolab_bookings');
-    return saved ? JSON.parse(saved) : [];
-  });
-  
-  const [roomStatuses, setRoomStatuses] = useState(() => {
-    const saved = localStorage.getItem('kolab_rooms');
-    return saved ? JSON.parse(saved) : {};
-  });
+  // Data initialized as empty - will be populated by Firestore real-time listeners
+  const [bookings, setBookings] = useState([]);
+  const [roomStatuses, setRoomStatuses] = useState({});
+  const [maintenanceIssues, setMaintenanceIssues] = useState([]);
 
-  const [maintenanceIssues, setMaintenanceIssues] = useState(() => {
-    const saved = localStorage.getItem('kolab_maintenance');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  // Local Storage & Firestore Synchronization
-  useEffect(() => {
-    localStorage.setItem('kolab_bookings', JSON.stringify(bookings));
-    // Sync to Firestore
-    if (user && bookings.length > 0) {
-      bookings.forEach(async (booking) => {
-        try {
-          if (!booking.id) return;
-          await setDoc(doc(db, 'bookings', booking.id), booking, { merge: true });
-        } catch (error) {
-          console.error('Error syncing booking to Firestore:', error);
-        }
-      });
-    }
-  }, [bookings, user]);
-
-  useEffect(() => {
-    localStorage.setItem('kolab_rooms', JSON.stringify(roomStatuses));
-  }, [roomStatuses]);
-
-  useEffect(() => {
-    localStorage.setItem('kolab_maintenance', JSON.stringify(maintenanceIssues));
-    // Sync to Firestore
-    if (user && maintenanceIssues.length > 0) {
-      maintenanceIssues.forEach(async (issue) => {
-        try {
-          if (!issue.id) return;
-          await setDoc(doc(db, 'maintenance', issue.id), issue, { merge: true });
-        } catch (error) {
-          console.error('Error syncing maintenance issue to Firestore:', error);
-        }
-      });
-    }
-  }, [maintenanceIssues, user]);
+  // Note: We intentionally do NOT sync to localStorage anymore
+  // Firestore is the single source of truth, accessed via real-time listeners
 
   // Simulate "loading" to feel like a real app
   useEffect(() => {
@@ -1184,46 +1141,67 @@ export default function App() {
 
   // --- Local State Update Actions ---
 
-  const updateHousekeepingField = (roomId, field, value) => {
-    setRoomStatuses(prev => ({
-        ...prev,
+  const updateHousekeepingField = async (roomId, field, value) => {
+    try {
+      setRoomStatuses(prev => ({
+          ...prev,
+          [roomId]: {
+              ...prev[roomId],
+              [field]: value,
+              updatedAt: new Date().toISOString()
+          }
+      }));
+      // Save to Firestore
+      await setDoc(doc(db, 'roomStatuses', roomId), {
         [roomId]: {
-            ...prev[roomId],
-            [field]: value,
-            updatedAt: new Date().toISOString()
+          ...roomStatuses[roomId],
+          [field]: value,
+          updatedAt: new Date().toISOString()
         }
-    }));
+      }, { merge: true });
+    } catch (error) {
+      console.error('Error updating room status:', error);
+    }
   };
 
-  const markRoomClean = (roomId) => {
-    setRoomStatuses(prev => ({
-        ...prev,
-        [roomId]: {
-            ...prev[roomId],
-            status: 'clean',
-            assignedStaff: 'Unassigned',
-            priority: 3,
-            updatedAt: new Date().toISOString()
-        }
-    }));
+  const markRoomClean = async (roomId) => {
+    try {
+      setRoomStatuses(prev => ({
+          ...prev,
+          [roomId]: {
+              ...prev[roomId],
+              status: 'clean',
+              assignedStaff: 'Unassigned',
+              priority: 3,
+              updatedAt: new Date().toISOString()
+          }
+      }));
+      // Save to Firestore
+      await setDoc(doc(db, 'roomStatuses', roomId), {
+        status: 'clean',
+        assignedStaff: 'Unassigned',
+        priority: 3,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (error) {
+      console.error('Error marking room clean:', error);
+    }
   };
 
   const handleSaveBooking = async (bookingData) => {
     try {
       if (editingBooking) {
         const updatedBooking = { ...bookingData, id: editingBooking.id, createdAt: editingBooking.createdAt, updatedAt: new Date().toISOString() };
-        // Update in Firestore
+        // Save to Firestore - real-time listener will update state
         await setDoc(doc(db, 'bookings', editingBooking.id), updatedBooking, { merge: true });
-        setBookings(prev => prev.map(b => b.id === editingBooking.id ? updatedBooking : b));
       } else {
         const newBooking = {
             ...bookingData,
             id: Math.random().toString(36).substr(2, 9),
             createdAt: new Date().toISOString()
         };
-        // Save to Firestore
+        // Save to Firestore - real-time listener will update state
         await setDoc(doc(db, 'bookings', newBooking.id), newBooking);
-        setBookings(prev => [...prev, newBooking]);
       }
       setIsModalOpen(false);
       setEditingBooking(null);
@@ -1236,9 +1214,8 @@ export default function App() {
   const handleDeleteBooking = async (id) => {
     if(confirm("Are you sure you want to delete this booking?")) {
         try {
-          // Delete from Firestore
+          // Delete from Firestore - real-time listener will update state
           await deleteDoc(doc(db, 'bookings', id));
-          setBookings(prev => prev.filter(b => b.id !== id));
         } catch (error) {
           console.error('Error deleting booking:', error);
           alert('Error deleting booking. Please check the console.');
@@ -1250,18 +1227,16 @@ export default function App() {
     try {
       if (editingMaintenanceIssue) {
         const updatedIssue = { ...issueData, id: editingMaintenanceIssue.id, reportedAt: editingMaintenanceIssue.reportedAt, updatedAt: new Date().toISOString() };
-        // Update in Firestore
+        // Save to Firestore - real-time listener will update state
         await setDoc(doc(db, 'maintenance', editingMaintenanceIssue.id), updatedIssue, { merge: true });
-        setMaintenanceIssues(prev => prev.map(i => i.id === editingMaintenanceIssue.id ? updatedIssue : i));
       } else {
         const newIssue = {
             ...issueData,
             id: Math.random().toString(36).substr(2, 9),
             reportedAt: new Date().toISOString()
         };
-        // Save to Firestore
+        // Save to Firestore - real-time listener will update state
         await setDoc(doc(db, 'maintenance', newIssue.id), newIssue);
-        setMaintenanceIssues(prev => [...prev, newIssue]);
       }
       setIsMaintenanceModalOpen(false);
       setEditingMaintenanceIssue(null);
@@ -1273,9 +1248,8 @@ export default function App() {
 
   const handleDeleteMaintenanceIssue = async (id) => {
       try {
-        // Delete from Firestore
+        // Delete from Firestore - real-time listener will update state
         await deleteDoc(doc(db, 'maintenance', id));
-        setMaintenanceIssues(prev => prev.filter(i => i.id !== id));
       } catch (error) {
         console.error('Error deleting maintenance issue:', error);
         alert('Error deleting maintenance issue. Please check the console.');
