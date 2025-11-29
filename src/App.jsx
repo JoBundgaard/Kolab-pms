@@ -1,9 +1,30 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  onSnapshot, 
+  query, 
+  where,
+  serverTimestamp,
+  setDoc 
+} from 'firebase/firestore';
 import { 
   Calendar, 
   Home, 
   Users, 
   CheckCircle, 
+  XCircle, 
   Plus, 
   Search, 
   Menu, 
@@ -15,6 +36,7 @@ import {
   ChevronLeft,
   ChevronRight,
   User, 
+  Hash,
   RefreshCcw,
   AlertTriangle,
   Edit2,
@@ -27,8 +49,25 @@ import {
   TrendingUp,
   PieChart,
   FileText, 
-  Printer
+  Printer,
+  Download
 } from 'lucide-react';
+
+// --- Firebase Configuration ---
+const firebaseConfig = {
+  apiKey: "AIzaSyAez8D7L2zSCIAtxnKl5UhdbDI7xqeM6vg",
+  authDomain: "coliving-pms.firebaseapp.com",
+  projectId: "coliving-pms",
+  storageBucket: "coliving-pms.firebasestorage.app",
+  messagingSenderId: "552091081296",
+  appId: "1:552091081296:web:87db67bf05293318820f55",
+  measurementId: "G-P90QBYKJS2"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 // --- Constants & Config ---
 const COLORS = {
@@ -129,7 +168,7 @@ const getOccupiedDates = (bookings, roomId, excludeBookingId) => {
 const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), minDate }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [viewDate, setViewDate] = useState(value ? new Date(value) : new Date());
-  const containerRef = React.useRef(null);
+  const containerRef = useRef(null);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -162,6 +201,7 @@ const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), mi
     const month = viewDate.getMonth();
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
+    const startingDay = firstDay.getDay() || 7; 
     const startOffset = firstDay.getDay(); 
     const daysInMonth = lastDay.getDate();
 
@@ -427,10 +467,18 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setFormData(prev => ({ 
+    
+    if (name === 'price') {
+      setFormData(prev => ({ 
         ...prev, 
-        [name]: type === 'checkbox' ? checked : (name === 'price' ? Number(value) : value)
-    }));
+        [name]: value === '' ? '' : Number(value) 
+      }));
+    } else {
+      setFormData(prev => ({ 
+          ...prev, 
+          [name]: type === 'checkbox' ? checked : value
+      }));
+    }
   };
 
   const handleDateChange = (field, dateStr) => {
@@ -743,9 +791,11 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
     if (selectedBookingId) {
       const booking = bookings.find(b => b.id === selectedBookingId);
       if (booking) {
+        const roomObj = ALL_ROOMS.find(r => r.id === booking.roomId);
         setInvoiceData({
           guestName: booking.guestName,
-          room: ALL_ROOMS.find(r => r.id === booking.roomId)?.name,
+          room: roomObj?.name,
+          propertyName: roomObj?.propertyName, 
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           nights: booking.nights,
@@ -771,9 +821,12 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
         {/* Screen-only Header */}
         <div className="px-6 py-5 border-b flex justify-between items-center bg-slate-50 print:hidden">
           <h3 className="font-serif font-bold text-xl text-slate-800">Create Invoice</h3>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-700">
-            <X size={24} />
-          </button>
+          <div className="flex items-center space-x-2">
+             {/* Close Button in Header */}
+             <button onClick={onClose} className="text-slate-500 hover:text-slate-700 p-1 rounded hover:bg-slate-100 transition-colors" title="Close">
+                <X size={24} />
+             </button>
+          </div>
         </div>
 
         <div className="p-8 print:p-0">
@@ -798,8 +851,19 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
               <div className="flex justify-between items-start mb-12">
                 <div>
                   <h1 className="text-4xl font-serif font-bold text-[#26402E] mb-2">Kolab Living</h1>
-                  <p className="text-slate-500 text-sm">Co-living spaces in Ho Chi Minh City</p>
-                  <p className="text-slate-500 text-sm">contact@kolabliving.com</p>
+                  {/* Dynamic Address based on Property */}
+                  {invoiceData.propertyName === 'Townhouse' ? (
+                    <p className="text-slate-500 text-sm max-w-xs">
+                      8/4B Đinh Tiên Hoàng, Đa Kao, Quận 1, Thành phố Hồ Chí Minh 70000, Vietnam
+                    </p>
+                  ) : invoiceData.propertyName === 'Neighbours' ? (
+                     <p className="text-slate-500 text-sm max-w-xs">
+                      250/9a, Hai Bà Trưng, Phường Tân Định, Quận 1, Thành phố Hồ Chí Minh 700000, Vietnam
+                    </p>
+                  ) : (
+                    <p className="text-slate-500 text-sm">Co-living spaces in Ho Chi Minh City</p>
+                  )}
+                  <p className="text-slate-500 text-sm mt-1">kolabliving@gmail.com</p>
                 </div>
                 <div className="text-right">
                   <h2 className="text-2xl font-bold text-slate-800 mb-1">INVOICE</h2>
@@ -857,15 +921,25 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
 
         {/* Action Buttons (Screen Only) */}
         <div className="px-6 py-5 bg-slate-50 border-t flex justify-end space-x-3 print:hidden">
-          <button onClick={onClose} className="px-4 py-2 text-slate-600 hover:text-slate-800">Close</button>
-          {invoiceData && (
-            <button 
-              onClick={handlePrint} 
-              className="px-6 py-2 bg-[#26402E] text-white rounded-lg flex items-center hover:bg-[#1a2e20]"
-            >
-              <Printer size={18} className="mr-2" /> Print / Save PDF
-            </button>
-          )}
+          <button 
+            onClick={onClose} 
+            className="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center transition-colors"
+          >
+            <X size={18} className="mr-2"/> Close Preview
+          </button>
+          
+          <button 
+            onClick={handlePrint} 
+            disabled={!invoiceData}
+            className={`px-6 py-2 rounded-lg flex items-center transition-colors ${
+              invoiceData 
+                ? 'bg-[#26402E] text-white hover:bg-[#1a2e20] shadow-md' 
+                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+            }`}
+          >
+            <Download size={18} className="mr-2" /> 
+            Download PDF
+          </button>
         </div>
       </div>
       
@@ -909,6 +983,7 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
 // --- Main App Component ---
 
 export default function App() {
+  const [user, setUser] = useState({ uid: 'local-user' }); // Dummy user for offline mode
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -960,6 +1035,7 @@ export default function App() {
 
   // --- Memoized Data for Dashboard and Housekeeping ---
   const TODAY_STR = formatDate(new Date());
+  const TOMORROW_STR = formatDate(new Date(new Date().setDate(new Date().getDate() + 1)));
 
   const cleaningTasks = useMemo(() => {
     const checkoutsToday = bookings
@@ -1172,6 +1248,8 @@ export default function App() {
   const renderDashboard = () => {
     const activeBookings = bookings.filter(b => b.checkIn <= TODAY_STR && b.checkOut > TODAY_STR && b.status !== 'cancelled');
     const checkingIn = bookings.filter(b => b.checkIn === TODAY_STR && b.status !== 'cancelled');
+    // const checkingOut = bookings.filter(b => b.checkOut === TODAY_STR && b.status !== 'cancelled');
+    const checkingOutTomorrow = bookings.filter(b => b.checkOut === TOMORROW_STR && b.status !== 'cancelled');
     
     const revenue = bookings
       .filter(b => new Date(b.checkIn).getMonth() === new Date().getMonth() && b.status !== 'cancelled')
@@ -1221,6 +1299,30 @@ export default function App() {
                )}
              </div>
           </div>
+          
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
+             <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
+               <LogOut size={20} className="mr-3 text-slate-400" />
+               Checking Out Tomorrow ({checkingOutTomorrow.length})
+             </h3>
+             <div className="space-y-3">
+               {checkingOutTomorrow.length === 0 ? (
+                   <p className="text-slate-400 text-sm p-4 rounded-xl border border-dashed border-slate-200 text-center">
+                       No check-outs scheduled for tomorrow.
+                   </p>
+               ) : (
+                   checkingOutTomorrow.map(booking => (
+                       <div key={booking.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
+                           <span className="text-sm font-bold text-slate-700">{booking.guestName}</span>
+                           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
+                               {ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'N/A'}
+                           </span>
+                       </div>
+                   ))
+               )}
+             </div>
+          </div>
+
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
              <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
                <Bed size={20} className="mr-3 text-slate-400" />
@@ -1243,36 +1345,6 @@ export default function App() {
                    ))
                )}
              </div>
-          </div>
-          <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-            <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
-              <Clock size={20} className="mr-3 text-slate-400" />
-              Recent Activity
-            </h3>
-            {bookings.length === 0 ? (
-                <p className="text-slate-400 text-sm">No bookings yet.</p>
-            ) : (
-                <div className="space-y-4">
-                {[...bookings].sort((a,b) => (new Date(b.createdAt) - new Date(a.createdAt))).slice(0, 5).map(b => (
-                    <div key={b.id} className="flex justify-between items-center text-sm p-3 hover:bg-[#F9F8F2] rounded-xl transition-colors border border-transparent hover:border-[#E2F05D]">
-                    <div className="flex items-center">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center mr-3 font-bold text-xs" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}>
-                            {b.guestName.charAt(0)}
-                        </div>
-                        <div>
-                            <p className="font-bold text-slate-800">{b.guestName}</p>
-                            <p className="text-xs text-slate-500">Booked {ALL_ROOMS.find(r=>r.id===b.roomId)?.name}</p>
-                        </div>
-                    </div>
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium border ${
-                        b.status === 'confirmed' ? 'bg-green-50 text-green-700 border-green-200' :
-                        b.status === 'cancelled' ? 'bg-red-50 text-red-700 border-red-200' :
-                        'bg-slate-50 text-slate-600 border-slate-200'
-                    }`}>{b.status}</span>
-                    </div>
-                ))}
-                </div>
-            )}
           </div>
         </div>
       </div>
@@ -1374,19 +1446,27 @@ export default function App() {
             <tr><th className="px-6 py-4">Guest</th><th className="px-6 py-4">Room</th><th className="px-6 py-4">Status</th><th className="px-6 py-4">Dates</th><th className="px-6 py-4">Price</th><th className="px-6 py-4 text-right">Actions</th></tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {bookings.length === 0 ? <tr><td colSpan="6" className="px-6 py-12 text-center text-slate-500">No bookings found.</td></tr> : bookings.map((booking) => (
+            {bookings.length === 0 ? <tr><td colSpan="6" className="px-6 py-12 text-center text-slate-500">No bookings found.</td></tr> : bookings.map((booking) => {
+                const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
+                const perNight = bookingNights > 0 ? Math.round(Number(booking.price) / bookingNights) : 0;
+                return (
               <tr key={booking.id} className="hover:bg-[#F9F8F2] transition-colors group">
                 <td className="px-6 py-4 font-bold text-slate-700 flex items-center">{booking.guestName}{booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500 ml-3"/>}</td>
                 <td className="px-6 py-4 text-slate-600">{ALL_ROOMS.find(r => r.id === booking.roomId)?.name}<div className="text-xs opacity-60">{ALL_ROOMS.find(r => r.id === booking.roomId)?.propertyName}</div></td>
                 <td className="px-6 py-4"><span className={`px-3 py-1 rounded-full text-xs font-bold border ${booking.status === 'confirmed' ? 'bg-[#E2F05D]/20 text-[#4c5c23] border-[#E2F05D]/50' : 'bg-slate-100'}`}>{booking.status}</span></td>
                 <td className="px-6 py-4 text-sm text-slate-600">{booking.checkIn} → {booking.checkOut}</td>
-                <td className="px-6 py-4 text-sm font-bold text-slate-700">{Number(booking.price).toLocaleString('vi-VN')} ₫</td>
+                <td className="px-6 py-4 text-sm font-bold text-slate-700">
+                    {Number(booking.price).toLocaleString('vi-VN')} ₫
+                    <div className="text-xs font-normal text-slate-500 mt-1">
+                        {bookingNights > 0 ? `${perNight.toLocaleString('vi-VN')} ₫ / night` : ''}
+                    </div>
+                </td>
                 <td className="px-6 py-4 text-right space-x-2">
                   <button onClick={() => { setEditingBooking(booking); setIsModalOpen(true); }} className="p-2 rounded-full text-slate-400 hover:text-[#26402E] hover:bg-[#E2F05D]"><Edit2 size={18} /></button>
                   <button onClick={() => handleDeleteBooking(booking.id)} className="p-2 rounded-full text-slate-400 hover:text-red-600"><Trash2 size={18} /></button>
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>
