@@ -55,13 +55,12 @@ import {
 
 // --- Firebase Configuration ---
 const firebaseConfig = {
-  apiKey: "AIzaSyAez8D7L2zSCIAtxnKl5UhdbDI7xqeM6vg",
-  authDomain: "coliving-pms.firebaseapp.com",
-  projectId: "coliving-pms",
-  storageBucket: "coliving-pms.firebasestorage.app",
-  messagingSenderId: "552091081296",
-  appId: "1:552091081296:web:87db67bf05293318820f55",
-  measurementId: "G-P90QBYKJS2"
+  apiKey: "AIzaSyD9mWp_CP2tl-3MX8zMqpTcQ8nIDMxoXP4",
+  authDomain: "kolab-living-pms.firebaseapp.com",
+  projectId: "kolab-living-pms",
+  storageBucket: "kolab-living-pms.firebasestorage.app",
+  messagingSenderId: "892499834390",
+  appId: "1:892499834390:web:778c2f92bc68f061fce737"
 };
 
 // Initialize Firebase
@@ -1004,10 +1003,21 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  // Local Storage Synchronization
+  // Local Storage & Firestore Synchronization
   useEffect(() => {
     localStorage.setItem('kolab_bookings', JSON.stringify(bookings));
-  }, [bookings]);
+    // Sync to Firestore
+    if (user && bookings.length > 0) {
+      bookings.forEach(async (booking) => {
+        try {
+          if (!booking.id) return;
+          await setDoc(doc(db, 'bookings', booking.id), booking, { merge: true });
+        } catch (error) {
+          console.error('Error syncing booking to Firestore:', error);
+        }
+      });
+    }
+  }, [bookings, user]);
 
   useEffect(() => {
     localStorage.setItem('kolab_rooms', JSON.stringify(roomStatuses));
@@ -1015,12 +1025,71 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem('kolab_maintenance', JSON.stringify(maintenanceIssues));
-  }, [maintenanceIssues]);
+    // Sync to Firestore
+    if (user && maintenanceIssues.length > 0) {
+      maintenanceIssues.forEach(async (issue) => {
+        try {
+          if (!issue.id) return;
+          await setDoc(doc(db, 'maintenance', issue.id), issue, { merge: true });
+        } catch (error) {
+          console.error('Error syncing maintenance issue to Firestore:', error);
+        }
+      });
+    }
+  }, [maintenanceIssues, user]);
 
   // Simulate "loading" to feel like a real app
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 800);
-    return () => clearTimeout(timer);
+    const initializeAuth = async () => {
+      try {
+        // Sign in anonymously if not already signed in
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          await signInAnonymously(auth);
+        }
+        
+        // Load bookings from Firestore
+        const bookingsQuery = query(collection(db, 'bookings'), where('__name__', '!=', ''));
+        const unsubBookings = onSnapshot(bookingsQuery, (snapshot) => {
+          const loadedBookings = [];
+          snapshot.forEach((doc) => {
+            loadedBookings.push({ id: doc.id, ...doc.data() });
+          });
+          if (loadedBookings.length > 0) {
+            setBookings(loadedBookings);
+          }
+        }, (error) => {
+          console.warn('Could not load bookings from Firestore:', error.message);
+        });
+
+        // Load maintenance issues from Firestore
+        const maintenanceQuery = query(collection(db, 'maintenance'), where('__name__', '!=', ''));
+        const unsubMaintenance = onSnapshot(maintenanceQuery, (snapshot) => {
+          const loadedIssues = [];
+          snapshot.forEach((doc) => {
+            loadedIssues.push({ id: doc.id, ...doc.data() });
+          });
+          if (loadedIssues.length > 0) {
+            setMaintenanceIssues(loadedIssues);
+          }
+        }, (error) => {
+          console.warn('Could not load maintenance issues from Firestore:', error.message);
+        });
+
+        setLoading(false);
+        
+        // Cleanup subscriptions
+        return () => {
+          unsubBookings();
+          unsubMaintenance();
+        };
+      } catch (error) {
+        console.error('Auth initialization error:', error);
+        setLoading(false);
+      }
+    };
+
+    initializeAuth();
   }, []);
 
   
@@ -1141,44 +1210,78 @@ export default function App() {
     }));
   };
 
-  const handleSaveBooking = (bookingData) => {
-    if (editingBooking) {
-        setBookings(prev => prev.map(b => b.id === editingBooking.id ? { ...bookingData, id: editingBooking.id, createdAt: editingBooking.createdAt } : b));
-    } else {
+  const handleSaveBooking = async (bookingData) => {
+    try {
+      if (editingBooking) {
+        const updatedBooking = { ...bookingData, id: editingBooking.id, createdAt: editingBooking.createdAt, updatedAt: new Date().toISOString() };
+        // Update in Firestore
+        await setDoc(doc(db, 'bookings', editingBooking.id), updatedBooking, { merge: true });
+        setBookings(prev => prev.map(b => b.id === editingBooking.id ? updatedBooking : b));
+      } else {
         const newBooking = {
             ...bookingData,
             id: Math.random().toString(36).substr(2, 9),
             createdAt: new Date().toISOString()
         };
+        // Save to Firestore
+        await setDoc(doc(db, 'bookings', newBooking.id), newBooking);
         setBookings(prev => [...prev, newBooking]);
+      }
+      setIsModalOpen(false);
+      setEditingBooking(null);
+    } catch (error) {
+      console.error('Error saving booking:', error);
+      alert('Error saving booking. Please check the console.');
     }
-    setIsModalOpen(false);
-    setEditingBooking(null);
   };
 
-  const handleDeleteBooking = (id) => {
+  const handleDeleteBooking = async (id) => {
     if(confirm("Are you sure you want to delete this booking?")) {
-        setBookings(prev => prev.filter(b => b.id !== id));
+        try {
+          // Delete from Firestore
+          await deleteDoc(doc(db, 'bookings', id));
+          setBookings(prev => prev.filter(b => b.id !== id));
+        } catch (error) {
+          console.error('Error deleting booking:', error);
+          alert('Error deleting booking. Please check the console.');
+        }
     }
   };
   
-  const handleSaveMaintenanceIssue = (issueData) => {
-    if (editingMaintenanceIssue) {
-        setMaintenanceIssues(prev => prev.map(i => i.id === editingMaintenanceIssue.id ? { ...issueData, id: editingMaintenanceIssue.id, reportedAt: editingMaintenanceIssue.reportedAt } : i));
-    } else {
+  const handleSaveMaintenanceIssue = async (issueData) => {
+    try {
+      if (editingMaintenanceIssue) {
+        const updatedIssue = { ...issueData, id: editingMaintenanceIssue.id, reportedAt: editingMaintenanceIssue.reportedAt, updatedAt: new Date().toISOString() };
+        // Update in Firestore
+        await setDoc(doc(db, 'maintenance', editingMaintenanceIssue.id), updatedIssue, { merge: true });
+        setMaintenanceIssues(prev => prev.map(i => i.id === editingMaintenanceIssue.id ? updatedIssue : i));
+      } else {
         const newIssue = {
             ...issueData,
             id: Math.random().toString(36).substr(2, 9),
             reportedAt: new Date().toISOString()
         };
+        // Save to Firestore
+        await setDoc(doc(db, 'maintenance', newIssue.id), newIssue);
         setMaintenanceIssues(prev => [...prev, newIssue]);
+      }
+      setIsMaintenanceModalOpen(false);
+      setEditingMaintenanceIssue(null);
+    } catch (error) {
+      console.error('Error saving maintenance issue:', error);
+      alert('Error saving maintenance issue. Please check the console.');
     }
-    setIsMaintenanceModalOpen(false);
-    setEditingMaintenanceIssue(null);
   };
 
-  const handleDeleteMaintenanceIssue = (id) => {
-      setMaintenanceIssues(prev => prev.filter(i => i.id !== id));
+  const handleDeleteMaintenanceIssue = async (id) => {
+      try {
+        // Delete from Firestore
+        await deleteDoc(doc(db, 'maintenance', id));
+        setMaintenanceIssues(prev => prev.filter(i => i.id !== id));
+      } catch (error) {
+        console.error('Error deleting maintenance issue:', error);
+        alert('Error deleting maintenance issue. Please check the console.');
+      }
   };
 
   // --- STATISTICS CALCULATIONS ---
