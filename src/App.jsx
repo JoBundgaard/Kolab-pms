@@ -1048,32 +1048,30 @@ export default function App() {
           await signInAnonymously(auth);
         }
         
-        // Load bookings from Firestore
-        const bookingsQuery = query(collection(db, 'bookings'), where('__name__', '!=', ''));
+        // Load bookings from Firestore - real-time listener
+        const bookingsQuery = query(collection(db, 'bookings'));
         const unsubBookings = onSnapshot(bookingsQuery, (snapshot) => {
           const loadedBookings = [];
           snapshot.forEach((doc) => {
             loadedBookings.push({ id: doc.id, ...doc.data() });
           });
-          if (loadedBookings.length > 0) {
-            setBookings(loadedBookings);
-          }
+          // Always update state, even if empty
+          setBookings(loadedBookings);
         }, (error) => {
-          console.warn('Could not load bookings from Firestore:', error.message);
+          console.error('Error listening to bookings:', error.message);
         });
 
-        // Load maintenance issues from Firestore
-        const maintenanceQuery = query(collection(db, 'maintenance'), where('__name__', '!=', ''));
+        // Load maintenance issues from Firestore - real-time listener
+        const maintenanceQuery = query(collection(db, 'maintenance'));
         const unsubMaintenance = onSnapshot(maintenanceQuery, (snapshot) => {
           const loadedIssues = [];
           snapshot.forEach((doc) => {
             loadedIssues.push({ id: doc.id, ...doc.data() });
           });
-          if (loadedIssues.length > 0) {
-            setMaintenanceIssues(loadedIssues);
-          }
+          // Always update state, even if empty
+          setMaintenanceIssues(loadedIssues);
         }, (error) => {
-          console.warn('Could not load maintenance issues from Firestore:', error.message);
+          console.error('Error listening to maintenance issues:', error.message);
         });
 
         setLoading(false);
