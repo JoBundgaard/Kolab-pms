@@ -997,54 +997,57 @@ export default function App() {
 
   // Simulate "loading" to feel like a real app
   useEffect(() => {
-    const initializeAuth = async () => {
+    let unsubBookings = () => {};
+    let unsubMaintenance = () => {};
+    let listenersStarted = false;
+
+    const startListeners = () => {
+      if (listenersStarted) return;
+      listenersStarted = true;
+
+      const bookingsQuery = query(collection(db, 'bookings'));
+      unsubBookings = onSnapshot(
+        bookingsQuery,
+        (snapshot) => {
+          setBookings(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        },
+        (error) => {
+          console.error('Error listening to bookings:', error);
+        }
+      );
+
+      const maintenanceQuery = query(collection(db, 'maintenance'));
+      unsubMaintenance = onSnapshot(
+        maintenanceQuery,
+        (snapshot) => {
+          setMaintenanceIssues(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        },
+        (error) => {
+          console.error('Error listening to maintenance issues:', error);
+        }
+      );
+
+      setLoading(false);
+    };
+
+    const authUnsub = onAuthStateChanged(auth, async (currentUser) => {
       try {
-        // Sign in anonymously if not already signed in
-        const currentUser = auth.currentUser;
         if (!currentUser) {
           await signInAnonymously(auth);
+          return; // wait for auth to settle before attaching listeners
         }
-        
-        // Load bookings from Firestore - real-time listener
-        const bookingsQuery = query(collection(db, 'bookings'));
-        const unsubBookings = onSnapshot(bookingsQuery, (snapshot) => {
-          const loadedBookings = [];
-          snapshot.forEach((doc) => {
-            loadedBookings.push({ id: doc.id, ...doc.data() });
-          });
-          // Always update state, even if empty
-          setBookings(loadedBookings);
-        }, (error) => {
-          console.error('Error listening to bookings:', error.message);
-        });
-
-        // Load maintenance issues from Firestore - real-time listener
-        const maintenanceQuery = query(collection(db, 'maintenance'));
-        const unsubMaintenance = onSnapshot(maintenanceQuery, (snapshot) => {
-          const loadedIssues = [];
-          snapshot.forEach((doc) => {
-            loadedIssues.push({ id: doc.id, ...doc.data() });
-          });
-          // Always update state, even if empty
-          setMaintenanceIssues(loadedIssues);
-        }, (error) => {
-          console.error('Error listening to maintenance issues:', error.message);
-        });
-
-        setLoading(false);
-        
-        // Cleanup subscriptions
-        return () => {
-          unsubBookings();
-          unsubMaintenance();
-        };
+        startListeners();
       } catch (error) {
         console.error('Auth initialization error:', error);
         setLoading(false);
       }
-    };
+    });
 
-    initializeAuth();
+    return () => {
+      authUnsub();
+      unsubBookings();
+      unsubMaintenance();
+    };
   }, []);
 
   
