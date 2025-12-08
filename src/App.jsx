@@ -477,7 +477,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" style={{ overflow: 'visible', maxHeight: '90vh' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl" style={{ overflow: 'visible', maxHeight: '90vh' }}>
         <div 
             className="px-6 py-5 border-b flex justify-between items-center"
             style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}
