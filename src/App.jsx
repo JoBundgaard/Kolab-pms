@@ -1,13 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
 import { 
-  getAuth, 
   signInAnonymously, 
   onAuthStateChanged
 } from 'firebase/auth';
 import { 
-  getFirestore, 
   collection, 
   addDoc, 
   updateDoc, 
@@ -19,6 +15,7 @@ import {
   serverTimestamp,
   setDoc 
 } from 'firebase/firestore';
+import app, { auth, db } from './firebase';
 import { 
   Calendar, 
   Home, 
@@ -53,20 +50,7 @@ import {
   Download
 } from 'lucide-react';
 
-// --- Firebase Configuration ---
-const firebaseConfig = {
-  apiKey: "AIzaSyD9mWp_CP2tl-3MX8zMqpTcQ8nIDMxoXP4",
-  authDomain: "kolab-living-pms.firebaseapp.com",
-  projectId: "kolab-living-pms",
-  storageBucket: "kolab-living-pms.firebasestorage.app",
-  messagingSenderId: "892499834390",
-  appId: "1:892499834390:web:778c2f92bc68f061fce737"
-};
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+// Firebase is initialized once in src/firebase.js and re-used here
 
 // --- Constants & Config ---
 const COLORS = {
@@ -139,6 +123,13 @@ const calculateNights = (checkInDateStr, checkOutDateStr) => {
   const diffTime = Math.abs(checkOut.getTime() - checkIn.getTime());
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
   return diffDays;
+};
+
+const addMonths = (dateStr, months = 1) => {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  d.setMonth(d.getMonth() + months);
+  return formatDate(d);
 };
 
 const getDaysArray = (start, end) => {
@@ -486,7 +477,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" style={{ overflow: 'visible', maxHeight: '90vh' }}>
         <div 
             className="px-6 py-5 border-b flex justify-between items-center"
             style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}
@@ -499,7 +490,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
           </button>
         </div>
         
-        <form onSubmit={handleSubmit} className="p-6 space-y-5" style={{ backgroundColor: COLORS.cream }}>
+        <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto" style={{ backgroundColor: COLORS.cream, maxHeight: '75vh' }}>
           
           {conflictError && (
             <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl relative flex items-start space-x-3">
@@ -781,6 +772,134 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
   );
 };
 
+const RecurringTaskModal = ({ isOpen, onClose, onSave, task, allLocations }) => {
+  const [formData, setFormData] = useState({
+    locationId: allLocations[0]?.id || '',
+    description: '',
+    frequency: 'monthly',
+    nextDue: formatDate(new Date()),
+  });
+
+  useEffect(() => {
+    if (task) {
+      setFormData(task);
+    } else {
+      setFormData({
+        locationId: allLocations[0]?.id || '',
+        description: '',
+        frequency: 'monthly',
+        nextDue: formatDate(new Date()),
+      });
+    }
+  }, [task, isOpen, allLocations]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave(formData);
+  };
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div 
+            className="px-6 py-5 border-b flex justify-between items-center"
+            style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}
+        >
+          <h3 className="font-serif font-bold text-xl text-white">
+            {task ? 'Edit Recurring Task' : 'New Recurring Task'}
+          </h3>
+          <button onClick={onClose} className="text-white/70 hover:text-white transition-colors">
+            <X size={24} />
+          </button>
+        </div>
+        
+        <form onSubmit={handleSubmit} className="p-6 space-y-5" style={{ backgroundColor: COLORS.cream }}>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Location</label>
+            <select 
+              name="locationId"
+              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+              value={formData.locationId}
+              onChange={handleChange}
+            >
+              {PROPERTIES.map(prop => (
+                <optgroup key={prop.id} label={prop.name}>
+                  {prop.rooms.map(room => (
+                    <option key={room.id} value={room.id}>{room.name} (Room)</option>
+                  ))}
+                  {prop.commonAreas.map(area => (
+                    <option key={area.id} value={area.id}>{area.name} ({area.type})</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Task Description</label>
+            <textarea
+              required
+              name="description"
+              rows="3"
+              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none bg-white shadow-sm transition-all"
+              value={formData.description}
+              onChange={handleChange}
+            ></textarea>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Frequency</label>
+              <select 
+                name="frequency"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                value={formData.frequency}
+                onChange={handleChange}
+              >
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Next Due Date</label>
+              <input
+                type="date"
+                name="nextDue"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                value={formData.nextDue}
+                onChange={handleChange}
+              />
+            </div>
+          </div>
+
+          <div className="pt-4 flex justify-end space-x-3">
+            <button 
+              type="button"
+              onClick={onClose}
+              className="px-6 py-2.5 text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-full font-medium transition-colors"
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit"
+              className="px-6 py-2.5 rounded-full font-medium shadow-sm transition-all transform hover:-translate-y-0.5 hover:shadow-md"
+              style={{ backgroundColor: COLORS.darkGreen, color: COLORS.white }}
+            >
+              {task ? 'Update Task' : 'Save Task'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 // --- Invoice Modal ---
 const InvoiceModal = ({ isOpen, onClose, bookings }) => {
   const [selectedBookingId, setSelectedBookingId] = useState('');
@@ -991,6 +1110,7 @@ export default function App() {
   const [bookings, setBookings] = useState([]);
   const [roomStatuses, setRoomStatuses] = useState({});
   const [maintenanceIssues, setMaintenanceIssues] = useState([]);
+  const [recurringTasks, setRecurringTasks] = useState([]);
   const [dataError, setDataError] = useState(null); // surfaces listener/auth errors
 
   // Note: We intentionally do NOT sync to localStorage anymore
@@ -1000,6 +1120,7 @@ export default function App() {
   useEffect(() => {
     let unsubBookings = () => {};
     let unsubMaintenance = () => {};
+    let unsubRecurring = () => {};
     let listenersStarted = false;
 
     const startListeners = () => {
@@ -1034,6 +1155,18 @@ export default function App() {
         }
       );
 
+      const recurringQuery = query(collection(db, 'recurringTasks'));
+      unsubRecurring = onSnapshot(
+        recurringQuery,
+        (snapshot) => {
+          setRecurringTasks(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        },
+        (error) => {
+          console.error('Error listening to recurring tasks:', error);
+          setDataError(error.message || 'Unable to read recurring tasks');
+        }
+      );
+
       setLoading(false);
     };
 
@@ -1055,6 +1188,7 @@ export default function App() {
       authUnsub();
       unsubBookings();
       unsubMaintenance();
+      unsubRecurring();
     };
   }, []);
 
@@ -1064,6 +1198,8 @@ export default function App() {
   
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [editingMaintenanceIssue, setEditingMaintenanceIssue] = useState(null);
+  const [isRecurringModalOpen, setIsRecurringModalOpen] = useState(false);
+  const [editingRecurringTask, setEditingRecurringTask] = useState(null);
   
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [calendarDate, setCalendarDate] = useState(new Date());
@@ -1149,6 +1285,51 @@ export default function App() {
 
     return { conflict: false };
   }, [bookings]);
+
+  // Auto-create recurring maintenance tasks when due
+  useEffect(() => {
+    const today = formatDate(new Date());
+
+    const ensureRecurringIssues = async () => {
+      for (const task of recurringTasks) {
+        if (!task.nextDue || task.nextDue > today) continue;
+
+        const hasOpen = maintenanceIssues.some(
+          (i) => i.templateId === task.id && i.status !== 'completed'
+        );
+        if (hasOpen) continue;
+
+        const locationInfo = ALL_LOCATIONS.find((loc) => loc.id === task.locationId);
+        const issueId = Math.random().toString(36).substr(2, 9);
+
+        const newIssue = {
+          id: issueId,
+          locationId: task.locationId,
+          locationName: locationInfo?.name,
+          propertyName: locationInfo?.propertyName,
+          description: task.description,
+          status: 'open',
+          assignedStaff: 'Unassigned',
+          reportedAt: new Date().toISOString(),
+          templateId: task.id,
+          isRecurring: true,
+          dueDate: task.nextDue,
+        };
+
+        try {
+          await setDoc(doc(db, 'maintenance', issueId), newIssue);
+          const nextDue = task.frequency === 'monthly' ? addMonths(task.nextDue, 1) : task.nextDue;
+          await setDoc(doc(db, 'recurringTasks', task.id), { nextDue }, { merge: true });
+          // Optimistic add to avoid duplicate generation before listener fires
+          setMaintenanceIssues((prev) => [...prev, newIssue]);
+        } catch (err) {
+          console.error('Recurring task generation error:', err);
+        }
+      }
+    };
+
+    ensureRecurringIssues();
+  }, [recurringTasks, maintenanceIssues]);
 
   // --- Local State Update Actions ---
 
@@ -1258,6 +1439,37 @@ export default function App() {
     } catch (error) {
       console.error('Error saving maintenance issue:', error);
       alert('Error saving maintenance issue. Please check the console.');
+    }
+  };
+
+  const handleSaveRecurringTask = async (taskData) => {
+    try {
+      if (editingRecurringTask) {
+        const updatedTask = { ...taskData, id: editingRecurringTask.id };
+        await setDoc(doc(db, 'recurringTasks', editingRecurringTask.id), updatedTask, { merge: true });
+      } else {
+        const newTask = {
+          ...taskData,
+          id: Math.random().toString(36).substr(2, 9),
+        };
+        await setDoc(doc(db, 'recurringTasks', newTask.id), newTask);
+      }
+      setIsRecurringModalOpen(false);
+      setEditingRecurringTask(null);
+    } catch (error) {
+      console.error('Error saving recurring task:', error);
+      alert('Error saving recurring task. Please check the console.');
+    }
+  };
+
+  const handleDeleteRecurringTask = async (id) => {
+    if (!id) return;
+    if (!confirm('Delete this recurring task template?')) return;
+    try {
+      await deleteDoc(doc(db, 'recurringTasks', id));
+    } catch (error) {
+      console.error('Error deleting recurring task:', error);
+      alert('Error deleting recurring task. Please check the console.');
     }
   };
 
@@ -1601,14 +1813,65 @@ export default function App() {
                     Track and manage facility issues across all properties and common areas. 
                 </p>
             </div>
-            <button 
-              onClick={() => { setEditingMaintenanceIssue(null); setIsMaintenanceModalOpen(true); }}
-              className="px-6 py-3 rounded-full flex items-center shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide"
-              style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}
-            >
-              <ListChecks size={20} className="mr-2" />
-              Report New Issue
-            </button>
+            <div className="flex space-x-3">
+              <button 
+                onClick={() => { setEditingRecurringTask(null); setIsRecurringModalOpen(true); }}
+                className="px-4 py-3 rounded-full flex items-center shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide"
+                style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}
+              >
+                <RefreshCcw size={18} className="mr-2" />
+                New Recurring Task
+              </button>
+              <button 
+                onClick={() => { setEditingMaintenanceIssue(null); setIsMaintenanceModalOpen(true); }}
+                className="px-6 py-3 rounded-full flex items-center shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide"
+                style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}
+              >
+                <ListChecks size={20} className="mr-2" />
+                Report New Issue
+              </button>
+            </div>
+        </div>
+
+        {/* Recurring tasks overview */}
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <h3 className="font-bold text-lg text-slate-800 flex items-center">
+              <RefreshCcw size={18} className="mr-2 text-slate-500" />
+              Recurring Tasks
+            </h3>
+            <span className="text-xs text-slate-500">Auto-creates issues when due</span>
+          </div>
+          {recurringTasks.length === 0 ? (
+            <div className="p-6 text-sm text-slate-500">No recurring tasks yet. Create one to schedule monthly reminders.</div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {recurringTasks.map((task) => {
+                const loc = ALL_LOCATIONS.find((l) => l.id === task.locationId);
+                const hasOpen = maintenanceIssues.some((i) => i.templateId === task.id && i.status !== 'completed');
+                return (
+                  <div key={task.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                    <div>
+                      <div className="font-bold text-slate-800">{task.description}</div>
+                      <div className="text-xs text-slate-500">{loc?.name} · {loc?.propertyName}</div>
+                      <div className="text-xs text-slate-500 mt-1">Next due: {task.nextDue}</div>
+                    </div>
+                    <div className="flex items-center space-x-3 text-xs">
+                      <span className={`px-3 py-1 rounded-full border ${hasOpen ? 'bg-yellow-50 text-yellow-700 border-yellow-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
+                        {hasOpen ? 'Open issue' : 'Waiting for next due'}
+                      </span>
+                      <button onClick={() => { setEditingRecurringTask(task); setIsRecurringModalOpen(true); }} className="text-slate-400 hover:text-[#26402E]" title="Edit">
+                        <Edit2 size={16} />
+                      </button>
+                      <button onClick={() => handleDeleteRecurringTask(task.id)} className="text-slate-400 hover:text-red-600" title="Delete">
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* NEW OVERVIEW SECTION */}
@@ -1867,6 +2130,7 @@ export default function App() {
       </main>
       <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} />
       <MaintenanceModal isOpen={isMaintenanceModalOpen} onClose={() => setIsMaintenanceModalOpen(false)} onSave={handleSaveMaintenanceIssue} issue={editingMaintenanceIssue} allLocations={ALL_LOCATIONS} />
+      <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} />
       <InvoiceModal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} bookings={bookings} />
     </div>
   );
