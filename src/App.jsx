@@ -991,6 +991,7 @@ export default function App() {
   const [bookings, setBookings] = useState([]);
   const [roomStatuses, setRoomStatuses] = useState({});
   const [maintenanceIssues, setMaintenanceIssues] = useState([]);
+  const [dataError, setDataError] = useState(null); // surfaces listener/auth errors
 
   // Note: We intentionally do NOT sync to localStorage anymore
   // Firestore is the single source of truth, accessed via real-time listeners
@@ -1009,10 +1010,13 @@ export default function App() {
       unsubBookings = onSnapshot(
         bookingsQuery,
         (snapshot) => {
+          setDataError(null);
           setBookings(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
         },
         (error) => {
           console.error('Error listening to bookings:', error);
+          setDataError(error.message || 'Unable to read bookings from Firestore');
+          setLoading(false);
         }
       );
 
@@ -1020,10 +1024,13 @@ export default function App() {
       unsubMaintenance = onSnapshot(
         maintenanceQuery,
         (snapshot) => {
+          setDataError(null);
           setMaintenanceIssues(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
         },
         (error) => {
           console.error('Error listening to maintenance issues:', error);
+          setDataError(error.message || 'Unable to read maintenance issues from Firestore');
+          setLoading(false);
         }
       );
 
@@ -1039,6 +1046,7 @@ export default function App() {
         startListeners();
       } catch (error) {
         console.error('Auth initialization error:', error);
+        setDataError(error.message || 'Authentication failed');
         setLoading(false);
       }
     });
@@ -1197,6 +1205,8 @@ export default function App() {
         const updatedBooking = { ...bookingData, id: editingBooking.id, createdAt: editingBooking.createdAt, updatedAt: new Date().toISOString() };
         // Save to Firestore - real-time listener will update state
         await setDoc(doc(db, 'bookings', editingBooking.id), updatedBooking, { merge: true });
+        // Optimistic local update so UI reflects immediately even if listener is blocked
+        setBookings((prev) => prev.map((b) => (b.id === editingBooking.id ? updatedBooking : b)));
       } else {
         const newBooking = {
             ...bookingData,
@@ -1205,6 +1215,8 @@ export default function App() {
         };
         // Save to Firestore - real-time listener will update state
         await setDoc(doc(db, 'bookings', newBooking.id), newBooking);
+        // Optimistic local add
+        setBookings((prev) => [...prev, newBooking]);
       }
       setIsModalOpen(false);
       setEditingBooking(null);
@@ -1831,6 +1843,11 @@ export default function App() {
         </header>
         <div className="flex-1 overflow-auto p-6 md:p-10">
           <div className="max-w-7xl mx-auto">
+             {dataError && (
+               <div className="mb-6 p-4 rounded-xl border border-red-200 bg-red-50 text-red-800 text-sm">
+                 Firestore read error: {dataError}. Check Firestore rules/connection and reload.
+               </div>
+             )}
              <div className="flex justify-end mb-8">
                 {activeTab !== 'maintenance' && activeTab !== 'stats' && activeTab !== 'invoices' && (
                     <button onClick={() => { setEditingBooking(null); setIsModalOpen(true); }} className="px-6 py-3 rounded-full flex items-center shadow-lg transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
