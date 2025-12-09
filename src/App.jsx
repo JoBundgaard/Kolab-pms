@@ -1492,8 +1492,11 @@ export default function App() {
     if (hasAutoScrolledToToday.current) return;
     if (!timelineRef.current || dates.length === 0) return;
     ensureDateVisible(TODAY_STR);
-    hasAutoScrolledToToday.current = true;
-  }, [activeTab, dates, ensureDateVisible, TODAY_STR]);
+    requestAnimationFrame(() => {
+      scrollToDate(TODAY_STR);
+      hasAutoScrolledToToday.current = true;
+    });
+  }, [activeTab, dates, ensureDateVisible, scrollToDate, TODAY_STR]);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
