@@ -1385,7 +1385,7 @@ export default function App() {
     d.setDate(d.getDate() + 30);
     return d;
   });
-  const hasAutoScrolledToToday = useRef(false);
+  const hasCenteredOnTodayRef = useRef(false);
   const [timelineScrollLeft, setTimelineScrollLeft] = useState(0);
   const timelineRef = useRef(null);
   const dayWidthRef = useRef(48);
@@ -1483,20 +1483,20 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === 'calendar') {
-      hasAutoScrolledToToday.current = false;
+      hasCenteredOnTodayRef.current = false;
     }
   }, [activeTab]);
 
   useEffect(() => {
     if (activeTab !== 'calendar') return;
-    if (hasAutoScrolledToToday.current) return;
+    if (hasCenteredOnTodayRef.current) return;
     if (!timelineRef.current || dates.length === 0) return;
-    ensureDateVisible(TODAY_STR);
+    setSelectedCalendarDate(TODAY_STR);
     requestAnimationFrame(() => {
-      scrollToDate(TODAY_STR);
-      hasAutoScrolledToToday.current = true;
+      ensureDateVisible(TODAY_STR);
+      hasCenteredOnTodayRef.current = true;
     });
-  }, [activeTab, dates, ensureDateVisible, scrollToDate, TODAY_STR]);
+  }, [activeTab, dates, ensureDateVisible, TODAY_STR]);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
