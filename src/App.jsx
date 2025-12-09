@@ -1992,12 +1992,12 @@ export default function App() {
              {`${formatDate(visibleStartDate)} – ${formatDate(visibleEndDate)}`}
           </div>
         </div>
-        <div className="flex-1 bg-slate-50 overflow-hidden">
-          <div className="flex h-full overflow-y-auto">
-            {/* Left column: room labels (no horizontal scroll) */}
-            <div className="flex-shrink-0 w-56 bg-white border-r border-slate-200">
+        <div className="flex-1 bg-slate-50 min-h-0 overflow-auto">
+          <div className="grid grid-cols-[14rem_minmax(0,1fr)] h-full min-h-0">
+            {/* Left column: rooms/sections, no horizontal scroll */}
+            <div className="bg-white border-r border-slate-200 min-h-0">
               <div
-                className="h-[56px] border-b border-slate-200 bg-[#F9F8F2] flex items-center px-4 text-xs font-bold uppercase tracking-wider"
+                className="h-[56px] border-b border-slate-200 bg-[#F9F8F2] flex items-center px-4 text-xs font-bold uppercase tracking-wider sticky top-0 z-30"
                 style={{ color: COLORS.darkGreen }}
               >
                 Room
@@ -2005,7 +2005,7 @@ export default function App() {
               {PROPERTIES.map((prop) => (
                 <React.Fragment key={prop.id}>
                   <div
-                    className="px-4 py-3 text-xs font-bold uppercase tracking-wider"
+                    className="px-4 py-3 text-xs font-bold uppercase tracking-wider sticky top-[56px] z-20"
                     style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}
                   >
                     {prop.name}
@@ -2023,8 +2023,8 @@ export default function App() {
               ))}
             </div>
 
-            {/* Right pane: shared horizontal scroll for header + grid */}
-            <div className="flex-1 overflow-x-auto" ref={timelineRef} onScroll={handleTimelineScroll}>
+            {/* Right pane: shared horizontal scroll for header + grid; vertical height driven by container */}
+            <div className="min-w-0 overflow-x-auto" ref={timelineRef} onScroll={handleTimelineScroll}>
               <div className="min-w-[1000px]">
                 <div className="flex border-b border-slate-200 sticky top-0 z-30 bg-white">
                   {dates.map(date => {
