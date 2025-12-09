@@ -152,6 +152,8 @@ const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), mi
   const [isOpen, setIsOpen] = useState(false);
   const [viewDate, setViewDate] = useState(value ? new Date(value) : new Date());
   const containerRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const [placement, setPlacement] = useState({ vertical: 'bottom', align: 'left' });
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -162,6 +164,38 @@ const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), mi
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const repositionDropdown = useCallback(() => {
+    if (!isOpen || !containerRef.current || !dropdownRef.current) return;
+
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const dropdownRect = dropdownRef.current.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    const spaceBelow = viewportHeight - containerRect.bottom;
+    const spaceAbove = containerRect.top;
+    const spaceRight = viewportWidth - containerRect.left;
+
+    const vertical = spaceBelow < dropdownRect.height + 12 && spaceAbove > spaceBelow ? 'top' : 'bottom';
+    const isMobile = viewportWidth < 768;
+    const align = isMobile
+      ? 'full'
+      : spaceRight < dropdownRect.width && containerRect.right > dropdownRect.width
+        ? 'right'
+        : 'left';
+
+    setPlacement({ vertical, align });
+  }, [isOpen]);
+
+  useEffect(() => {
+    repositionDropdown();
+  }, [isOpen, viewDate, repositionDropdown]);
+
+  useEffect(() => {
+    window.addEventListener('resize', repositionDropdown);
+    return () => window.removeEventListener('resize', repositionDropdown);
+  }, [repositionDropdown]);
 
   const handlePrevMonth = (e) => {
     e.preventDefault(); 
@@ -237,7 +271,17 @@ const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), mi
       </div>
 
       {isOpen && (
-        <div className="absolute z-50 mt-2 p-4 bg-white rounded-xl shadow-xl border border-slate-100 w-64 left-0">
+        <div
+          ref={dropdownRef}
+          className={`absolute z-50 ${placement.vertical === 'top' ? 'mb-2' : 'mt-2'} p-4 bg-white rounded-xl shadow-xl border border-slate-100 w-full sm:w-auto max-w-xs sm:max-w-sm md:max-w-md max-h-[340px] overflow-y-auto`}
+          style={{
+            top: placement.vertical === 'bottom' ? '100%' : 'auto',
+            bottom: placement.vertical === 'top' ? '100%' : 'auto',
+            left: placement.align === 'right' ? 'auto' : 0,
+            right: placement.align === 'right' ? 0 : 'auto',
+            ...(placement.align === 'full' ? { left: 0, right: 0 } : {}),
+          }}
+        >
           <div className="flex justify-between items-center mb-4">
             <button onClick={handlePrevMonth} className="p-1 hover:bg-slate-100 rounded"><ChevronLeft size={16}/></button>
             <span className="text-sm font-bold text-slate-700">
