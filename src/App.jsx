@@ -1975,6 +1975,7 @@ export default function App() {
                         const dateIndex = dates.findIndex(d => formatDate(d) === dateStr);
                         const isStart = booking && booking.checkIn === dateStr;
                         const isTruncatedAtStart = booking && booking.checkIn < formatDate(dates[0]);
+                        const lastDateStr = formatDate(dates[dates.length - 1]);
                         const hasLongTermCleaningToday = bookings.some((b) => {
                           if (!b.isLongTerm) return false;
                           if (b.status === 'cancelled') return false;
@@ -1999,12 +2000,16 @@ export default function App() {
                           }
                         }
                         const shouldRenderBlock = booking && (isStart || (isTruncatedAtStart && dateIndex === 0));
+                        const isCheckoutVisible = booking && booking.checkOut <= lastDateStr;
+                        const widthCalc = isCheckoutVisible
+                          ? `calc(${colSpan * 100}% + 50% - 4px)`
+                          : `calc(${colSpan * 100}% - 4px)`;
                         return (
                           <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-100 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/50' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/10' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
                              {booking && shouldRenderBlock && (
                                 <div className={`absolute top-2 bottom-2 rounded-lg z-0 cursor-pointer text-xs px-2 overflow-hidden whitespace-nowrap shadow-sm flex items-center transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`}
                                   style={{
-                                    width: `calc(${colSpan * 100}% - 4px)`,
+                                    width: widthCalc,
                                     left: isTruncatedAtStart ? '0%' : '50%',
                                     zIndex: 10,
                                   }}
