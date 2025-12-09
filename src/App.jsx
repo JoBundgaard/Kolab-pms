@@ -1494,9 +1494,12 @@ export default function App() {
     setSelectedCalendarDate(TODAY_STR);
     requestAnimationFrame(() => {
       ensureDateVisible(TODAY_STR);
-      hasCenteredOnTodayRef.current = true;
+      requestAnimationFrame(() => {
+        scrollToDate(TODAY_STR);
+        hasCenteredOnTodayRef.current = true;
+      });
     });
-  }, [activeTab, dates, ensureDateVisible, TODAY_STR]);
+  }, [activeTab, dates, ensureDateVisible, scrollToDate, TODAY_STR]);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
