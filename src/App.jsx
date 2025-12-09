@@ -156,6 +156,26 @@ const getOccupiedDates = (bookings, roomId, excludeBookingId) => {
   return occupied;
 };
 
+const getDaySummaryForDate = (dateStr, bookings) => {
+  const dayCheckIns = bookings.filter(
+    (b) => b.status !== 'cancelled' && b.checkIn === dateStr
+  );
+  const dayCheckOuts = bookings.filter(
+    (b) => b.status !== 'cancelled' && b.checkOut === dateStr
+  );
+
+  const earlyCheckIns = dayCheckIns.filter((b) => !!b.earlyCheckIn);
+
+  const roomsToClean = dayCheckOuts.length;
+
+  return {
+    checkIns: dayCheckIns.length,
+    earlyCheckIns: earlyCheckIns.length,
+    checkOuts: dayCheckOuts.length,
+    roomsToClean,
+  };
+};
+
 // --- Custom Date Picker Component ---
 const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), minDate }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -1287,6 +1307,7 @@ export default function App() {
   const TOMORROW_STR = formatDate(new Date(new Date().setDate(new Date().getDate() + 1)));
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(TODAY_STR);
+  const [hoveredCalendarDate, setHoveredCalendarDate] = useState(null);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
@@ -1793,16 +1814,50 @@ export default function App() {
                 const dateStr = formatDate(date);
                 const isToday = date.toDateString() === new Date().toDateString();
                 const isSelected = dateStr === selectedCalendarDate;
+                const isHovered = dateStr === hoveredCalendarDate;
+                const summary = getDaySummaryForDate(dateStr, bookings);
                 return (
-                  <button
+                  <div
                     key={dateStr}
-                    type="button"
+                    className="relative flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-100"
+                    onMouseEnter={() => setHoveredCalendarDate(dateStr)}
+                    onMouseLeave={() => setHoveredCalendarDate(null)}
                     onClick={() => setSelectedCalendarDate(dateStr)}
-                    className={`flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-100 transition-colors ${isToday ? 'font-bold' : ''} ${isSelected ? 'bg-[#E2F05D]/60 text-[#26402E] font-bold rounded-sm' : ''}`}
-                    style={{ color: isSelected || isToday ? COLORS.darkGreen : COLORS.textMuted }}
                   >
-                    {date.toLocaleDateString(undefined, { weekday: 'short' })}<br/>{date.getDate()}
-                  </button>
+                    <button
+                      type="button"
+                      className={`w-full flex flex-col items-center justify-center rounded-md py-1 transition-colors ${isSelected ? 'bg-[#E2F05D]/60 text-[#26402E] font-bold' : 'text-slate-500'} ${isToday ? 'font-bold' : ''}`}
+                      style={{ color: isSelected || isToday ? COLORS.darkGreen : COLORS.textMuted }}
+                    >
+                      {date.toLocaleDateString(undefined, { weekday: 'short' })}
+                      <br />
+                      {date.getDate()}
+                    </button>
+
+                    {isHovered && (
+                      <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 bg-white rounded-xl shadow-lg border border-slate-200 px-4 py-3 text-[11px] text-left z-50 min-w-[180px]">
+                        <div className="font-bold text-slate-800 mb-1">
+                          {date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Check-ins</span>
+                          <span className="font-semibold text-slate-800">{summary.checkIns}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Early check-ins</span>
+                          <span className="font-semibold text-orange-600">{summary.earlyCheckIns}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Check-outs</span>
+                          <span className="font-semibold text-slate-800">{summary.checkOuts}</span>
+                        </div>
+                        <div className="flex justify-between mt-1 pt-1 border-t border-slate-100">
+                          <span className="text-slate-500">Rooms to clean</span>
+                          <span className="font-semibold text-red-700">{summary.roomsToClean}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
