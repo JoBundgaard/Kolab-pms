@@ -1121,6 +1121,7 @@ export default function App() {
     let unsubBookings = () => {};
     let unsubMaintenance = () => {};
     let unsubRecurring = () => {};
+    let unsubRoomStatuses = () => {};
     let listenersStarted = false;
 
     const startListeners = () => {
@@ -1171,6 +1172,24 @@ export default function App() {
         }
       );
 
+      const roomStatusesQuery = query(collection(db, 'roomStatuses'));
+      unsubRoomStatuses = onSnapshot(
+        roomStatusesQuery,
+        (snapshot) => {
+          setDataError(null);
+          const statuses = {};
+          snapshot.forEach((docSnap) => {
+            statuses[docSnap.id] = docSnap.data();
+          });
+          setRoomStatuses(statuses);
+        },
+        (error) => {
+          console.error('Error listening to room statuses:', error);
+          setDataError(error.message || 'Unable to read room statuses');
+          setLoading(false);
+        }
+      );
+
       setLoading(false);
     };
 
@@ -1196,6 +1215,7 @@ export default function App() {
       unsubBookings();
       unsubMaintenance();
       unsubRecurring();
+      unsubRoomStatuses();
     };
   }, []);
 
@@ -1342,22 +1362,25 @@ export default function App() {
 
   const updateHousekeepingField = async (roomId, field, value) => {
     try {
-      setRoomStatuses(prev => ({
-          ...prev,
-          [roomId]: {
-              ...prev[roomId],
-              [field]: value,
-              updatedAt: new Date().toISOString()
-          }
-      }));
-      // Save to Firestore
-      await setDoc(doc(db, 'roomStatuses', roomId), {
-        [roomId]: {
-          ...roomStatuses[roomId],
+      let nextStatus = null;
+
+      setRoomStatuses((prev) => {
+        const existing = prev[roomId] || {};
+        nextStatus = {
+          ...existing,
           [field]: value,
-          updatedAt: new Date().toISOString()
-        }
-      }, { merge: true });
+          updatedAt: new Date().toISOString(),
+        };
+
+        return {
+          ...prev,
+          [roomId]: nextStatus,
+        };
+      });
+
+      if (nextStatus) {
+        await setDoc(doc(db, 'roomStatuses', roomId), nextStatus, { merge: true });
+      }
     } catch (error) {
       console.error('Error updating room status:', error);
     }
@@ -1365,23 +1388,19 @@ export default function App() {
 
   const markRoomClean = async (roomId) => {
     try {
-      setRoomStatuses(prev => ({
-          ...prev,
-          [roomId]: {
-              ...prev[roomId],
-              status: 'clean',
-              assignedStaff: 'Unassigned',
-              priority: 3,
-              updatedAt: new Date().toISOString()
-          }
-      }));
-      // Save to Firestore
-      await setDoc(doc(db, 'roomStatuses', roomId), {
+      const cleanStatus = {
         status: 'clean',
         assignedStaff: 'Unassigned',
         priority: 3,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
+        updatedAt: new Date().toISOString(),
+      };
+
+      setRoomStatuses((prev) => ({
+        ...prev,
+        [roomId]: cleanStatus,
+      }));
+
+      await setDoc(doc(db, 'roomStatuses', roomId), cleanStatus, { merge: true });
     } catch (error) {
       console.error('Error marking room clean:', error);
     }
