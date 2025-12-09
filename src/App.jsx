@@ -1998,7 +1998,7 @@ export default function App() {
               <div className="flex border-b border-slate-200 sticky top-0 z-30 bg-white">
                 <div
                   className="w-48 flex-shrink-0 p-4 bg-[#F9F8F2] font-bold text-xs uppercase tracking-wider sticky left-0 z-30 border-r border-slate-200"
-                  style={{ color: COLORS.darkGreen, transform: `translateX(${timelineScrollLeft}px)` }}
+                  style={{ color: COLORS.darkGreen }}
                 >
                   Room
                 </div>
@@ -2062,7 +2062,7 @@ export default function App() {
                 <React.Fragment key={prop.id}>
                   <div
                     className="px-4 py-3 text-xs font-bold uppercase tracking-wider sticky left-0 z-40 shadow-[2px_0_10px_-5px_rgba(0,0,0,0.2)]"
-                    style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime, top: DATE_HEADER_HEIGHT, transform: `translateX(${timelineScrollLeft}px)` }}
+                    style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime, top: DATE_HEADER_HEIGHT }}
                   >
                     {prop.name}
                   </div>
@@ -2070,7 +2070,7 @@ export default function App() {
                     <div key={room.id} className="flex border-b border-slate-100 h-16 relative hover:bg-[#F9F8F2] transition-colors group">
                       <div
                         className="w-48 flex-shrink-0 p-4 bg-white flex flex-col justify-center sticky left-0 z-30 border-r border-slate-200 group-hover:bg-[#F9F8F2] shadow-[2px_0_10px_-5px_rgba(0,0,0,0.1)]"
-                        style={{ top: DATE_HEADER_HEIGHT, transform: `translateX(${timelineScrollLeft}px)` }}
+                        style={{ top: DATE_HEADER_HEIGHT }}
                       >
                         <span className="font-bold text-sm" style={{ color: COLORS.darkGreen }}>{room.name}</span>
                         <span className="text-[10px] uppercase tracking-wide text-slate-400">{room.type}</span>
