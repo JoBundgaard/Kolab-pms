@@ -1977,6 +1977,7 @@ export default function App() {
       const dateStr = formatDate(date);
       return bookings.find(b => b.roomId === roomId && b.checkIn <= dateStr && b.checkOut > dateStr && b.status !== 'cancelled');
     };
+      const dateIndexMap = new Map(dates.map((d, i) => [formatDate(d), i]));
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] flex flex-col h-[calc(100vh-140px)]">
         <div className="p-5 border-b border-[#E5E7EB] flex justify-between items-center bg-[#F9F8F2]">
@@ -1997,16 +1998,16 @@ export default function App() {
             {/* Left column: rooms/sections, no horizontal scroll */}
             <div className="bg-white border-r border-slate-200 min-h-0">
               <div
-                className="h-[56px] border-b border-slate-200 bg-[#F9F8F2] flex items-center px-4 text-xs font-bold uppercase tracking-wider sticky top-0 z-30"
-                style={{ color: COLORS.darkGreen }}
+                className="border-b border-slate-200 bg-[#F9F8F2] flex items-center px-4 text-xs font-bold uppercase tracking-wider sticky top-0 z-30"
+                style={{ color: COLORS.darkGreen, height: DATE_HEADER_HEIGHT }}
               >
                 Room
               </div>
               {PROPERTIES.map((prop) => (
                 <React.Fragment key={prop.id}>
                   <div
-                    className="px-4 py-3 text-xs font-bold uppercase tracking-wider sticky top-[56px] z-20"
-                    style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}
+                    className="px-4 py-3 text-xs font-bold uppercase tracking-wider sticky z-20"
+                    style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime, top: DATE_HEADER_HEIGHT }}
                   >
                     {prop.name}
                   </div>
@@ -2026,7 +2027,7 @@ export default function App() {
             {/* Right pane: shared horizontal scroll for header + grid; vertical height driven by container */}
             <div className="min-w-0 overflow-x-auto" ref={timelineRef} onScroll={handleTimelineScroll}>
               <div className="min-w-[1000px]">
-                <div className="flex border-b border-slate-200 sticky top-0 z-30 bg-white">
+                <div className="flex border-b border-slate-200 sticky top-0 z-30 bg-white" style={{ height: DATE_HEADER_HEIGHT }}>
                   {dates.map(date => {
                     const dateStr = formatDate(date);
                     const isToday = date.toDateString() === new Date().toDateString();
@@ -2092,7 +2093,7 @@ export default function App() {
                           const dateStr = formatDate(date);
                           const weekdayKey = getWeekdayKey(dateStr);
                           const booking = getBookingForCell(room.id, date);
-                          const dateIndex = dates.findIndex(d => formatDate(d) === dateStr);
+                          const dateIndex = dateIndexMap.get(dateStr) ?? 0;
                           const isStart = booking && booking.checkIn === dateStr;
                           const isTruncatedAtStart = booking && booking.checkIn < formatDate(dates[0]);
                           const lastDateStr = formatDate(dates[dates.length - 1]);
@@ -2122,7 +2123,7 @@ export default function App() {
                           const shouldRenderBlock = booking && (isStart || (isTruncatedAtStart && dateIndex === 0));
                           const gapPx = 4; // Small gap so adjacent bookings touch without overlap
                           const widthCalc = `calc(${colSpan * 100}% - ${gapPx}px)`;
-                          const leftOffset = isTruncatedAtStart ? '0%' : '50%';
+                          const leftOffset = '0%';
                           return (
                             <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-100 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/50' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/10' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
                               {booking && shouldRenderBlock && (
