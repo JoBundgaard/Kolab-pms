@@ -115,6 +115,13 @@ const formatDate = (date) => {
   return `${year}-${month}-${day}`;
 };
 
+function getWeekdayKey(dateStr) {
+  const d = new Date(dateStr);
+  const idx = d.getDay();
+  const keys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  return keys[idx];
+}
+
 const calculateNights = (checkInDateStr, checkOutDateStr) => {
   const checkIn = new Date(checkInDateStr);
   const checkOut = new Date(checkOutDateStr);
@@ -166,12 +173,22 @@ const getDaySummaryForDate = (dateStr, bookings) => {
 
   const earlyCheckIns = dayCheckIns.filter((b) => !!b.earlyCheckIn);
 
-  const roomsToClean = dayCheckOuts.length;
+  const weekdayKey = getWeekdayKey(dateStr);
+  const longTermCleans = bookings.filter((b) => {
+    if (!b.isLongTerm) return false;
+    if (b.status === 'cancelled') return false;
+    if (!b.weeklyCleaningDay) return false;
+    if (b.weeklyCleaningDay !== weekdayKey) return false;
+    return b.checkIn <= dateStr && b.checkOut > dateStr;
+  });
+
+  const roomsToClean = dayCheckOuts.length + longTermCleans.length;
 
   return {
     checkIns: dayCheckIns.length,
     earlyCheckIns: earlyCheckIns.length,
     checkOuts: dayCheckOuts.length,
+    longTermCleans: longTermCleans.length,
     roomsToClean,
   };
 };
@@ -434,7 +451,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     nights: 0, 
     status: 'confirmed',
     notes: '',
-    earlyCheckIn: false, 
+    earlyCheckIn: false,
+    isLongTerm: false,
+    weeklyCleaningDay: 'monday',
   });
   
   const [nights, setNights] = useState(0);
@@ -442,7 +461,12 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
   useEffect(() => {
     if (booking) {
-      setFormData({ ...booking, earlyCheckIn: !!booking.earlyCheckIn });
+      setFormData({
+        ...booking,
+        earlyCheckIn: !!booking.earlyCheckIn,
+        isLongTerm: !!booking.isLongTerm,
+        weeklyCleaningDay: booking.weeklyCleaningDay || 'monday',
+      });
     } else {
       const defaultCheckIn = formatDate(new Date());
       const defaultCheckOut = formatDate(new Date(Date.now() + 86400000));
@@ -457,6 +481,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         status: 'confirmed',
         notes: '',
         earlyCheckIn: false,
+        isLongTerm: false,
+        weeklyCleaningDay: 'monday',
       });
     }
     setConflictError(null);
@@ -657,6 +683,46 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
               Request Early Check-in <span className="text-xs text-slate-500">(Requires room priority)</span>
             </label>
           </div>
+
+          <div className="flex items-center pt-2">
+            <input
+              type="checkbox"
+              id="isLongTerm"
+              name="isLongTerm"
+              checked={formData.isLongTerm}
+              onChange={handleChange}
+              className="h-5 w-5 rounded border-gray-300 text-lime focus:ring-lime"
+              style={{ color: COLORS.darkGreen, accentColor: COLORS.darkGreen }}
+            />
+            <label htmlFor="isLongTerm" className="ml-2 text-sm font-medium" style={{ color: COLORS.darkGreen }}>
+              Long term booking
+            </label>
+          </div>
+
+          {formData.isLongTerm && (
+            <div className="mt-3">
+              <label
+                className="block text-xs font-bold uppercase tracking-wider mb-1"
+                style={{ color: COLORS.darkGreen }}
+              >
+                Weekly cleaning day
+              </label>
+              <select
+                name="weeklyCleaningDay"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm text-sm"
+                value={formData.weeklyCleaningDay}
+                onChange={handleChange}
+              >
+                <option value="monday">Monday</option>
+                <option value="tuesday">Tuesday</option>
+                <option value="wednesday">Wednesday</option>
+                <option value="thursday">Thursday</option>
+                <option value="friday">Friday</option>
+                <option value="saturday">Saturday</option>
+                <option value="sunday">Sunday</option>
+              </select>
+            </div>
+          )}
           
           <div className="py-2 text-sm font-medium flex items-center justify-end">
             <Clock size={16} className="text-slate-500 mr-2" />
@@ -1317,6 +1383,24 @@ export default function App() {
         
     const checkoutRoomIds = checkoutsToday.map(b => b.roomId);
 
+    const longTermCleaningRoomsToday = new Set(
+      bookings
+        .filter((b) => {
+          if (!b.isLongTerm) return false;
+          if (b.status === 'cancelled') return false;
+
+          const dateStr = TODAY_STR;
+          const weekdayKey = getWeekdayKey(dateStr);
+
+          return (
+            b.checkIn <= dateStr &&
+            b.checkOut > dateStr &&
+            b.weeklyCleaningDay === weekdayKey
+          );
+        })
+        .map((b) => b.roomId)
+    );
+
     const allRoomsData = ALL_ROOMS.map(room => {
         const statusData = roomStatuses[room.id] || {};
         const storedStatus = statusData.status || 'clean';
@@ -1324,6 +1408,7 @@ export default function App() {
         const isCheckout = checkoutRoomIds.includes(room.id);
         const checkoutBooking = isCheckout ? checkoutsToday.find(b => b.roomId === room.id) : null;
         const needsEarlyCheckinPrep = checkoutBooking && checkoutBooking.earlyCheckIn;
+        const isLongTermCleanToday = longTermCleaningRoomsToday.has(room.id);
         
         let calculatedPriority = 3; 
 
@@ -1345,8 +1430,9 @@ export default function App() {
             status: isCheckout ? 'checkout_dirty' : storedStatus, 
             assignedStaff: statusData.assignedStaff || 'Unassigned',
             priority: statusData.priority !== undefined ? Number(statusData.priority) : calculatedPriority,
-            needsCleaning: isCheckout || storedStatus === 'dirty',
+            needsCleaning: isCheckout || storedStatus === 'dirty' || isLongTermCleanToday,
             isEarlyCheckinPrep: needsEarlyCheckinPrep,
+            isLongTermCleaning: isLongTermCleanToday,
             checkoutBooking: checkoutBooking
         };
     });
@@ -1761,7 +1847,12 @@ export default function App() {
                ) : (
                    cleaningTasks.slice(0, 5).map(task => (
                        <div key={task.roomId} className="flex justify-between items-center p-3 bg-red-50/50 rounded-xl border border-red-100">
-                           <span className="text-sm font-bold text-red-900">{task.roomName} <span className="font-normal opacity-70">({task.propertyName})</span></span>
+                           <span className="text-sm font-bold text-red-900">
+                             {task.roomName} <span className="font-normal opacity-70">({task.propertyName})</span>
+                             {task.isLongTermCleaning && (
+                               <div className="text-[10px] font-bold text-blue-700 mt-1">Weekly long term clean</div>
+                             )}
+                           </span>
                            <div className="flex items-center space-x-2">
                                {task.isEarlyCheckinPrep && <Sunrise size={16} className="text-orange-500" title="Early Check-in Priority"/>}
                                <span className="text-xs font-medium text-red-700">Priority {task.priority}</span>
@@ -1854,6 +1945,10 @@ export default function App() {
                           <span className="text-slate-500">Check-outs</span>
                           <span className="font-semibold text-slate-800">{summary.checkOuts}</span>
                         </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Long term cleans</span>
+                          <span className="font-semibold text-blue-700">{summary.longTermCleans}</span>
+                        </div>
                         <div className="flex justify-between mt-1 pt-1 border-t border-slate-100">
                           <span className="text-slate-500">Rooms to clean</span>
                           <span className="font-semibold text-red-700">{summary.roomsToClean}</span>
@@ -1875,9 +1970,21 @@ export default function App() {
                     </div>
                       {dates.map(date => {
                         const dateStr = formatDate(date);
+                        const weekdayKey = getWeekdayKey(dateStr);
                         const booking = getBookingForCell(room.id, date);
                         const isStart = booking && booking.checkIn === dateStr;
                         const isTruncatedAtStart = booking && !isStart && formatDate(dates[0]) > booking.checkIn;
+                        const hasLongTermCleaningToday = bookings.some((b) => {
+                          if (!b.isLongTerm) return false;
+                          if (b.status === 'cancelled') return false;
+                          if (b.roomId !== room.id) return false;
+
+                          return (
+                            b.checkIn <= dateStr &&
+                            b.checkOut > dateStr &&
+                            b.weeklyCleaningDay === weekdayKey
+                          );
+                        });
                         let colSpan = 0;
                         if (booking) {
                             const start = new Date(booking.checkIn); 
@@ -1906,6 +2013,9 @@ export default function App() {
                                     <span className="font-bold truncate mr-1">{booking.guestName}</span>
                                     {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
                                 </div>
+                             )}
+                             {hasLongTermCleaningToday && (
+                               <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500" title="Weekly cleaning due"></div>
                              )}
                           </div>
                         );
@@ -1978,7 +2088,7 @@ export default function App() {
                     {(!cleaningTasks || cleaningTasks.length === 0) ? <tr><td colSpan="5" className="px-6 py-12 text-center text-green-600 bg-green-50/50">All rooms are clean!</td></tr> : cleaningTasks.map((task) => (
                       <tr key={task.roomId} className={`hover:bg-[#F9F8F2] ${task.isEarlyCheckinPrep ? 'bg-orange-50/50' : task.status === 'checkout_dirty' ? 'bg-yellow-50/50' : ''}`}>
                         <td className="px-6 py-4 text-center"><input type="number" min="1" max="99" value={task.priority} onChange={(e) => updateHousekeepingField(task.roomId, 'priority', Number(e.target.value))} className="w-12 text-center border rounded"/></td>
-                        <td className="px-6 py-4 font-bold text-slate-700">{task.roomName}<div className="text-xs font-normal opacity-60">{task.propertyName}</div>{task.isEarlyCheckinPrep && <div className="text-xs font-bold text-orange-600 flex items-center mt-1"><Sunrise size={14} className="mr-1"/> EARLY CHECK-IN</div>}</td>
+                        <td className="px-6 py-4 font-bold text-slate-700">{task.roomName}<div className="text-xs font-normal opacity-60">{task.propertyName}</div>{task.isEarlyCheckinPrep && <div className="text-xs font-bold text-orange-600 flex items-center mt-1"><Sunrise size={14} className="mr-1"/> EARLY CHECK-IN</div>}{task.isLongTermCleaning && <div className="text-[11px] font-bold text-blue-700 flex items-center mt-1">Weekly long term clean</div>}</td>
                         <td className="px-6 py-4"><span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-100">{task.status}</span></td>
                         <td className="px-6 py-4"><select value={task.assignedStaff} onChange={(e) => updateHousekeepingField(task.roomId, 'assignedStaff', e.target.value)} className="border rounded px-2 py-1">{STAFF.map(s => <option key={s} value={s}>{s}</option>)}</select></td>
                         <td className="px-6 py-4"><button onClick={() => markRoomClean(task.roomId)} className="px-4 py-2 rounded-full text-sm font-bold flex items-center shadow-md" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}><CheckCircle size={16} className="mr-2"/> Mark Clean</button></td>
