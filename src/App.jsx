@@ -1979,7 +1979,7 @@ export default function App() {
     };
       const dateIndexMap = new Map(dates.map((d, i) => [formatDate(d), i]));
     return (
-      <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] flex flex-col h-[calc(100vh-140px)]">
+      <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] flex flex-col">
         <div className="p-5 border-b border-[#E5E7EB] flex justify-between items-center bg-[#F9F8F2]">
           <div className="flex items-center space-x-6">
             <h2 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Calendar</h2>
@@ -2527,7 +2527,7 @@ export default function App() {
   if (loading) return <div className="flex items-center justify-center h-screen bg-[#F9F8F2] text-[#26402E] font-serif font-bold text-xl">Loading Kolab Living PMS...</div>;
 
   return (
-    <div className="flex h-screen font-sans" style={{ backgroundColor: COLORS.cream }}>
+    <div className="flex min-h-screen font-sans" style={{ backgroundColor: COLORS.cream }}>
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <header className="md:hidden border-b px-6 py-4 flex items-center justify-between" style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}>
