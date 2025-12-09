@@ -1349,8 +1349,7 @@ export default function App() {
           await setDoc(doc(db, 'maintenance', issueId), newIssue);
           const nextDue = task.frequency === 'monthly' ? addMonths(task.nextDue, 1) : task.nextDue;
           await setDoc(doc(db, 'recurringTasks', task.id), { nextDue }, { merge: true });
-          // Optimistic add to avoid duplicate generation before listener fires
-          setMaintenanceIssues((prev) => [...prev, newIssue]);
+          console.log(`Created recurring maintenance issue from task ${task.id}`);
         } catch (err) {
           console.error('Recurring task generation error:', err);
         }
