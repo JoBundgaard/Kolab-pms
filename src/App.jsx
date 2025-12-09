@@ -1466,7 +1466,7 @@ export default function App() {
       if (target < prev) {
         const next = new Date(target);
         next.setDate(next.getDate() - 30);
-        return next;
+        return next.getTime() === prev.getTime() ? prev : next;
       }
       return prev;
     });
@@ -1474,7 +1474,7 @@ export default function App() {
       if (target > prev) {
         const next = new Date(target);
         next.setDate(next.getDate() + 30);
-        return next;
+        return next.getTime() === prev.getTime() ? prev : next;
       }
       return prev;
     });
