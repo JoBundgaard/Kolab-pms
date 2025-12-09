@@ -503,7 +503,19 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   }, [formData.checkIn, formData.checkOut]);
 
   const blockedDatesForRoom = useMemo(() => {
-    return getOccupiedDates(allBookings, formData.roomId, booking?.id);
+    const blocked = new Set();
+    allBookings.forEach((b) => {
+      if (b.roomId !== formData.roomId) return;
+      if (b.status === 'cancelled') return;
+      if (booking && b.id === booking.id) return;
+
+      const startTs = new Date(b.checkIn).getTime();
+      const endTs = new Date(b.checkOut).getTime();
+      for (let ts = startTs; ts < endTs; ts += 86_400_000) {
+        blocked.add(formatDate(new Date(ts)));
+      }
+    });
+    return blocked;
   }, [allBookings, formData.roomId, booking]);
 
   const availableRoomOptions = useMemo(() => {
