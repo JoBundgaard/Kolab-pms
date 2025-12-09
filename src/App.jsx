@@ -57,6 +57,8 @@ const COLORS = {
   blockedBg: '#fee2e2'
 };
 
+const DATE_HEADER_HEIGHT = 56; // Keeps sticky offsets aligned for headers
+
 const PROPERTIES = [
   {
     id: 'prop_1',
@@ -1989,7 +1991,7 @@ export default function App() {
           </div>
         </div>
         <div className="flex-1 bg-slate-50">
-          <div className="relative overflow-x-auto h-full" ref={timelineRef} onScroll={handleTimelineScroll}>
+          <div className="relative overflow-x-auto overflow-y-auto h-full" ref={timelineRef} onScroll={handleTimelineScroll}>
             <div className="min-w-[1000px] bg-white">
               <div className="flex border-b border-slate-200 sticky top-0 z-30 bg-white">
                 <div className="w-48 flex-shrink-0 p-4 bg-[#F9F8F2] font-bold text-xs uppercase tracking-wider sticky left-0 z-30 border-r border-slate-200" style={{ color: COLORS.darkGreen }}>Room</div>
@@ -2051,10 +2053,18 @@ export default function App() {
 
               {PROPERTIES.map(prop => (
                 <React.Fragment key={prop.id}>
-                  <div className="px-4 py-3 text-xs font-bold uppercase tracking-wider sticky left-0 top-[52px] z-40" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}>{prop.name}</div>
+                  <div
+                    className="px-4 py-3 text-xs font-bold uppercase tracking-wider sticky left-0 z-40 shadow-[2px_0_10px_-5px_rgba(0,0,0,0.2)]"
+                    style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime, top: DATE_HEADER_HEIGHT }}
+                  >
+                    {prop.name}
+                  </div>
                   {prop.rooms.map(room => (
                     <div key={room.id} className="flex border-b border-slate-100 h-16 relative hover:bg-[#F9F8F2] transition-colors group">
-                      <div className="w-48 flex-shrink-0 p-4 bg-white flex flex-col justify-center sticky left-0 z-30 border-r border-slate-200 group-hover:bg-[#F9F8F2] shadow-[2px_0_10px_-5px_rgba(0,0,0,0.1)]">
+                      <div
+                        className="w-48 flex-shrink-0 p-4 bg-white flex flex-col justify-center sticky left-0 z-30 border-r border-slate-200 group-hover:bg-[#F9F8F2] shadow-[2px_0_10px_-5px_rgba(0,0,0,0.1)]"
+                        style={{ top: DATE_HEADER_HEIGHT }}
+                      >
                         <span className="font-bold text-sm" style={{ color: COLORS.darkGreen }}>{room.name}</span>
                         <span className="text-[10px] uppercase tracking-wide text-slate-400">{room.type}</span>
                       </div>
