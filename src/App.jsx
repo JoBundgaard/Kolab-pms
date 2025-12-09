@@ -1514,7 +1514,10 @@ export default function App() {
         await setDoc(doc(db, 'bookings', newBooking.id), newBooking);
         console.log('[Firestore] booking saved:', newBooking.id);
         // Optimistic local add
-        setBookings((prev) => [...prev, newBooking]);
+        setBookings((prev) => {
+          if (prev.some((b) => b.id === newBooking.id)) return prev;
+          return [...prev, newBooking];
+        });
       }
       setIsModalOpen(false);
       setEditingBooking(null);
