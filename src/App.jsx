@@ -1460,13 +1460,6 @@ export default function App() {
     el.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
   }, [dates]);
 
-  useEffect(() => {
-    if (hasAutoScrolledToToday.current) return;
-    if (!timelineRef.current || dates.length === 0) return;
-    ensureDateVisible(TODAY_STR);
-    hasAutoScrolledToToday.current = true;
-  }, [dates, ensureDateVisible, TODAY_STR]);
-
   const ensureDateVisible = useCallback((dateStr) => {
     const target = new Date(dateStr);
     setVisibleStartDate((prev) => {
@@ -1487,6 +1480,13 @@ export default function App() {
     });
     requestAnimationFrame(() => scrollToDate(dateStr));
   }, [scrollToDate]);
+
+  useEffect(() => {
+    if (hasAutoScrolledToToday.current) return;
+    if (!timelineRef.current || dates.length === 0) return;
+    ensureDateVisible(TODAY_STR);
+    hasAutoScrolledToToday.current = true;
+  }, [dates, ensureDateVisible, TODAY_STR]);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
