@@ -1101,7 +1101,7 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
 // --- Main App Component ---
 
 export default function App() {
-  const [user, setUser] = useState({ uid: 'local-user' }); // Dummy user for offline mode
+  const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -1131,6 +1131,7 @@ export default function App() {
       unsubBookings = onSnapshot(
         bookingsQuery,
         (snapshot) => {
+          console.log('[Firestore] bookings snapshot size:', snapshot.size);
           setDataError(null);
           setBookings(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
         },
@@ -1145,6 +1146,7 @@ export default function App() {
       unsubMaintenance = onSnapshot(
         maintenanceQuery,
         (snapshot) => {
+          console.log('[Firestore] maintenance snapshot size:', snapshot.size);
           setDataError(null);
           setMaintenanceIssues(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
         },
@@ -1159,11 +1161,13 @@ export default function App() {
       unsubRecurring = onSnapshot(
         recurringQuery,
         (snapshot) => {
+          console.log('[Firestore] recurring tasks snapshot size:', snapshot.size);
           setRecurringTasks(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
         },
         (error) => {
           console.error('Error listening to recurring tasks:', error);
           setDataError(error.message || 'Unable to read recurring tasks');
+          setLoading(false);
         }
       );
 
@@ -1173,9 +1177,12 @@ export default function App() {
     const authUnsub = onAuthStateChanged(auth, async (currentUser) => {
       try {
         if (!currentUser) {
+          setUser(null);
           await signInAnonymously(auth);
           return; // wait for auth to settle before attaching listeners
         }
+
+        setUser(currentUser);
         startListeners();
       } catch (error) {
         console.error('Auth initialization error:', error);
