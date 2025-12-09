@@ -1482,11 +1482,18 @@ export default function App() {
   }, [scrollToDate]);
 
   useEffect(() => {
+    if (activeTab === 'calendar') {
+      hasAutoScrolledToToday.current = false;
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'calendar') return;
     if (hasAutoScrolledToToday.current) return;
     if (!timelineRef.current || dates.length === 0) return;
     ensureDateVisible(TODAY_STR);
     hasAutoScrolledToToday.current = true;
-  }, [dates, ensureDateVisible, TODAY_STR]);
+  }, [activeTab, dates, ensureDateVisible, TODAY_STR]);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
