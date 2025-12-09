@@ -910,10 +910,12 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
       const booking = bookings.find(b => b.id === selectedBookingId);
       if (booking) {
         const roomObj = ALL_ROOMS.find(r => r.id === booking.roomId);
+        const roomName = roomObj?.name || 'Unknown room';
+        const propertyName = roomObj?.propertyName || 'Unknown property';
         setInvoiceData({
           guestName: booking.guestName,
-          room: roomObj?.name,
-          propertyName: roomObj?.propertyName, 
+          room: roomName,
+          propertyName, 
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           nights: booking.nights,
@@ -1408,20 +1410,36 @@ export default function App() {
 
   const handleSaveBooking = async (bookingData) => {
     try {
+      const normalizedPrice = Number(bookingData.price) || 0;
+      const normalizedNights = calculateNights(bookingData.checkIn, bookingData.checkOut);
+
+      const normalizedData = {
+        ...bookingData,
+        price: normalizedPrice,
+        nights: normalizedNights,
+      };
+
       if (editingBooking) {
-        const updatedBooking = { ...bookingData, id: editingBooking.id, createdAt: editingBooking.createdAt, updatedAt: new Date().toISOString() };
+        const updatedBooking = { 
+          ...normalizedData, 
+          id: editingBooking.id, 
+          createdAt: editingBooking.createdAt || new Date().toISOString(), 
+          updatedAt: new Date().toISOString() 
+        };
         // Save to Firestore - real-time listener will update state
         await setDoc(doc(db, 'bookings', editingBooking.id), updatedBooking, { merge: true });
+        console.log('[Firestore] booking saved:', updatedBooking.id);
         // Optimistic local update so UI reflects immediately even if listener is blocked
         setBookings((prev) => prev.map((b) => (b.id === editingBooking.id ? updatedBooking : b)));
       } else {
         const newBooking = {
-            ...bookingData,
+            ...normalizedData,
             id: Math.random().toString(36).substr(2, 9),
             createdAt: new Date().toISOString()
         };
         // Save to Firestore - real-time listener will update state
         await setDoc(doc(db, 'bookings', newBooking.id), newBooking);
+        console.log('[Firestore] booking saved:', newBooking.id);
         // Optimistic local add
         setBookings((prev) => [...prev, newBooking]);
       }
@@ -1532,13 +1550,13 @@ export default function App() {
       last6Months.push({ month: monthName, revenue: monthlyRevenue });
     }
 
-    const revenueByProp = { Townhouse: 0, Neighbours: 0 };
+    const revenueByProp = { Townhouse: 0, Neighbours: 0, 'Unknown property': 0 };
     bookings.forEach(b => {
         if(b.status === 'cancelled') return;
         const room = ALL_ROOMS.find(r => r.id === b.roomId);
-        if(room) {
-            revenueByProp[room.propertyName] += (Number(b.price) || 0);
-        }
+      const propName = room?.propertyName || 'Unknown property';
+      if (revenueByProp[propName] === undefined) revenueByProp[propName] = 0;
+      revenueByProp[propName] += (Number(b.price) || 0);
     });
 
     const totalRoomNightsAvailable = ALL_ROOMS.length * 30; 
@@ -1612,17 +1630,17 @@ export default function App() {
                    </p>
                ) : (
                    checkingIn.map(booking => (
-                       <div key={booking.id} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm ${
+                         <div key={booking.id} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm ${
                            booking.earlyCheckIn ? 'bg-yellow-50/50 border-yellow-200' : 'bg-[#E2F05D]/30 border-[#E2F05D]'
-                       }`}>
+                         }`}>
                            <span className="text-sm font-bold text-slate-800">{booking.guestName}</span>
                            <div className="flex items-center space-x-2">
-                               {booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500" title="Early Check-in Requested"/>}
-                               <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
-                                   {ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'N/A'}
-                               </span>
+                             {booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500" title="Early Check-in Requested"/>}
+                             <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
+                               {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
+                             </span>
                            </div>
-                       </div>
+                         </div>
                    ))
                )}
              </div>
@@ -1639,14 +1657,17 @@ export default function App() {
                        No check-outs scheduled for tomorrow.
                    </p>
                ) : (
-                   checkingOutTomorrow.map(booking => (
+                     checkingOutTomorrow.map(booking => {
+                     const roomName = ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'Unknown room';
+                     return (
                        <div key={booking.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
-                           <span className="text-sm font-bold text-slate-700">{booking.guestName}</span>
-                           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
-                               {ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'N/A'}
-                           </span>
+                         <span className="text-sm font-bold text-slate-700">{booking.guestName}</span>
+                         <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
+                           {roomName}
+                         </span>
                        </div>
-                   ))
+                     );
+                     })
                )}
              </div>
           </div>
@@ -1780,7 +1801,10 @@ export default function App() {
                 return (
               <tr key={booking.id} className="hover:bg-[#F9F8F2] transition-colors group">
                 <td className="px-6 py-4 font-bold text-slate-700 flex items-center">{booking.guestName}{booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500 ml-3"/>}</td>
-                <td className="px-6 py-4 text-slate-600">{ALL_ROOMS.find(r => r.id === booking.roomId)?.name}<div className="text-xs opacity-60">{ALL_ROOMS.find(r => r.id === booking.roomId)?.propertyName}</div></td>
+                <td className="px-6 py-4 text-slate-600">
+                  {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
+                  <div className="text-xs opacity-60">{ALL_ROOMS.find(r => r.id === booking.roomId)?.propertyName || 'Unknown property'}</div>
+                </td>
                 <td className="px-6 py-4"><span className={`px-3 py-1 rounded-full text-xs font-bold border ${booking.status === 'confirmed' ? 'bg-[#E2F05D]/20 text-[#4c5c23] border-[#E2F05D]/50' : 'bg-slate-100'}`}>{booking.status}</span></td>
                 <td className="px-6 py-4 text-sm text-slate-600">{booking.checkIn} → {booking.checkOut}</td>
                 <td className="px-6 py-4 text-sm font-bold text-slate-700">
