@@ -40,7 +40,8 @@ import {
   TrendingUp,
   PieChart,
   FileText, 
-  Download
+  Download,
+  Broom
 } from 'lucide-react';
 
 // Firebase is initialized once in src/firebase.js and re-used here
@@ -2012,10 +2013,10 @@ export default function App() {
                                 >
                                     <span className="font-bold truncate mr-1">{booking.guestName}</span>
                                     {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
+                                    {booking.isLongTerm && hasLongTermCleaningToday && (
+                                      <Broom size={12} className="text-blue-700 ml-1" title="Weekly cleaning today" />
+                                    )}
                                 </div>
-                             )}
-                             {hasLongTermCleaningToday && (
-                               <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500" title="Weekly cleaning due"></div>
                              )}
                           </div>
                         );
