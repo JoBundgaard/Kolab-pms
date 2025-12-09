@@ -1875,32 +1875,40 @@ export default function App() {
                     </div>
                       {dates.map(date => {
                         const dateStr = formatDate(date);
-                       const booking = getBookingForCell(room.id, date);
-                       const isStart = booking && booking.checkIn === formatDate(date);
-                       let colSpan = 0;
-                       if (booking) {
-                           const start = new Date(booking.checkIn); 
-                           const dateIndex = dates.findIndex(d => formatDate(d) === formatDate(date));
-                           if (isStart) {
-                               const duration = calculateNights(formatDate(start), booking.checkOut);
-                               colSpan = Math.min(duration, dates.length - dateIndex);
-                           } else if (dateIndex === 0 && formatDate(date) < booking.checkIn) {
-                               const windowStart = dates[0];
-                               const visibleDuration = calculateNights(formatDate(windowStart), booking.checkOut);
-                               colSpan = Math.min(visibleDuration, dates.length);
-                           }
-                       }
-                       const shouldRenderBlock = (booking && isStart) || (booking && formatDate(date) === formatDate(dates[0]) && formatDate(date) < booking.checkIn);
-                       return (
-                         <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-100 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/50' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/10' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
-                            {booking && shouldRenderBlock && (
-                                <div className={`absolute top-2 bottom-2 left-1 rounded-lg z-0 cursor-pointer text-xs px-2 overflow-hidden whitespace-nowrap shadow-sm flex items-center transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`} style={{ width: `calc(${colSpan * 100}% - 4px)`, zIndex: 10 }} onClick={(e) => { e.stopPropagation(); setEditingBooking(booking); setIsModalOpen(true); }}>
+                        const booking = getBookingForCell(room.id, date);
+                        const isStart = booking && booking.checkIn === dateStr;
+                        const isTruncatedAtStart = booking && !isStart && formatDate(dates[0]) > booking.checkIn;
+                        let colSpan = 0;
+                        if (booking) {
+                            const start = new Date(booking.checkIn); 
+                            const dateIndex = dates.findIndex(d => formatDate(d) === dateStr);
+                            if (isStart) {
+                                const duration = calculateNights(formatDate(start), booking.checkOut);
+                                colSpan = Math.min(duration, dates.length - dateIndex);
+                            } else if (dateIndex === 0 && dateStr < booking.checkIn) {
+                                const windowStart = dates[0];
+                                const visibleDuration = calculateNights(formatDate(windowStart), booking.checkOut);
+                                colSpan = Math.min(visibleDuration, dates.length);
+                            }
+                        }
+                        const shouldRenderBlock = (booking && isStart) || (booking && formatDate(date) === formatDate(dates[0]) && formatDate(date) < booking.checkIn);
+                        return (
+                          <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-100 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/50' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/10' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
+                             {booking && shouldRenderBlock && (
+                                <div className={`absolute top-2 bottom-2 rounded-lg z-0 cursor-pointer text-xs px-2 overflow-hidden whitespace-nowrap shadow-sm flex items-center transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`}
+                                  style={{
+                                    width: `calc(${colSpan * 100}% - 4px)`,
+                                    left: isTruncatedAtStart ? '0%' : '50%',
+                                    zIndex: 10,
+                                  }}
+                                  onClick={(e) => { e.stopPropagation(); setEditingBooking(booking); setIsModalOpen(true); }}
+                                >
                                     <span className="font-bold truncate mr-1">{booking.guestName}</span>
                                     {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
                                 </div>
-                            )}
-                         </div>
-                       );
+                             )}
+                          </div>
+                        );
                     })}
                   </div>
                 ))}
