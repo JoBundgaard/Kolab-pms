@@ -5,14 +5,10 @@ import {
 } from 'firebase/auth';
 import { 
   collection, 
-  addDoc, 
-  updateDoc, 
   deleteDoc, 
   doc, 
   onSnapshot, 
   query, 
-  where,
-  serverTimestamp,
   setDoc 
 } from 'firebase/firestore';
 import app, { auth, db } from './firebase';
@@ -21,7 +17,6 @@ import {
   Home, 
   Users, 
   CheckCircle, 
-  XCircle, 
   Plus, 
   Search, 
   Menu, 
@@ -33,7 +28,6 @@ import {
   ChevronLeft,
   ChevronRight,
   User, 
-  Hash,
   RefreshCcw,
   AlertTriangle,
   Edit2,
@@ -46,7 +40,6 @@ import {
   TrendingUp,
   PieChart,
   FileText, 
-  Printer,
   Download
 } from 'lucide-react';
 
@@ -1361,7 +1354,7 @@ export default function App() {
 
   // --- Local State Update Actions ---
 
-  const updateHousekeepingField = async (roomId, field, value) => {
+  const updateHousekeepingField = async (roomId, field, value, actingUser = user) => {
     try {
       let nextStatus = null;
 
@@ -1387,7 +1380,7 @@ export default function App() {
     }
   };
 
-  const markRoomClean = async (roomId) => {
+  const markRoomClean = async (roomId, actingUser = user) => {
     try {
       const cleanStatus = {
         status: 'clean',
@@ -1407,7 +1400,7 @@ export default function App() {
     }
   };
 
-  const handleSaveBooking = async (bookingData) => {
+  const handleSaveBooking = async (bookingData, actingUser = user) => {
     try {
       const normalizedPrice = Number(bookingData.price) || 0;
       const normalizedNights = calculateNights(bookingData.checkIn, bookingData.checkOut);
@@ -1462,7 +1455,7 @@ export default function App() {
     }
   };
   
-  const handleSaveMaintenanceIssue = async (issueData) => {
+  const handleSaveMaintenanceIssue = async (issueData, actingUser = user) => {
     try {
       if (editingMaintenanceIssue) {
         const updatedIssue = { ...issueData, id: editingMaintenanceIssue.id, reportedAt: editingMaintenanceIssue.reportedAt, updatedAt: new Date().toISOString() };
@@ -1485,7 +1478,7 @@ export default function App() {
     }
   };
 
-  const handleSaveRecurringTask = async (taskData) => {
+  const handleSaveRecurringTask = async (taskData, actingUser = user) => {
     try {
       if (editingRecurringTask) {
         const updatedTask = { ...taskData, id: editingRecurringTask.id };
@@ -1699,7 +1692,6 @@ export default function App() {
     );
   };
 
-  // ... (renderCalendar, renderBookingsList, renderHousekeeping, renderMaintenance remain the same)
   const renderCalendar = () => {
     const startDate = new Date(calendarDate);
     const dates = getDaysArray(startDate, new Date(new Date(startDate).setDate(startDate.getDate() + 13)));
@@ -2143,6 +2135,10 @@ export default function App() {
     );
   };
 
+  const sessionLabel = user
+    ? (user.isAnonymous ? 'Session: Anonymous' : `Session: ${user.displayName || user.email || 'Staff account'}`)
+    : 'Session: Signing in...';
+
   if (loading) return <div className="flex items-center justify-center h-screen bg-[#F9F8F2] text-[#26402E] font-serif font-bold text-xl">Loading Kolab Living PMS...</div>;
 
   return (
@@ -2160,12 +2156,15 @@ export default function App() {
                  Firestore read error: {dataError}. Check Firestore rules/connection and reload.
                </div>
              )}
-             <div className="flex justify-end mb-8">
-                {activeTab !== 'maintenance' && activeTab !== 'stats' && activeTab !== 'invoices' && (
-                    <button onClick={() => { setEditingBooking(null); setIsModalOpen(true); }} className="px-6 py-3 rounded-full flex items-center shadow-lg transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
-                        <Plus size={20} className="mr-2" /> New Booking
-                    </button>
-                )}
+             <div className="flex flex-col gap-3 mb-8 md:flex-row md:items-center md:justify-between">
+               <div className="text-xs text-slate-500">{sessionLabel}</div>
+               <div className="flex justify-end">
+                  {activeTab !== 'maintenance' && activeTab !== 'stats' && activeTab !== 'invoices' && (
+                      <button onClick={() => { setEditingBooking(null); setIsModalOpen(true); }} className="px-6 py-3 rounded-full flex items-center shadow-lg transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
+                          <Plus size={20} className="mr-2" /> New Booking
+                      </button>
+                  )}
+               </div>
              </div>
              {activeTab === 'dashboard' && renderDashboard()}
              {activeTab === 'calendar' && renderCalendar()}
