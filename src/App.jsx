@@ -1972,8 +1972,9 @@ export default function App() {
                         const dateStr = formatDate(date);
                         const weekdayKey = getWeekdayKey(dateStr);
                         const booking = getBookingForCell(room.id, date);
+                        const dateIndex = dates.findIndex(d => formatDate(d) === dateStr);
                         const isStart = booking && booking.checkIn === dateStr;
-                        const isTruncatedAtStart = booking && !isStart && formatDate(dates[0]) > booking.checkIn;
+                        const isTruncatedAtStart = booking && booking.checkIn < formatDate(dates[0]);
                         const hasLongTermCleaningToday = bookings.some((b) => {
                           if (!b.isLongTerm) return false;
                           if (b.status === 'cancelled') return false;
@@ -1987,18 +1988,17 @@ export default function App() {
                         });
                         let colSpan = 0;
                         if (booking) {
-                            const start = new Date(booking.checkIn); 
-                            const dateIndex = dates.findIndex(d => formatDate(d) === dateStr);
-                            if (isStart) {
-                                const duration = calculateNights(formatDate(start), booking.checkOut);
-                                colSpan = Math.min(duration, dates.length - dateIndex);
-                            } else if (dateIndex === 0 && dateStr < booking.checkIn) {
-                                const windowStart = dates[0];
-                                const visibleDuration = calculateNights(formatDate(windowStart), booking.checkOut);
-                                colSpan = Math.min(visibleDuration, dates.length);
-                            }
+                          const start = new Date(booking.checkIn);
+                          if (isStart) {
+                            const duration = calculateNights(formatDate(start), booking.checkOut);
+                            colSpan = Math.min(duration, dates.length - dateIndex);
+                          } else if (isTruncatedAtStart && dateIndex === 0) {
+                            const windowStart = dates[0];
+                            const visibleDuration = calculateNights(formatDate(windowStart), booking.checkOut);
+                            colSpan = Math.min(visibleDuration, dates.length);
+                          }
                         }
-                        const shouldRenderBlock = (booking && isStart) || (booking && formatDate(date) === formatDate(dates[0]) && formatDate(date) < booking.checkIn);
+                        const shouldRenderBlock = booking && (isStart || (isTruncatedAtStart && dateIndex === 0));
                         return (
                           <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-100 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/50' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/10' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
                              {booking && shouldRenderBlock && (
