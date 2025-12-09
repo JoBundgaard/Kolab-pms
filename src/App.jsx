@@ -1385,6 +1385,7 @@ export default function App() {
     d.setDate(d.getDate() + 30);
     return d;
   });
+  const hasAutoScrolledToToday = useRef(false);
   const [timelineScrollLeft, setTimelineScrollLeft] = useState(0);
   const timelineRef = useRef(null);
   const dayWidthRef = useRef(48);
@@ -1458,6 +1459,13 @@ export default function App() {
     const target = idx * dayWidthRef.current - el.clientWidth / 2 + dayWidthRef.current / 2;
     el.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
   }, [dates]);
+
+  useEffect(() => {
+    if (hasAutoScrolledToToday.current) return;
+    if (!timelineRef.current || dates.length === 0) return;
+    ensureDateVisible(TODAY_STR);
+    hasAutoScrolledToToday.current = true;
+  }, [dates, ensureDateVisible, TODAY_STR]);
 
   const ensureDateVisible = useCallback((dateStr) => {
     const target = new Date(dateStr);
