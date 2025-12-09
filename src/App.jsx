@@ -527,7 +527,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl" style={{ overflow: 'visible', maxHeight: '90vh' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl" style={{ overflow: 'visible', maxHeight: '95vh' }}>
         <div 
             className="px-6 py-5 border-b flex justify-between items-center"
             style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}
@@ -540,7 +540,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
           </button>
         </div>
         
-        <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto" style={{ backgroundColor: COLORS.cream, maxHeight: '75vh' }}>
+        <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto" style={{ backgroundColor: COLORS.cream, maxHeight: '85vh' }}>
           
           {conflictError && (
             <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl relative flex items-start space-x-3">
