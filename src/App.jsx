@@ -1371,9 +1371,110 @@ export default function App() {
   // Calendar helpers and selection
   const TODAY_STR = formatDate(new Date());
   const TOMORROW_STR = formatDate(new Date(new Date().setDate(new Date().getDate() + 1)));
-  const [calendarDate, setCalendarDate] = useState(new Date());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(TODAY_STR);
   const [hoveredCalendarDate, setHoveredCalendarDate] = useState(null);
+  const [visibleStartDate, setVisibleStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d;
+  });
+  const [visibleEndDate, setVisibleEndDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return d;
+  });
+  const timelineRef = useRef(null);
+  const dayWidthRef = useRef(48);
+  const extendLockRef = useRef(false);
+  const dates = useMemo(() => getDaysArray(new Date(visibleStartDate), new Date(visibleEndDate)), [visibleStartDate, visibleEndDate]);
+
+  useEffect(() => {
+    if (!timelineRef.current) return;
+    const firstDayCell = timelineRef.current.querySelector('[data-day-cell]');
+    if (firstDayCell) {
+      const w = firstDayCell.getBoundingClientRect().width;
+      if (w) dayWidthRef.current = w;
+    }
+  }, [dates.length]);
+
+  const EXTEND_DAYS = 7;
+
+  const extendRangeLeft = useCallback(() => {
+    const deltaPx = dayWidthRef.current * EXTEND_DAYS;
+    setVisibleStartDate((prev) => {
+      const next = new Date(prev);
+      next.setDate(next.getDate() - EXTEND_DAYS);
+      return next;
+    });
+    requestAnimationFrame(() => {
+      if (timelineRef.current) {
+        timelineRef.current.scrollLeft += deltaPx;
+      }
+      extendLockRef.current = false;
+    });
+  }, []);
+
+  const extendRangeRight = useCallback(() => {
+    setVisibleEndDate((prev) => {
+      const next = new Date(prev);
+      next.setDate(next.getDate() + EXTEND_DAYS);
+      return next;
+    });
+    requestAnimationFrame(() => {
+      extendLockRef.current = false;
+    });
+  }, []);
+
+  const handleTimelineScroll = useCallback((e) => {
+    const el = e.currentTarget;
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    const threshold = Math.max(dayWidthRef.current * 2, 80);
+
+    if (!extendLockRef.current && scrollLeft < threshold) {
+      extendLockRef.current = true;
+      extendRangeLeft();
+    } else if (!extendLockRef.current && scrollLeft + clientWidth > scrollWidth - threshold) {
+      extendLockRef.current = true;
+      extendRangeRight();
+    }
+  }, [extendRangeLeft, extendRangeRight]);
+
+  const scrollTimelineByViewport = useCallback((direction = 1) => {
+    if (!timelineRef.current) return;
+    const el = timelineRef.current;
+    const delta = el.clientWidth * 0.9 * (direction === -1 ? -1 : 1);
+    el.scrollBy({ left: delta, behavior: 'smooth' });
+  }, []);
+
+  const scrollToDate = useCallback((dateStr) => {
+    if (!timelineRef.current) return;
+    const idx = dates.findIndex(d => formatDate(d) === dateStr);
+    if (idx === -1) return;
+    const el = timelineRef.current;
+    const target = idx * dayWidthRef.current - el.clientWidth / 2 + dayWidthRef.current / 2;
+    el.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
+  }, [dates]);
+
+  const ensureDateVisible = useCallback((dateStr) => {
+    const target = new Date(dateStr);
+    setVisibleStartDate((prev) => {
+      if (target < prev) {
+        const next = new Date(target);
+        next.setDate(next.getDate() - 30);
+        return next;
+      }
+      return prev;
+    });
+    setVisibleEndDate((prev) => {
+      if (target > prev) {
+        const next = new Date(target);
+        next.setDate(next.getDate() + 30);
+        return next;
+      }
+      return prev;
+    });
+    requestAnimationFrame(() => scrollToDate(dateStr));
+  }, [scrollToDate]);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
@@ -1878,9 +1979,6 @@ export default function App() {
       return `${startLabel} ${start.getFullYear()} – ${endLabel}`;
     };
 
-    const startDate = new Date(calendarDate);
-    const dates = getDaysArray(startDate, new Date(new Date(startDate).setDate(startDate.getDate() + 13)));
-    const endDate = dates[dates.length - 1];
     const getBookingForCell = (roomId, date) => {
       const dateStr = formatDate(date);
       return bookings.find(b => b.roomId === roomId && b.checkIn <= dateStr && b.checkOut > dateStr && b.status !== 'cancelled');
@@ -1891,19 +1989,19 @@ export default function App() {
           <div className="flex items-center space-x-6">
             <h2 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Calendar</h2>
             <div className="flex space-x-2">
-              <button onClick={() => { const d = new Date(calendarDate); d.setDate(d.getDate() - 7); setCalendarDate(d); }} className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-slate-200"><ChevronLeft size={20} /></button>
-              <button onClick={() => { setCalendarDate(new Date()); setSelectedCalendarDate(TODAY_STR); }} className="px-4 py-1.5 text-sm font-medium hover:bg-white rounded-full border border-transparent hover:border-slate-200 transition-colors">Today</button>
-              <button onClick={() => { const d = new Date(calendarDate); d.setDate(d.getDate() + 7); setCalendarDate(d); }} className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-slate-200"><ChevronRight size={20} /></button>
+              <button onClick={() => scrollTimelineByViewport(-1)} className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-slate-200"><ChevronLeft size={20} /></button>
+              <button onClick={() => { setSelectedCalendarDate(TODAY_STR); ensureDateVisible(TODAY_STR); }} className="px-4 py-1.5 text-sm font-medium hover:bg-white rounded-full border border-transparent hover:border-slate-200 transition-colors">Today</button>
+              <button onClick={() => scrollTimelineByViewport(1)} className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-slate-200"><ChevronRight size={20} /></button>
             </div>
           </div>
           <div className="text-sm font-medium font-serif" style={{ color: COLORS.darkGreen }}>
-             {formatCalendarRangeLabel(startDate, endDate)}
+             {`${formatDate(visibleStartDate)} – ${formatDate(visibleEndDate)}`}
           </div>
         </div>
         <div className="flex-1 overflow-auto bg-slate-50">
           <div className="min-w-[1000px] bg-white">
-            <div className="flex border-b border-slate-200">
-              <div className="w-48 flex-shrink-0 p-4 bg-[#F9F8F2] font-bold text-xs uppercase tracking-wider sticky left-0 z-10 border-r border-slate-200" style={{ color: COLORS.darkGreen }}>Room</div>
+            <div className="flex border-b border-slate-200" ref={timelineRef} onScroll={handleTimelineScroll}>
+              <div className="w-48 flex-shrink-0 p-4 bg-[#F9F8F2] font-bold text-xs uppercase tracking-wider sticky left-0 z-20 border-r border-slate-200" style={{ color: COLORS.darkGreen }}>Room</div>
               {dates.map(date => {
                 const dateStr = formatDate(date);
                 const isToday = date.toDateString() === new Date().toDateString();
@@ -1913,6 +2011,65 @@ export default function App() {
                 return (
                   <div
                     key={dateStr}
+                    data-day-cell
+                    className="relative flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-100"
+                    onMouseEnter={() => setHoveredCalendarDate(dateStr)}
+                    onMouseLeave={() => setHoveredCalendarDate(null)}
+                    onClick={() => setSelectedCalendarDate(dateStr)}
+                  >
+                    <button
+                      type="button"
+                      className={`w-full flex flex-col items-center justify-center rounded-md py-1 transition-colors ${isSelected ? 'bg-[#E2F05D]/60 text-[#26402E] font-bold' : 'text-slate-500'} ${isToday ? 'font-bold' : ''}`}
+                      style={{ color: isSelected || isToday ? COLORS.darkGreen : COLORS.textMuted }}
+                    >
+                      {date.toLocaleDateString(undefined, { weekday: 'short' })}
+                      <br />
+                      {date.getDate()}
+                    </button>
+
+                    {isHovered && (
+                      <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 bg-white rounded-xl shadow-lg border border-slate-200 px-4 py-3 text-[11px] text-left z-50 min-w-[180px]">
+                        <div className="font-bold text-slate-800 mb-1">
+                          {date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Check-ins</span>
+                          <span className="font-semibold text-slate-800">{summary.checkIns}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Early check-ins</span>
+                          <span className="font-semibold text-orange-600">{summary.earlyCheckIns}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Check-outs</span>
+                          <span className="font-semibold text-slate-800">{summary.checkOuts}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Long term cleans</span>
+                          <span className="font-semibold text-blue-700">{summary.longTermCleans}</span>
+                        </div>
+                        <div className="flex justify-between mt-1 pt-1 border-t border-slate-100">
+                          <span className="text-slate-500">Rooms to clean</span>
+                          <span className="font-semibold text-red-700">{summary.roomsToClean}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex" ref={timelineRef} onScroll={handleTimelineScroll}>
+              <div className="w-48 flex-shrink-0" />
+              {dates.map(date => {
+                const dateStr = formatDate(date);
+                const isToday = date.toDateString() === new Date().toDateString();
+                const isSelected = dateStr === selectedCalendarDate;
+                const isHovered = dateStr === hoveredCalendarDate;
+                const summary = getDaySummaryForDate(dateStr, bookings);
+                return (
+                  <div
+                    key={dateStr}
+                    data-day-cell
                     className="relative flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-100"
                     onMouseEnter={() => setHoveredCalendarDate(dateStr)}
                     onMouseLeave={() => setHoveredCalendarDate(null)}
