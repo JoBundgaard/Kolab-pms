@@ -104,7 +104,16 @@ const ALL_LOCATIONS = PROPERTIES.flatMap(p => [
 const STAFF = ['Unassigned', 'Mai', 'Tuan', 'Linh', 'Dat', 'Thanh', 'Ngoc'];
 
 // --- Helper Functions ---
-const formatDate = (date) => new Date(date).toISOString().split('T')[0];
+const formatDate = (date) => {
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return '';
+
+  const year = d.getFullYear();
+  const month = `${d.getMonth() + 1}`.padStart(2, '0');
+  const day = `${d.getDate()}`.padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+};
 
 const calculateNights = (checkInDateStr, checkOutDateStr) => {
   const checkIn = new Date(checkInDateStr);
