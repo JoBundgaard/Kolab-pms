@@ -1281,12 +1281,14 @@ export default function App() {
   const [editingRecurringTask, setEditingRecurringTask] = useState(null);
   
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+
+  // Calendar helpers and selection
+  const TODAY_STR = formatDate(new Date());
+  const TOMORROW_STR = formatDate(new Date(new Date().setDate(new Date().getDate() + 1)));
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(TODAY_STR);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
-  const TODAY_STR = formatDate(new Date());
-  const TOMORROW_STR = formatDate(new Date(new Date().setDate(new Date().getDate() + 1)));
 
   const cleaningTasks = useMemo(() => {
     const checkoutsToday = bookings
