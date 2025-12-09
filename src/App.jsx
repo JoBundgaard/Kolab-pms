@@ -2051,10 +2051,10 @@ export default function App() {
 
               {PROPERTIES.map(prop => (
                 <React.Fragment key={prop.id}>
-                  <div className="px-4 py-3 text-xs font-bold uppercase tracking-wider sticky left-0 z-20" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}>{prop.name}</div>
+                  <div className="px-4 py-3 text-xs font-bold uppercase tracking-wider sticky left-0 top-[52px] z-40" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}>{prop.name}</div>
                   {prop.rooms.map(room => (
                     <div key={room.id} className="flex border-b border-slate-100 h-16 relative hover:bg-[#F9F8F2] transition-colors group">
-                      <div className="w-48 flex-shrink-0 p-4 bg-white flex flex-col justify-center sticky left-0 z-20 border-r border-slate-200 group-hover:bg-[#F9F8F2] shadow-[2px_0_10px_-5px_rgba(0,0,0,0.1)]">
+                      <div className="w-48 flex-shrink-0 p-4 bg-white flex flex-col justify-center sticky left-0 z-30 border-r border-slate-200 group-hover:bg-[#F9F8F2] shadow-[2px_0_10px_-5px_rgba(0,0,0,0.1)]">
                         <span className="font-bold text-sm" style={{ color: COLORS.darkGreen }}>{room.name}</span>
                         <span className="text-[10px] uppercase tracking-wide text-slate-400">{room.type}</span>
                       </div>
