@@ -162,7 +162,8 @@ const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), mi
   const [viewDate, setViewDate] = useState(value ? new Date(value) : new Date());
   const containerRef = useRef(null);
   const dropdownRef = useRef(null);
-  const [placement, setPlacement] = useState({ vertical: 'bottom', align: 'left' });
+  const [position, setPosition] = useState('bottom'); // 'bottom' | 'top'
+  const [align, setAlign] = useState('left'); // 'left' | 'right' | 'full'
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -186,19 +187,24 @@ const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), mi
     const spaceAbove = containerRect.top;
     const spaceRight = viewportWidth - containerRect.left;
 
-    const vertical = spaceBelow < dropdownRect.height + 12 && spaceAbove > spaceBelow ? 'top' : 'bottom';
+    const dropdownHeight = dropdownRect.height || 320;
+    const nextPosition = spaceBelow < dropdownHeight + 12 && spaceAbove > spaceBelow ? 'top' : 'bottom';
     const isMobile = viewportWidth < 768;
-    const align = isMobile
+    const nextAlign = isMobile
       ? 'full'
       : spaceRight < dropdownRect.width && containerRect.right > dropdownRect.width
         ? 'right'
         : 'left';
 
-    setPlacement({ vertical, align });
+    setPosition(nextPosition);
+    setAlign(nextAlign);
   }, [isOpen]);
 
   useEffect(() => {
     repositionDropdown();
+    if (isOpen) {
+      containerRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
   }, [isOpen, viewDate, repositionDropdown]);
 
   useEffect(() => {
@@ -282,13 +288,11 @@ const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), mi
       {isOpen && (
         <div
           ref={dropdownRef}
-          className={`absolute z-50 ${placement.vertical === 'top' ? 'mb-2' : 'mt-2'} p-4 bg-white rounded-xl shadow-xl border border-slate-100 w-full sm:w-auto max-w-xs sm:max-w-sm md:max-w-md max-h-[340px] overflow-y-auto`}
+          className={`absolute z-50 p-4 bg-white rounded-xl shadow-xl border border-slate-100 w-full sm:w-auto max-w-xs sm:max-w-sm md:max-w-md max-h-[340px] overflow-y-auto ${position === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'}`}
           style={{
-            top: placement.vertical === 'bottom' ? '100%' : 'auto',
-            bottom: placement.vertical === 'top' ? '100%' : 'auto',
-            left: placement.align === 'right' ? 'auto' : 0,
-            right: placement.align === 'right' ? 0 : 'auto',
-            ...(placement.align === 'full' ? { left: 0, right: 0 } : {}),
+            left: align === 'right' ? 'auto' : 0,
+            right: align === 'right' ? 0 : 'auto',
+            ...(align === 'full' ? { left: 0, right: 0 } : {}),
           }}
         >
           <div className="flex justify-between items-center mb-4">
