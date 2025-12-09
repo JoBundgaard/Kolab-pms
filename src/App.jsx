@@ -40,8 +40,7 @@ import {
   TrendingUp,
   PieChart,
   FileText, 
-  Download,
-  Broom
+  Download
 } from 'lucide-react';
 
 // Firebase is initialized once in src/firebase.js and re-used here
@@ -2011,11 +2010,11 @@ export default function App() {
                                   }}
                                   onClick={(e) => { e.stopPropagation(); setEditingBooking(booking); setIsModalOpen(true); }}
                                 >
+                                    {booking.isLongTerm && hasLongTermCleaningToday && (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block mr-1.5" title="Weekly cleaning today"></span>
+                                    )}
                                     <span className="font-bold truncate mr-1">{booking.guestName}</span>
                                     {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
-                                    {booking.isLongTerm && hasLongTermCleaningToday && (
-                                      <Broom size={12} className="text-blue-700 ml-1" title="Weekly cleaning today" />
-                                    )}
                                 </div>
                              )}
                           </div>
