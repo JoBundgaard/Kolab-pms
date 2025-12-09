@@ -1978,7 +1978,7 @@ export default function App() {
       return bookings.find(b => b.roomId === roomId && b.checkIn <= dateStr && b.checkOut > dateStr && b.status !== 'cancelled');
     };
     return (
-      <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden flex flex-col h-[calc(100vh-140px)]">
+      <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] flex flex-col h-[calc(100vh-140px)]">
         <div className="p-5 border-b border-[#E5E7EB] flex justify-between items-center bg-[#F9F8F2]">
           <div className="flex items-center space-x-6">
             <h2 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Calendar</h2>
