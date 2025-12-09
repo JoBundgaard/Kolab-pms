@@ -1992,149 +1992,163 @@ export default function App() {
              {`${formatDate(visibleStartDate)} – ${formatDate(visibleEndDate)}`}
           </div>
         </div>
-        <div className="flex-1 bg-slate-50">
-          <div className="relative overflow-x-auto overflow-y-auto h-full" ref={timelineRef} onScroll={handleTimelineScroll}>
-            <div className="min-w-[1000px] bg-white">
-              <div className="flex border-b border-slate-200 sticky top-0 z-30 bg-white">
-                <div
-                  className="w-48 flex-shrink-0 p-4 bg-[#F9F8F2] font-bold text-xs uppercase tracking-wider sticky left-0 z-30 border-r border-slate-200"
-                  style={{ color: COLORS.darkGreen }}
-                >
-                  Room
-                </div>
-                {dates.map(date => {
-                  const dateStr = formatDate(date);
-                  const isToday = date.toDateString() === new Date().toDateString();
-                  const isSelected = dateStr === selectedCalendarDate;
-                  const isHovered = dateStr === hoveredCalendarDate;
-                  const summary = getDaySummaryForDate(dateStr, bookings);
-                  return (
-                    <div
-                      key={dateStr}
-                      data-day-cell
-                      className="relative flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-100"
-                      onMouseEnter={() => setHoveredCalendarDate(dateStr)}
-                      onMouseLeave={() => setHoveredCalendarDate(null)}
-                      onClick={() => setSelectedCalendarDate(dateStr)}
-                    >
-                      <button
-                        type="button"
-                        className={`w-full flex flex-col items-center justify-center rounded-md py-1 transition-colors leading-tight ${isSelected ? 'bg-[#E2F05D]/60 text-[#26402E] font-bold' : 'text-slate-500'} ${isToday ? 'font-bold' : ''}`}
-                        style={{ color: isSelected || isToday ? COLORS.darkGreen : COLORS.textMuted }}
-                      >
-                        <span>{date.toLocaleDateString(undefined, { weekday: 'short' })}</span>
-                        <span className="text-sm font-semibold">{date.getDate()}</span>
-                      </button>
-
-                      {isHovered && (
-                        <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 bg-white rounded-xl shadow-lg border border-slate-200 px-4 py-3 text-[11px] text-left z-50 min-w-[180px]">
-                          <div className="font-bold text-slate-800 mb-1">
-                            {date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-500">Check-ins</span>
-                            <span className="font-semibold text-slate-800">{summary.checkIns}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-500">Early check-ins</span>
-                            <span className="font-semibold text-orange-600">{summary.earlyCheckIns}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-500">Check-outs</span>
-                            <span className="font-semibold text-slate-800">{summary.checkOuts}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-500">Long term cleans</span>
-                            <span className="font-semibold text-blue-700">{summary.longTermCleans}</span>
-                          </div>
-                          <div className="flex justify-between mt-1 pt-1 border-t border-slate-100">
-                            <span className="text-slate-500">Rooms to clean</span>
-                            <span className="font-semibold text-red-700">{summary.roomsToClean}</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+        <div className="flex-1 bg-slate-50 overflow-hidden">
+          <div className="flex h-full overflow-y-auto">
+            {/* Left column: room labels (no horizontal scroll) */}
+            <div className="flex-shrink-0 w-56 bg-white border-r border-slate-200">
+              <div
+                className="h-[56px] border-b border-slate-200 bg-[#F9F8F2] flex items-center px-4 text-xs font-bold uppercase tracking-wider"
+                style={{ color: COLORS.darkGreen }}
+              >
+                Room
               </div>
-
-              {PROPERTIES.map(prop => (
+              {PROPERTIES.map((prop) => (
                 <React.Fragment key={prop.id}>
                   <div
-                    className="px-4 py-3 text-xs font-bold uppercase tracking-wider sticky left-0 z-40 shadow-[2px_0_10px_-5px_rgba(0,0,0,0.2)]"
-                    style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime, top: DATE_HEADER_HEIGHT }}
+                    className="px-4 py-3 text-xs font-bold uppercase tracking-wider"
+                    style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}
                   >
                     {prop.name}
                   </div>
-                  {prop.rooms.map(room => (
-                    <div key={room.id} className="flex border-b border-slate-100 h-16 relative hover:bg-[#F9F8F2] transition-colors group">
-                      <div
-                        className="w-48 flex-shrink-0 p-4 bg-white flex flex-col justify-center sticky left-0 z-30 border-r border-slate-200 group-hover:bg-[#F9F8F2] shadow-[2px_0_10px_-5px_rgba(0,0,0,0.1)]"
-                        style={{ top: DATE_HEADER_HEIGHT }}
-                      >
-                        <span className="font-bold text-sm" style={{ color: COLORS.darkGreen }}>{room.name}</span>
-                        <span className="text-[10px] uppercase tracking-wide text-slate-400">{room.type}</span>
-                      </div>
-                      {dates.map(date => {
-                        const dateStr = formatDate(date);
-                        const weekdayKey = getWeekdayKey(dateStr);
-                        const booking = getBookingForCell(room.id, date);
-                        const dateIndex = dates.findIndex(d => formatDate(d) === dateStr);
-                        const isStart = booking && booking.checkIn === dateStr;
-                        const isTruncatedAtStart = booking && booking.checkIn < formatDate(dates[0]);
-                        const lastDateStr = formatDate(dates[dates.length - 1]);
-                        const hasLongTermCleaningToday = bookings.some((b) => {
-                          if (!b.isLongTerm) return false;
-                          if (b.status === 'cancelled') return false;
-                          if (b.roomId !== room.id) return false;
-
-                          return (
-                            b.checkIn <= dateStr &&
-                            b.checkOut > dateStr &&
-                            b.weeklyCleaningDay === weekdayKey
-                          );
-                        });
-                        let colSpan = 0;
-                        if (booking) {
-                          const start = new Date(booking.checkIn);
-                          if (isStart) {
-                            const duration = calculateNights(formatDate(start), booking.checkOut);
-                            colSpan = Math.min(duration, dates.length - dateIndex);
-                          } else if (isTruncatedAtStart && dateIndex === 0) {
-                            const windowStart = dates[0];
-                            const visibleDuration = calculateNights(formatDate(windowStart), booking.checkOut);
-                            colSpan = Math.min(visibleDuration, dates.length);
-                          }
-                        }
-                        const shouldRenderBlock = booking && (isStart || (isTruncatedAtStart && dateIndex === 0));
-                        const gapPx = 4; // Small gap so adjacent bookings touch without overlap
-                        const widthCalc = `calc(${colSpan * 100}% - ${gapPx}px)`;
-                        const leftOffset = isTruncatedAtStart ? '0%' : '50%';
-                        return (
-                          <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-100 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/50' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/10' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
-                            {booking && shouldRenderBlock && (
-                              <div className={`absolute top-2 bottom-2 rounded-full z-0 cursor-pointer text-xs px-2 overflow-hidden whitespace-nowrap shadow-sm flex items-center transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`}
-                                style={{
-                                  width: widthCalc,
-                                  left: leftOffset,
-                                  zIndex: 10,
-                                }}
-                                onClick={(e) => { e.stopPropagation(); setEditingBooking(booking); setIsModalOpen(true); }}
-                              >
-                                {booking.isLongTerm && hasLongTermCleaningToday && (
-                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block mr-1.5" title="Weekly cleaning today"></span>
-                                )}
-                                <span className="font-bold truncate mr-1">{booking.guestName}</span>
-                                {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                  {prop.rooms.map((room) => (
+                    <div
+                      key={room.id}
+                      className="h-16 border-b border-slate-100 flex flex-col justify-center px-4 bg-white hover:bg-[#F9F8F2] transition-colors"
+                    >
+                      <span className="font-bold text-sm" style={{ color: COLORS.darkGreen }}>{room.name}</span>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-400">{room.type}</span>
                     </div>
                   ))}
                 </React.Fragment>
               ))}
+            </div>
+
+            {/* Right pane: shared horizontal scroll for header + grid */}
+            <div className="flex-1 overflow-x-auto" ref={timelineRef} onScroll={handleTimelineScroll}>
+              <div className="min-w-[1000px]">
+                <div className="flex border-b border-slate-200 sticky top-0 z-30 bg-white">
+                  {dates.map(date => {
+                    const dateStr = formatDate(date);
+                    const isToday = date.toDateString() === new Date().toDateString();
+                    const isSelected = dateStr === selectedCalendarDate;
+                    const isHovered = dateStr === hoveredCalendarDate;
+                    const summary = getDaySummaryForDate(dateStr, bookings);
+                    return (
+                      <div
+                        key={dateStr}
+                        data-day-cell
+                        className="relative flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-100"
+                        onMouseEnter={() => setHoveredCalendarDate(dateStr)}
+                        onMouseLeave={() => setHoveredCalendarDate(null)}
+                        onClick={() => setSelectedCalendarDate(dateStr)}
+                      >
+                        <button
+                          type="button"
+                          className={`w-full flex flex-col items-center justify-center rounded-md py-1 transition-colors leading-tight ${isSelected ? 'bg-[#E2F05D]/60 text-[#26402E] font-bold' : 'text-slate-500'} ${isToday ? 'font-bold' : ''}`}
+                          style={{ color: isSelected || isToday ? COLORS.darkGreen : COLORS.textMuted }}
+                        >
+                          <span>{date.toLocaleDateString(undefined, { weekday: 'short' })}</span>
+                          <span className="text-sm font-semibold">{date.getDate()}</span>
+                        </button>
+
+                        {isHovered && (
+                          <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 bg-white rounded-xl shadow-lg border border-slate-200 px-4 py-3 text-[11px] text-left z-50 min-w-[180px]">
+                            <div className="font-bold text-slate-800 mb-1">
+                              {date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Check-ins</span>
+                              <span className="font-semibold text-slate-800">{summary.checkIns}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Early check-ins</span>
+                              <span className="font-semibold text-orange-600">{summary.earlyCheckIns}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Check-outs</span>
+                              <span className="font-semibold text-slate-800">{summary.checkOuts}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Long term cleans</span>
+                              <span className="font-semibold text-blue-700">{summary.longTermCleans}</span>
+                            </div>
+                            <div className="flex justify-between mt-1 pt-1 border-t border-slate-100">
+                              <span className="text-slate-500">Rooms to clean</span>
+                              <span className="font-semibold text-red-700">{summary.roomsToClean}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {PROPERTIES.map(prop => (
+                  <React.Fragment key={prop.id}>
+                    <div className="h-[46px] border-b border-slate-200 bg-white" />
+                    {prop.rooms.map(room => (
+                      <div key={room.id} className="flex border-b border-slate-100 h-16 relative hover:bg-[#F9F8F2] transition-colors group">
+                        {dates.map(date => {
+                          const dateStr = formatDate(date);
+                          const weekdayKey = getWeekdayKey(dateStr);
+                          const booking = getBookingForCell(room.id, date);
+                          const dateIndex = dates.findIndex(d => formatDate(d) === dateStr);
+                          const isStart = booking && booking.checkIn === dateStr;
+                          const isTruncatedAtStart = booking && booking.checkIn < formatDate(dates[0]);
+                          const lastDateStr = formatDate(dates[dates.length - 1]);
+                          const hasLongTermCleaningToday = bookings.some((b) => {
+                            if (!b.isLongTerm) return false;
+                            if (b.status === 'cancelled') return false;
+                            if (b.roomId !== room.id) return false;
+
+                            return (
+                              b.checkIn <= dateStr &&
+                              b.checkOut > dateStr &&
+                              b.weeklyCleaningDay === weekdayKey
+                            );
+                          });
+                          let colSpan = 0;
+                          if (booking) {
+                            const start = new Date(booking.checkIn);
+                            if (isStart) {
+                              const duration = calculateNights(formatDate(start), booking.checkOut);
+                              colSpan = Math.min(duration, dates.length - dateIndex);
+                            } else if (isTruncatedAtStart && dateIndex === 0) {
+                              const windowStart = dates[0];
+                              const visibleDuration = calculateNights(formatDate(windowStart), booking.checkOut);
+                              colSpan = Math.min(visibleDuration, dates.length);
+                            }
+                          }
+                          const shouldRenderBlock = booking && (isStart || (isTruncatedAtStart && dateIndex === 0));
+                          const gapPx = 4; // Small gap so adjacent bookings touch without overlap
+                          const widthCalc = `calc(${colSpan * 100}% - ${gapPx}px)`;
+                          const leftOffset = isTruncatedAtStart ? '0%' : '50%';
+                          return (
+                            <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-100 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/50' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/10' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
+                              {booking && shouldRenderBlock && (
+                                <div className={`absolute top-2 bottom-2 rounded-full z-0 cursor-pointer text-xs px-2 overflow-hidden whitespace-nowrap shadow-sm flex items-center transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`}
+                                  style={{
+                                    width: widthCalc,
+                                    left: leftOffset,
+                                    zIndex: 10,
+                                  }}
+                                  onClick={(e) => { e.stopPropagation(); setEditingBooking(booking); setIsModalOpen(true); }}
+                                >
+                                  {booking.isLongTerm && hasLongTermCleaningToday && (
+                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block mr-1.5" title="Weekly cleaning today"></span>
+                                  )}
+                                  <span className="font-bold truncate mr-1">{booking.guestName}</span>
+                                  {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </React.Fragment>
+                ))}
+              </div>
             </div>
           </div>
         </div>
