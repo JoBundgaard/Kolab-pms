@@ -2060,7 +2060,7 @@ export default function App() {
             {/* Right pane: shared horizontal scroll for header + grid; vertical height driven by container */}
             <div className="min-w-0 overflow-x-auto" ref={timelineRef} onScroll={handleTimelineScroll}>
               <div className="min-w-[1000px]">
-                <div className="flex border-b border-slate-200 sticky top-0 z-30 bg-white" style={{ height: DATE_HEADER_HEIGHT }}>
+                <div className="flex border-b border-slate-300 sticky top-0 z-30 bg-white" style={{ height: DATE_HEADER_HEIGHT }}>
                   {dates.map(date => {
                     const dateStr = formatDate(date);
                     const isToday = date.toDateString() === new Date().toDateString();
@@ -2070,20 +2070,25 @@ export default function App() {
                     return (
                       <div
                         key={dateStr}
+                        data-date={dateStr}
                         data-day-cell
-                        className="relative flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-100"
+                        className="relative flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-200"
                         onMouseEnter={() => setHoveredCalendarDate(dateStr)}
                         onMouseLeave={() => setHoveredCalendarDate(null)}
                         onClick={() => setSelectedCalendarDate(dateStr)}
                       >
                         <button
                           type="button"
-                          className={`w-full flex flex-col items-center justify-center rounded-md py-1 transition-colors leading-tight ${isSelected ? 'bg-[#E2F05D]/60 text-[#26402E] font-bold' : 'text-slate-500'} ${isToday ? 'font-bold' : ''}`}
-                          style={{ color: isSelected || isToday ? COLORS.darkGreen : COLORS.textMuted }}
+                          className={`w-full flex flex-col items-center justify-center rounded-md py-1 transition-colors leading-tight ${isSelected ? 'bg-[#E2F05D]/70 text-[#26402E] font-bold' : 'text-slate-500'} ${isToday ? 'font-bold' : ''}`}
+                          style={{ color: isSelected || isToday ? COLORS.darkGreen : COLORS.textMuted, backgroundColor: isToday && !isSelected ? '#E2F05D22' : undefined }}
                         >
                           <span>{date.toLocaleDateString(undefined, { weekday: 'short' })}</span>
                           <span className="text-sm font-semibold">{date.getDate()}</span>
                         </button>
+
+                        {isToday && (
+                          <div className="absolute inset-y-1 left-0 w-[3px] bg-[#26402E]/60 rounded-full pointer-events-none" />
+                        )}
 
                         {isHovered && (
                           <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 bg-white rounded-xl shadow-lg border border-slate-200 px-4 py-3 text-[11px] text-left z-50 min-w-[180px]">
@@ -2120,8 +2125,8 @@ export default function App() {
                 {PROPERTIES.map(prop => (
                   <React.Fragment key={prop.id}>
                     <div className="h-[46px] border-b border-slate-200 bg-white" />
-                    {prop.rooms.map(room => (
-                      <div key={room.id} className="flex border-b border-slate-100 h-16 relative hover:bg-[#F9F8F2] transition-colors group">
+                    {prop.rooms.map((room, roomIndex) => (
+                      <div key={room.id} className={`flex border-b border-slate-200 h-16 relative transition-colors group ${roomIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'} hover:bg-[#F9F8F2]`}>
                         {dates.map(date => {
                           const dateStr = formatDate(date);
                           const weekdayKey = getWeekdayKey(dateStr);
@@ -2157,21 +2162,24 @@ export default function App() {
                           const gapPx = 4; // Small gap so adjacent bookings touch without overlap
                           const widthCalc = `calc(${colSpan * 100}% - ${gapPx}px)`;
                           const leftOffset = '0%';
+                          const isTodayCol = dateStr === TODAY_STR;
                           return (
-                            <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-100 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/50' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/10' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
+                            <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
+                              {isTodayCol && <div className="absolute inset-y-1 left-0 w-[3px] bg-[#26402E]/60 rounded-full pointer-events-none" />}
                               {booking && shouldRenderBlock && (
-                                <div className={`absolute top-2 bottom-2 rounded-full z-0 cursor-pointer text-xs px-2 overflow-hidden whitespace-nowrap shadow-sm flex items-center transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`}
+                                <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-0 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`}
                                   style={{
                                     width: widthCalc,
                                     left: leftOffset,
                                     zIndex: 10,
+                                    outline: '1px solid rgba(255,255,255,0.35)',
                                   }}
                                   onClick={(e) => { e.stopPropagation(); setEditingBooking(booking); setIsModalOpen(true); }}
                                 >
                                   {booking.isLongTerm && hasLongTermCleaningToday && (
                                     <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block mr-1.5" title="Weekly cleaning today"></span>
                                   )}
-                                  <span className="font-bold truncate mr-1">{booking.guestName}</span>
+                                  <span className="font-semibold truncate mr-1.5">{booking.guestName}</span>
                                   {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
                                 </div>
                               )}
