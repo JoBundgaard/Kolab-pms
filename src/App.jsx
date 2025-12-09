@@ -1282,6 +1282,7 @@ export default function App() {
   
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [calendarDate, setCalendarDate] = useState(new Date());
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(TODAY_STR);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
   const TODAY_STR = formatDate(new Date());
@@ -1750,8 +1751,19 @@ export default function App() {
   };
 
   const renderCalendar = () => {
+    const formatCalendarRangeLabel = (start, end) => {
+      const sameMonthYear = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
+      const startLabel = start.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+      const endLabel = end.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+      if (sameMonthYear) {
+        return `${start.getDate()}–${end.getDate()} ${start.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}`;
+      }
+      return `${startLabel} ${start.getFullYear()} – ${endLabel}`;
+    };
+
     const startDate = new Date(calendarDate);
     const dates = getDaysArray(startDate, new Date(new Date(startDate).setDate(startDate.getDate() + 13)));
+    const endDate = dates[dates.length - 1];
     const getBookingForCell = (roomId, date) => {
       const dateStr = formatDate(date);
       return bookings.find(b => b.roomId === roomId && b.checkIn <= dateStr && b.checkOut > dateStr && b.status !== 'cancelled');
@@ -1763,23 +1775,34 @@ export default function App() {
             <h2 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Calendar</h2>
             <div className="flex space-x-2">
               <button onClick={() => { const d = new Date(calendarDate); d.setDate(d.getDate() - 7); setCalendarDate(d); }} className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-slate-200"><ChevronLeft size={20} /></button>
-              <button onClick={() => setCalendarDate(new Date())} className="px-4 py-1.5 text-sm font-medium hover:bg-white rounded-full border border-transparent hover:border-slate-200 transition-colors">Today</button>
+              <button onClick={() => { setCalendarDate(new Date()); setSelectedCalendarDate(TODAY_STR); }} className="px-4 py-1.5 text-sm font-medium hover:bg-white rounded-full border border-transparent hover:border-slate-200 transition-colors">Today</button>
               <button onClick={() => { const d = new Date(calendarDate); d.setDate(d.getDate() + 7); setCalendarDate(d); }} className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-slate-200"><ChevronRight size={20} /></button>
             </div>
           </div>
           <div className="text-sm font-medium font-serif" style={{ color: COLORS.darkGreen }}>
-             {startDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+             {formatCalendarRangeLabel(startDate, endDate)}
           </div>
         </div>
         <div className="flex-1 overflow-auto bg-slate-50">
           <div className="min-w-[1000px] bg-white">
             <div className="flex border-b border-slate-200">
               <div className="w-48 flex-shrink-0 p-4 bg-[#F9F8F2] font-bold text-xs uppercase tracking-wider sticky left-0 z-10 border-r border-slate-200" style={{ color: COLORS.darkGreen }}>Room</div>
-              {dates.map(date => (
-                <div key={date.toISOString()} className={`flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-100 ${date.toDateString() === new Date().toDateString() ? 'bg-[#E2F05D]/20 font-bold' : ''}`} style={{ color: date.toDateString() === new Date().toDateString() ? COLORS.darkGreen : COLORS.textMuted }}>
-                  {date.toLocaleDateString(undefined, { weekday: 'short' })}<br/>{date.getDate()}
-                </div>
-              ))}
+              {dates.map(date => {
+                const dateStr = formatDate(date);
+                const isToday = date.toDateString() === new Date().toDateString();
+                const isSelected = dateStr === selectedCalendarDate;
+                return (
+                  <button
+                    key={dateStr}
+                    type="button"
+                    onClick={() => setSelectedCalendarDate(dateStr)}
+                    className={`flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-100 transition-colors ${isToday ? 'font-bold' : ''} ${isSelected ? 'bg-[#E2F05D]/60 text-[#26402E] font-bold rounded-sm' : ''}`}
+                    style={{ color: isSelected || isToday ? COLORS.darkGreen : COLORS.textMuted }}
+                  >
+                    {date.toLocaleDateString(undefined, { weekday: 'short' })}<br/>{date.getDate()}
+                  </button>
+                );
+              })}
             </div>
             {PROPERTIES.map(prop => (
               <React.Fragment key={prop.id}>
@@ -1790,7 +1813,8 @@ export default function App() {
                       <span className="font-bold text-sm" style={{ color: COLORS.darkGreen }}>{room.name}</span>
                       <span className="text-[10px] uppercase tracking-wide text-slate-400">{room.type}</span>
                     </div>
-                    {dates.map(date => {
+                      {dates.map(date => {
+                        const dateStr = formatDate(date);
                        const booking = getBookingForCell(room.id, date);
                        const isStart = booking && booking.checkIn === formatDate(date);
                        let colSpan = 0;
@@ -1808,7 +1832,7 @@ export default function App() {
                        }
                        const shouldRenderBlock = (booking && isStart) || (booking && formatDate(date) === formatDate(dates[0]) && formatDate(date) < booking.checkIn);
                        return (
-                         <div key={date.toISOString()} className={`flex-1 min-w-[3rem] border-r border-slate-100 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/50' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
+                         <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-100 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/50' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/10' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
                             {booking && shouldRenderBlock && (
                                 <div className={`absolute top-2 bottom-2 left-1 rounded-lg z-0 cursor-pointer text-xs px-2 overflow-hidden whitespace-nowrap shadow-sm flex items-center transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`} style={{ width: `calc(${colSpan * 100}% - 4px)`, zIndex: 10 }} onClick={(e) => { e.stopPropagation(); setEditingBooking(booking); setIsModalOpen(true); }}>
                                     <span className="font-bold truncate mr-1">{booking.guestName}</span>
