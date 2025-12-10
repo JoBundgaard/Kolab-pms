@@ -1940,13 +1940,8 @@ export default function App() {
     const activeBookings = bookings.filter(b => b.checkIn <= TODAY_STR && b.checkOut > TODAY_STR && b.status !== 'cancelled');
     const checkingIn = bookings.filter(b => b.checkIn === TODAY_STR && b.status !== 'cancelled');
     const checkingInTomorrow = bookings.filter(b => b.checkIn === TOMORROW_STR && b.status !== 'cancelled');
-    // const checkingOut = bookings.filter(b => b.checkOut === TODAY_STR && b.status !== 'cancelled');
     const checkingOutTomorrow = bookings.filter(b => b.checkOut === TOMORROW_STR && b.status !== 'cancelled');
     
-    const revenue = bookings
-      .filter(b => new Date(b.checkIn).getMonth() === new Date().getMonth() && b.status !== 'cancelled')
-      .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
-
     const occupancyRate = ALL_ROOMS.length > 0 ? Math.round((activeBookings.length / ALL_ROOMS.length) * 100) : 0;
     const tasksTodayCount = cleaningTasks ? cleaningTasks.length : 0;
     const tasksTomorrowCount = cleaningTasksTomorrow ? cleaningTasksTomorrow.length : 0;
@@ -1960,66 +1955,70 @@ export default function App() {
       (b) => b.roomId === roomId && b.status !== 'cancelled' && b.checkIn <= TOMORROW_STR && b.checkOut > TOMORROW_STR
     );
 
-    const renderTomorrowGroup = (title, subtitle, items, accentClass) => (
-      <div className="space-y-3">
-        <div className="flex items-center text-sm font-semibold text-slate-800">
-          <span className={`w-2 h-2 rounded-full mr-2 ${accentClass}`} />
-          <span>{title}</span>
-          <span className="ml-2 text-xs text-slate-500">{subtitle}</span>
-        </div>
+    const getRoomTagClasses = (roomId, { highlightPriority, highlightWeekly } = {}) => {
+      const room = ALL_ROOMS.find(r => r.id === roomId);
+      const isTownhouse = room?.propertyName === 'Townhouse';
+      const base = 'text-xs font-bold px-2.5 py-1 rounded-full border flex items-center gap-1';
+      const palette = isTownhouse
+        ? 'bg-[#26402E] text-[#E2F05D] border-[#26402E]'
+        : 'bg-[#E2F05D] text-[#26402E] border-[#E2F05D]';
+      const priorityOutline = highlightPriority ? 'outline outline-2 outline-red-400/70' : '';
+      const weeklyOutline = highlightWeekly ? 'outline outline-2 outline-blue-400/70' : '';
+      return `${base} ${palette} ${priorityOutline} ${weeklyOutline}`.trim();
+    };
+
+    const rowIcon = (icon) => <span className="text-sm mr-2">{icon}</span>;
+
+    const renderTomorrowGroup = (items, accentDotClass) => (
+      <div className="space-y-2">
         {items.length === 0 ? (
-          <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">No rooms in this category.</div>
+          <div className="text-xs text-slate-500 bg-white border border-slate-200 rounded-lg px-3 py-2">No rooms in this category.</div>
         ) : (
-          <div className="space-y-2">
-            {items.map((task) => {
-              const incoming = findIncomingTomorrow(task.roomId);
-              const inHouse = findInHouseTomorrow(task.roomId);
-              return (
-                <div key={task.roomId} className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-white shadow-sm">
-                  <div>
-                    <div className="font-bold text-slate-800">{task.roomName}</div>
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400">{task.propertyName}</div>
+          items.map((task) => {
+            const incoming = findIncomingTomorrow(task.roomId);
+            const inHouse = findInHouseTomorrow(task.roomId);
+            const isEarly = !!(incoming && incoming.earlyCheckIn);
+            return (
+              <div key={task.roomId} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="space-y-1">
+                  <div className="flex items-center font-bold text-slate-800">
+                    <span className={`w-2 h-2 rounded-full mr-2 ${accentDotClass}`}></span>
+                    <span>{task.roomName}</span>
                   </div>
-                  <div className="text-xs text-right text-slate-600 space-y-1">
-                    {incoming && (
-                      <div className="font-semibold text-slate-700">Incoming: {incoming.guestName}</div>
-                    )}
-                    {inHouse && !incoming && (
-                      <div className="font-semibold text-slate-700">In-house: {inHouse.guestName}</div>
-                    )}
-                    {task.isLongTermCleaning && (
-                      <div className="text-blue-700 font-semibold">Weekly clean (long stay)</div>
-                    )}
-                    {incoming && incoming.earlyCheckIn && (
-                      <div className="text-orange-600 font-semibold flex items-center justify-end">
-                        <Sunrise size={14} className="mr-1" /> Early check-in
-                      </div>
-                    )}
-                  </div>
+                  <div className="text-[11px] uppercase tracking-wide text-slate-400">{task.propertyName}</div>
+                  {incoming && <div className="text-xs text-slate-600">Incoming: {incoming.guestName}</div>}
+                  {inHouse && !incoming && <div className="text-xs text-slate-600">In-house: {inHouse.guestName}</div>}
                 </div>
-              );
-            })}
-          </div>
+                <div className="flex flex-col items-end gap-1 text-xs">
+                  {task.isLongTermCleaning && <span className="text-blue-700 font-semibold">Weekly</span>}
+                  {isEarly && <span className="text-orange-600 font-semibold flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
+                  <span className={getRoomTagClasses(task.roomId, { highlightPriority: isEarly || task.isEarlyCheckinPrep, highlightWeekly: task.isLongTermCleaning })}>
+                    {incoming ? 'Incoming' : task.propertyName}
+                  </span>
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
     );
 
     return (
-      <div className="space-y-10">
+      <div className="space-y-14">
         <div className="space-y-3">
           <h2 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Today</h2>
-          <p className="text-slate-500">Snapshot for {TODAY_STR}.</p>
+          <p className="text-slate-500 text-sm">Snapshot for {TODAY_STR}.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <StatCard title="Occupancy" value={`${occupancyRate}%`} icon={<Home />} subtext={`${activeBookings.length} / ${ALL_ROOMS.length} rooms`} />
-            <StatCard title="Checking In" value={checkingIn.length} icon={<User />} subtext="Today" />
-            <StatCard title="Cleaning Tasks" value={tasksTodayCount} icon={<Bed />} subtext="To be completed today" />
-            <StatCard title="Open Issues" value={openMaintenanceIssues} icon={<Wrench />} subtext="Maintenance tickets" />
+            <StatCard title="🏠 Occupancy" value={`${occupancyRate}%`} icon={null} subtext={`${activeBookings.length} / ${ALL_ROOMS.length} rooms`} />
+            <StatCard title="👤 Check-ins" value={checkingIn.length} icon={null} subtext="Happening today" />
+            <StatCard title="🧹 Cleaning" value={tasksTodayCount} icon={null} subtext="Must be ready today" />
+            <StatCard title="⚙ Open Issues" value={openMaintenanceIssues} icon={null} subtext="Maintenance tickets" />
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-               <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
-                 <User size={20} className="mr-3 text-slate-400" />
-                 Checking In Today ({checkingIn.length})
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-6">
+            <div className="bg-white p-8 rounded-2xl shadow-md border border-red-200/70">
+               <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
+                 🟥 Checking In Today ({checkingIn.length})
                </h3>
                <div className="space-y-3">
                  {checkingIn.length === 0 ? (
@@ -2028,13 +2027,16 @@ export default function App() {
                      </p>
                  ) : (
                      checkingIn.map(booking => (
-                           <div key={booking.id} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm ${
-                             booking.earlyCheckIn ? 'bg-yellow-50/50 border-yellow-200' : 'bg-[#E2F05D]/30 border-[#E2F05D]'
+                           <div key={booking.id} className={`flex items-center justify-between p-3 rounded-xl border shadow-sm ${
+                             booking.earlyCheckIn ? 'bg-yellow-50/70 border-yellow-200' : 'bg-[#E2F05D]/40 border-[#E2F05D]'
                            }`}>
-                             <span className="text-sm font-bold text-slate-800">{booking.guestName}</span>
-                             <div className="flex items-center space-x-2">
-                               {booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500" title="Early Check-in Requested"/>}
-                               <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
+                             <div className="flex items-center text-sm font-bold text-slate-800">
+                               {rowIcon('👤')}
+                               <span>{booking.guestName}</span>
+                             </div>
+                             <div className="flex items-center gap-2">
+                               {booking.earlyCheckIn && <span className="text-[11px] font-bold text-orange-600 flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
+                               <span className={getRoomTagClasses(booking.roomId, { highlightPriority: booking.earlyCheckIn })}>
                                  {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
                                </span>
                              </div>
@@ -2044,10 +2046,9 @@ export default function App() {
                </div>
             </div>
             
-            <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-               <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
-                 <Bed size={20} className="mr-3 text-slate-400" />
-                 Today Cleaning Tasks
+            <div className="bg-white p-8 rounded-2xl shadow-lg border border-red-300/80">
+               <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
+                 🧹 Today's Cleaning Tasks ({tasksTodayCount})
                </h3>
                <div className="space-y-3">
                  {(!cleaningTasks || cleaningTasks.length === 0) ? (
@@ -2055,20 +2056,19 @@ export default function App() {
                          <CheckCircle size={18} className="mr-2" /> All rooms are clean and ready!
                      </p>
                  ) : (
-                     cleaningTasks.slice(0, 5).map(task => (
-                         <div key={task.roomId} className="flex justify-between items-center p-3 bg-red-50/50 rounded-xl border border-red-100">
-                             <span className="text-sm font-bold text-red-900">
-                               {task.roomName} <span className="font-normal opacity-70">({task.propertyName})</span>
-                               {task.isLongTermCleaning && (
-                                 <div className="text-[10px] font-bold text-blue-700 mt-1">Weekly long term clean</div>
-                               )}
-                               {task.isEarlyCheckinPrep && (
-                                 <div className="text-[11px] font-bold text-orange-600 mt-1 flex items-center"><Sunrise size={14} className="mr-1"/>Early check-in today</div>
-                               )}
-                             </span>
-                             <div className="flex items-center space-x-2">
-                                 {task.isEarlyCheckinPrep && <Sunrise size={16} className="text-orange-500" title="Early Check-in Priority"/>}
-                                 <span className="text-xs font-medium text-red-700">Priority {task.priority}</span>
+                     cleaningTasks.slice(0, 6).map(task => (
+                         <div key={task.roomId} className={`flex items-center justify-between p-3 rounded-xl border shadow-sm ${task.isEarlyCheckinPrep ? 'bg-orange-50/60 border-orange-200' : 'bg-white border-slate-200'}`}>
+                             <div className="flex items-center text-sm font-bold text-slate-800">
+                               {rowIcon('🧹')}
+                               <span>{task.roomName}</span>
+                             </div>
+                             <div className="flex items-center gap-2 text-xs">
+                               {task.isLongTermCleaning && <span className="text-blue-700 font-semibold">Weekly</span>}
+                               {task.isEarlyCheckinPrep && <span className="text-orange-600 font-semibold flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
+                               <span className={getRoomTagClasses(task.roomId, { highlightPriority: task.isEarlyCheckinPrep || task.priority <= 2, highlightWeekly: task.isLongTermCleaning })}>
+                                 {task.propertyName}
+                               </span>
+                               <span className="px-2 py-0.5 rounded-full text-[11px] font-bold border border-red-200 text-red-700">Prio {task.priority}</span>
                              </div>
                          </div>
                      ))
@@ -2076,10 +2076,9 @@ export default function App() {
                </div>
             </div>
 
-            <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-               <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
-                 <LogOut size={20} className="mr-3 text-slate-400" />
-                 Checking Out Tomorrow ({checkingOutTomorrow.length})
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+               <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
+                 ➡️ Checking Out Tomorrow ({checkingOutTomorrow.length})
                </h3>
                <div className="space-y-3">
                  {checkingOutTomorrow.length === 0 ? (
@@ -2090,9 +2089,9 @@ export default function App() {
                        checkingOutTomorrow.map(booking => {
                        const roomName = ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'Unknown room';
                        return (
-                         <div key={booking.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
-                           <span className="text-sm font-bold text-slate-700">{booking.guestName}</span>
-                           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
+                         <div key={booking.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                           <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('➡️')}<span>{booking.guestName}</span></div>
+                           <span className={getRoomTagClasses(booking.roomId)}>
                              {roomName}
                            </span>
                          </div>
@@ -2104,20 +2103,19 @@ export default function App() {
           </div>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3 pt-6">
           <h2 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Tomorrow</h2>
-          <p className="text-slate-500">Plan for {TOMORROW_STR}.</p>
+          <p className="text-slate-500 text-sm">Plan for {TOMORROW_STR}.</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <StatCard title="Check-ins" value={checkingInTomorrow.length} icon={<User />} subtext="Arriving tomorrow" />
-            <StatCard title="Check-outs" value={checkingOutTomorrow.length} icon={<LogOut />} subtext="Departing tomorrow" />
-            <StatCard title="Cleaning Tasks" value={tasksTomorrowCount} icon={<Bed />} subtext="Scheduled for tomorrow" />
+            <StatCard title="👤 Check-ins" value={checkingInTomorrow.length} icon={null} subtext="Arriving tomorrow" />
+            <StatCard title="➡️ Check-outs" value={checkingOutTomorrow.length} icon={null} subtext="Departing tomorrow" />
+            <StatCard title="🧹 Cleaning" value={tasksTomorrowCount} icon={null} subtext="Scheduled for tomorrow" />
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-              <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
-                <User size={20} className="mr-3 text-slate-400" />
-                Checking In Tomorrow ({checkingInTomorrow.length})
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-6">
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+              <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
+                👤 Checking In Tomorrow ({checkingInTomorrow.length})
               </h3>
               <div className="space-y-3">
                 {checkingInTomorrow.length === 0 ? (
@@ -2126,11 +2124,11 @@ export default function App() {
                     </p>
                 ) : (
                     checkingInTomorrow.map(booking => (
-                          <div key={booking.id} className="flex justify-between items-center p-3 rounded-xl border shadow-sm bg-slate-50">
-                            <span className="text-sm font-bold text-slate-800">{booking.guestName}</span>
-                            <div className="flex items-center space-x-2">
-                              {booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500" title="Early check-in"/>}
-                              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                          <div key={booking.id} className="flex items-center justify-between p-3 rounded-xl border shadow-sm bg-slate-50">
+                            <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('👤')}<span>{booking.guestName}</span></div>
+                            <div className="flex items-center gap-2">
+                              {booking.earlyCheckIn && <span className="text-[11px] font-bold text-orange-600 flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
+                              <span className={getRoomTagClasses(booking.roomId, { highlightPriority: booking.earlyCheckIn })}>
                                 {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
                               </span>
                             </div>
@@ -2141,22 +2139,35 @@ export default function App() {
             </div>
 
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB] lg:col-span-2">
-              <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-6">
+              <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h3 className="font-serif font-bold text-xl mb-2" style={{ color: COLORS.darkGreen }}>Tomorrow's Cleaning Plan</h3>
+                  <h3 className="font-serif font-bold text-xl mb-1" style={{ color: COLORS.darkGreen }}>Tomorrow's Cleaning Plan</h3>
                   <p className="text-slate-500 text-sm">Prioritized by check-in type and long-stay weekly cleans.</p>
                 </div>
-                <div className="text-xs text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 leading-snug max-w-md">
-                  <div>High = early check-in tomorrow (ready before 13:30).</div>
-                  <div>Normal = standard turnovers (before 15:00).</div>
-                  <div>Low = weekly long-stay cleans (flexible).</div>
-                </div>
+                <span className="text-xs text-slate-500 px-2 py-1 rounded-full border border-slate-200 cursor-help" title="High = early check-in tomorrow (ready before 13:30). Normal = standard turnovers (before 15:00). Low = weekly long-stay cleans (flexible).">i</span>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {renderTomorrowGroup('High Priority', 'Clean before 13:30', tomorrowHighPriorityRooms, 'bg-orange-500')}
-                {renderTomorrowGroup('Normal Priority', 'Clean before 15:00', tomorrowNormalPriorityRooms, 'bg-slate-400')}
-                {renderTomorrowGroup('Low Priority', 'Weekly long-stay cleans', tomorrowLowPriorityRooms, 'bg-blue-600')}
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 shadow-sm">
+                  <div className="flex items-center text-sm font-semibold text-orange-700 mb-3">
+                    <span className="mr-2">🔥</span> High Priority <span className="ml-2 text-xs text-orange-600">Clean before 13:30</span>
+                  </div>
+                  {renderTomorrowGroup(tomorrowHighPriorityRooms, 'bg-orange-500')}
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                  <div className="flex items-center text-sm font-semibold text-slate-800 mb-3">
+                    <span className="mr-2">✔</span> Normal Priority <span className="ml-2 text-xs text-slate-500">Clean before 15:00</span>
+                  </div>
+                  {renderTomorrowGroup(tomorrowNormalPriorityRooms, 'bg-slate-400')}
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 shadow-sm">
+                  <div className="flex items-center text-sm font-semibold text-blue-800 mb-3">
+                    <span className="mr-2">🌙</span> Low Priority <span className="ml-2 text-xs text-blue-700">Weekly long-stay</span>
+                  </div>
+                  {renderTomorrowGroup(tomorrowLowPriorityRooms, 'bg-blue-600')}
+                </div>
               </div>
             </div>
           </div>
