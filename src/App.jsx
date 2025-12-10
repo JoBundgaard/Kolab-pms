@@ -1939,6 +1939,7 @@ export default function App() {
   const renderDashboard = () => {
     const activeBookings = bookings.filter(b => b.checkIn <= TODAY_STR && b.checkOut > TODAY_STR && b.status !== 'cancelled');
     const checkingIn = bookings.filter(b => b.checkIn === TODAY_STR && b.status !== 'cancelled');
+    const checkingOutToday = bookings.filter(b => b.checkOut === TODAY_STR && b.status !== 'cancelled');
     const checkingInTomorrow = bookings.filter(b => b.checkIn === TOMORROW_STR && b.status !== 'cancelled');
     const checkingOutTomorrow = bookings.filter(b => b.checkOut === TOMORROW_STR && b.status !== 'cancelled');
     
@@ -1946,13 +1947,18 @@ export default function App() {
     const tasksTodayCount = cleaningTasks ? cleaningTasks.length : 0;
     const tasksTomorrowCount = cleaningTasksTomorrow ? cleaningTasksTomorrow.length : 0;
     const openMaintenanceIssues = maintenanceIssues.filter(i => i.status !== 'completed').length;
+    const {
+      high: todayHighPriorityRooms,
+      normal: todayNormalPriorityRooms,
+      low: todayLowPriorityRooms,
+    } = splitTomorrowCleaningByPriority(cleaningTasks, bookings, TODAY_STR);
 
-    const findIncomingTomorrow = (roomId) => bookings.find(
-      (b) => b.roomId === roomId && b.checkIn === TOMORROW_STR && b.status !== 'cancelled'
+    const findIncomingForDate = (roomId, targetDate) => bookings.find(
+      (b) => b.roomId === roomId && b.checkIn === targetDate && b.status !== 'cancelled'
     );
 
-    const findInHouseTomorrow = (roomId) => bookings.find(
-      (b) => b.roomId === roomId && b.status !== 'cancelled' && b.checkIn <= TOMORROW_STR && b.checkOut > TOMORROW_STR
+    const findInHouseForDate = (roomId, targetDate) => bookings.find(
+      (b) => b.roomId === roomId && b.status !== 'cancelled' && b.checkIn <= targetDate && b.checkOut > targetDate
     );
 
     const getRoomTagClasses = (roomId, { highlightPriority, highlightWeekly } = {}) => {
@@ -1969,14 +1975,14 @@ export default function App() {
 
     const rowIcon = (icon) => <span className="text-sm mr-2">{icon}</span>;
 
-    const renderTomorrowGroup = (items, accentDotClass) => (
+    const renderPlanGroup = (items, accentDotClass, targetDate) => (
       <div className="space-y-2">
         {items.length === 0 ? (
           <div className="text-xs text-slate-500 bg-white border border-slate-200 rounded-lg px-3 py-2">No rooms in this category.</div>
         ) : (
           items.map((task) => {
-            const incoming = findIncomingTomorrow(task.roomId);
-            const inHouse = findInHouseTomorrow(task.roomId);
+            const incoming = findIncomingForDate(task.roomId, targetDate);
+            const inHouse = findInHouseForDate(task.roomId, targetDate);
             const isEarly = !!(incoming && incoming.earlyCheckIn);
             return (
               <div key={task.roomId} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -2016,36 +2022,31 @@ export default function App() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-6">
-            <div className="bg-white p-8 rounded-2xl shadow-md border border-red-200/70">
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
                <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
-                 🟥 Checking In Today ({checkingIn.length})
+                 ⬅️ Checking Out Today ({checkingOutToday.length})
                </h3>
                <div className="space-y-3">
-                 {checkingIn.length === 0 ? (
-                     <p className="text-green-600 text-sm flex items-center bg-green-50 p-4 rounded-xl border border-green-100">
-                         <CheckCircle size={18} className="mr-2" /> No check-ins scheduled.
+                 {checkingOutToday.length === 0 ? (
+                     <p className="text-slate-400 text-sm p-4 rounded-xl border border-dashed border-slate-200 text-center">
+                         No check-outs scheduled for today.
                      </p>
                  ) : (
-                     checkingIn.map(booking => (
-                           <div key={booking.id} className={`flex items-center justify-between p-3 rounded-xl border shadow-sm ${
-                             booking.earlyCheckIn ? 'bg-yellow-50/70 border-yellow-200' : 'bg-[#E2F05D]/40 border-[#E2F05D]'
-                           }`}>
-                             <div className="flex items-center text-sm font-bold text-slate-800">
-                               {rowIcon('👤')}
-                               <span>{booking.guestName}</span>
-                             </div>
-                             <div className="flex items-center gap-2">
-                               {booking.earlyCheckIn && <span className="text-[11px] font-bold text-orange-600 flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
-                               <span className={getRoomTagClasses(booking.roomId, { highlightPriority: booking.earlyCheckIn })}>
-                                 {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
-                               </span>
-                             </div>
-                           </div>
-                     ))
+                       checkingOutToday.map(booking => {
+                       const roomName = ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'Unknown room';
+                       return (
+                         <div key={booking.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                           <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('⬅️')}<span>{booking.guestName}</span></div>
+                           <span className={getRoomTagClasses(booking.roomId)}>
+                             {roomName}
+                           </span>
+                         </div>
+                       );
+                       })
                  )}
                </div>
             </div>
-            
+
             <div className="bg-white p-8 rounded-2xl shadow-lg border border-red-300/80">
                <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
                  🧹 Today's Cleaning Tasks ({tasksTodayCount})
@@ -2076,29 +2077,67 @@ export default function App() {
                </div>
             </div>
 
-            <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+            <div className="bg-white p-8 rounded-2xl shadow-md border border-red-200/70">
                <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
-                 ➡️ Checking Out Tomorrow ({checkingOutTomorrow.length})
+                 🟥 Checking In Today ({checkingIn.length})
                </h3>
                <div className="space-y-3">
-                 {checkingOutTomorrow.length === 0 ? (
-                     <p className="text-slate-400 text-sm p-4 rounded-xl border border-dashed border-slate-200 text-center">
-                         No check-outs scheduled for tomorrow.
+                 {checkingIn.length === 0 ? (
+                     <p className="text-green-600 text-sm flex items-center bg-green-50 p-4 rounded-xl border border-green-100">
+                         <CheckCircle size={18} className="mr-2" /> No check-ins scheduled.
                      </p>
                  ) : (
-                       checkingOutTomorrow.map(booking => {
-                       const roomName = ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'Unknown room';
-                       return (
-                         <div key={booking.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                           <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('➡️')}<span>{booking.guestName}</span></div>
-                           <span className={getRoomTagClasses(booking.roomId)}>
-                             {roomName}
-                           </span>
-                         </div>
-                       );
-                       })
+                     checkingIn.map(booking => (
+                           <div key={booking.id} className={`flex items-center justify-between p-3 rounded-xl border shadow-sm ${
+                             booking.earlyCheckIn ? 'bg-yellow-50/70 border-yellow-200' : 'bg-[#E2F05D]/40 border-[#E2F05D]'
+                           }`}>
+                             <div className="flex items-center text-sm font-bold text-slate-800">
+                               {rowIcon('👤')}
+                               <span>{booking.guestName}</span>
+                             </div>
+                             <div className="flex items-center gap-2">
+                               {booking.earlyCheckIn && <span className="text-[11px] font-bold text-orange-600 flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
+                               <span className={getRoomTagClasses(booking.roomId, { highlightPriority: booking.earlyCheckIn })}>
+                                 {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
+                               </span>
+                             </div>
+                           </div>
+                     ))
                  )}
                </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB] mt-8">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="font-serif font-bold text-xl mb-1" style={{ color: COLORS.darkGreen }}>Today's Cleaning Plan</h3>
+                <p className="text-slate-500 text-sm">Prioritized by today's arrivals and weekly long-stay cleans.</p>
+              </div>
+              <span className="text-xs text-slate-500 px-2 py-1 rounded-full border border-slate-200 cursor-help" title="High = early check-in today (ready before 13:30). Normal = standard turnovers (before 15:00). Low = weekly long-stay cleans (flexible).">i</span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 shadow-sm">
+                <div className="flex items-center text-sm font-semibold text-orange-700 mb-3">
+                  <span className="mr-2">🔥</span> High Priority <span className="ml-2 text-xs text-orange-600">Clean before 13:30</span>
+                </div>
+                {renderPlanGroup(todayHighPriorityRooms, 'bg-orange-500', TODAY_STR)}
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                <div className="flex items-center text-sm font-semibold text-slate-800 mb-3">
+                  <span className="mr-2">✔</span> Normal Priority <span className="ml-2 text-xs text-slate-500">Clean before 15:00</span>
+                </div>
+                {renderPlanGroup(todayNormalPriorityRooms, 'bg-slate-400', TODAY_STR)}
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 shadow-sm">
+                <div className="flex items-center text-sm font-semibold text-blue-800 mb-3">
+                  <span className="mr-2">🌙</span> Low Priority <span className="ml-2 text-xs text-blue-700">Weekly long-stay</span>
+                </div>
+                {renderPlanGroup(todayLowPriorityRooms, 'bg-blue-600', TODAY_STR)}
+              </div>
             </div>
           </div>
         </div>
@@ -2111,8 +2150,7 @@ export default function App() {
             <StatCard title="➡️ Check-outs" value={checkingOutTomorrow.length} icon={null} subtext="Departing tomorrow" />
             <StatCard title="🧹 Cleaning" value={tasksTomorrowCount} icon={null} subtext="Scheduled for tomorrow" />
           </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-6">
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
               <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
                 👤 Checking In Tomorrow ({checkingInTomorrow.length})
@@ -2138,36 +2176,61 @@ export default function App() {
               </div>
             </div>
 
-            <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB] lg:col-span-2">
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h3 className="font-serif font-bold text-xl mb-1" style={{ color: COLORS.darkGreen }}>Tomorrow's Cleaning Plan</h3>
-                  <p className="text-slate-500 text-sm">Prioritized by check-in type and long-stay weekly cleans.</p>
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+               <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
+                 ➡️ Checking Out Tomorrow ({checkingOutTomorrow.length})
+               </h3>
+               <div className="space-y-3">
+                 {checkingOutTomorrow.length === 0 ? (
+                     <p className="text-slate-400 text-sm p-4 rounded-xl border border-dashed border-slate-200 text-center">
+                         No check-outs scheduled for tomorrow.
+                     </p>
+                 ) : (
+                       checkingOutTomorrow.map(booking => {
+                       const roomName = ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'Unknown room';
+                       return (
+                         <div key={booking.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                           <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('➡️')}<span>{booking.guestName}</span></div>
+                           <span className={getRoomTagClasses(booking.roomId)}>
+                             {roomName}
+                           </span>
+                         </div>
+                       );
+                       })
+                 )}
+               </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB] mt-8">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="font-serif font-bold text-xl mb-1" style={{ color: COLORS.darkGreen }}>Tomorrow's Cleaning Plan</h3>
+                <p className="text-slate-500 text-sm">Prioritized by check-in type and long-stay weekly cleans.</p>
+              </div>
+              <span className="text-xs text-slate-500 px-2 py-1 rounded-full border border-slate-200 cursor-help" title="High = early check-in tomorrow (ready before 13:30). Normal = standard turnovers (before 15:00). Low = weekly long-stay cleans (flexible).">i</span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 shadow-sm">
+                <div className="flex items-center text-sm font-semibold text-orange-700 mb-3">
+                  <span className="mr-2">🔥</span> High Priority <span className="ml-2 text-xs text-orange-600">Clean before 13:30</span>
                 </div>
-                <span className="text-xs text-slate-500 px-2 py-1 rounded-full border border-slate-200 cursor-help" title="High = early check-in tomorrow (ready before 13:30). Normal = standard turnovers (before 15:00). Low = weekly long-stay cleans (flexible).">i</span>
+                {renderPlanGroup(tomorrowHighPriorityRooms, 'bg-orange-500', TOMORROW_STR)}
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 shadow-sm">
-                  <div className="flex items-center text-sm font-semibold text-orange-700 mb-3">
-                    <span className="mr-2">🔥</span> High Priority <span className="ml-2 text-xs text-orange-600">Clean before 13:30</span>
-                  </div>
-                  {renderTomorrowGroup(tomorrowHighPriorityRooms, 'bg-orange-500')}
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                <div className="flex items-center text-sm font-semibold text-slate-800 mb-3">
+                  <span className="mr-2">✔</span> Normal Priority <span className="ml-2 text-xs text-slate-500">Clean before 15:00</span>
                 </div>
+                {renderPlanGroup(tomorrowNormalPriorityRooms, 'bg-slate-400', TOMORROW_STR)}
+              </div>
 
-                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                  <div className="flex items-center text-sm font-semibold text-slate-800 mb-3">
-                    <span className="mr-2">✔</span> Normal Priority <span className="ml-2 text-xs text-slate-500">Clean before 15:00</span>
-                  </div>
-                  {renderTomorrowGroup(tomorrowNormalPriorityRooms, 'bg-slate-400')}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 shadow-sm">
+                <div className="flex items-center text-sm font-semibold text-blue-800 mb-3">
+                  <span className="mr-2">🌙</span> Low Priority <span className="ml-2 text-xs text-blue-700">Weekly long-stay</span>
                 </div>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 shadow-sm">
-                  <div className="flex items-center text-sm font-semibold text-blue-800 mb-3">
-                    <span className="mr-2">🌙</span> Low Priority <span className="ml-2 text-xs text-blue-700">Weekly long-stay</span>
-                  </div>
-                  {renderTomorrowGroup(tomorrowLowPriorityRooms, 'bg-blue-600')}
-                </div>
+                {renderPlanGroup(tomorrowLowPriorityRooms, 'bg-blue-600', TOMORROW_STR)}
               </div>
             </div>
           </div>
