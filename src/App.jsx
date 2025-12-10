@@ -195,6 +195,97 @@ const getDaySummaryForDate = (dateStr, bookings) => {
   };
 };
 
+// Builds cleaning tasks for a specific date based on room status, check-outs, and long-stay weekly cleans.
+function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
+  const checkoutsForDate = bookings
+    .filter((b) => b.checkOut === targetDateStr && b.status !== 'cancelled' && b.status !== 'checked-out');
+
+  const checkoutRoomIds = checkoutsForDate.map((b) => b.roomId);
+  const weekdayKey = getWeekdayKey(targetDateStr);
+
+  const longTermCleaningRooms = new Set(
+    bookings
+      .filter((b) => {
+        if (!b.isLongTerm) return false;
+        if (b.status === 'cancelled') return false;
+        if (!b.weeklyCleaningDay) return false;
+        if (b.weeklyCleaningDay !== weekdayKey) return false;
+        // Only treat as weekly clean when guest is already in-house before target date.
+        return b.checkIn < targetDateStr && b.checkOut > targetDateStr;
+      })
+      .map((b) => b.roomId)
+  );
+
+  const allRoomsData = ALL_ROOMS.map((room) => {
+    const statusData = roomStatuses[room.id] || {};
+    const storedStatus = statusData.status || 'clean';
+
+    const isCheckout = checkoutRoomIds.includes(room.id);
+    const checkoutBooking = isCheckout ? checkoutsForDate.find((b) => b.roomId === room.id) : null;
+    const needsEarlyCheckinPrep = !!(checkoutBooking && checkoutBooking.earlyCheckIn);
+    const isLongTermClean = longTermCleaningRooms.has(room.id);
+
+    let calculatedPriority = 3;
+
+    if (isCheckout) {
+      calculatedPriority = needsEarlyCheckinPrep ? 1 : 2;
+    } else if (storedStatus === 'dirty') {
+      calculatedPriority = 3;
+    }
+
+    if (needsEarlyCheckinPrep) {
+      calculatedPriority = 1;
+    }
+
+    return {
+      roomId: room.id,
+      roomName: room.name,
+      propertyName: room.propertyName,
+      roomType: room.type,
+      status: isCheckout ? 'checkout_dirty' : storedStatus,
+      assignedStaff: statusData.assignedStaff || 'Unassigned',
+      priority: statusData.priority !== undefined ? Number(statusData.priority) : calculatedPriority,
+      needsCleaning: isCheckout || storedStatus === 'dirty' || isLongTermClean,
+      isEarlyCheckinPrep: needsEarlyCheckinPrep,
+      isLongTermCleaning: isLongTermClean,
+      checkoutBooking,
+    };
+  });
+
+  return allRoomsData
+    .filter((r) => r.needsCleaning)
+    .sort((a, b) => a.priority - b.priority || a.roomName.localeCompare(b.roomName));
+}
+
+// Splits tomorrow's cleaning tasks into priority buckets for planning.
+function splitTomorrowCleaningByPriority(cleaningTasksTomorrow, bookings, tomorrowStr) {
+  const high = [];
+  const normal = [];
+  const low = [];
+
+  cleaningTasksTomorrow.forEach((task) => {
+    if (task.isLongTermCleaning && task.status !== 'checkout_dirty') {
+      low.push(task);
+      return;
+    }
+
+    const incomingTomorrow = bookings.find(
+      (b) => b.roomId === task.roomId && b.checkIn === tomorrowStr && b.status !== 'cancelled'
+    );
+    const hasEarlyIncoming = !!(incomingTomorrow && incomingTomorrow.earlyCheckIn);
+    const isEarlyPrepFlag = !!task.isEarlyCheckinPrep;
+
+    if (hasEarlyIncoming || isEarlyPrepFlag) {
+      high.push(task);
+      return;
+    }
+
+    normal.push(task);
+  });
+
+  return { high, normal, low };
+}
+
 // --- Custom Date Picker Component ---
 const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), minDate }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -1515,70 +1606,24 @@ export default function App() {
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
-  const cleaningTasks = useMemo(() => {
-    const checkoutsToday = bookings
-        .filter(b => b.checkOut === TODAY_STR && b.status !== 'cancelled' && b.status !== 'checked-out');
-        
-    const checkoutRoomIds = checkoutsToday.map(b => b.roomId);
+  const cleaningTasks = useMemo(
+    () => buildCleaningTasksForDate(TODAY_STR, bookings, roomStatuses),
+    [bookings, roomStatuses, TODAY_STR]
+  );
 
-    const longTermCleaningRoomsToday = new Set(
-      bookings
-        .filter((b) => {
-          if (!b.isLongTerm) return false;
-          if (b.status === 'cancelled') return false;
+  const cleaningTasksTomorrow = useMemo(
+    () => buildCleaningTasksForDate(TOMORROW_STR, bookings, roomStatuses),
+    [bookings, roomStatuses, TOMORROW_STR]
+  );
 
-          const dateStr = TODAY_STR;
-          const weekdayKey = getWeekdayKey(dateStr);
-
-          return (
-            b.checkIn <= dateStr &&
-            b.checkOut > dateStr &&
-            b.weeklyCleaningDay === weekdayKey
-          );
-        })
-        .map((b) => b.roomId)
-    );
-
-    const allRoomsData = ALL_ROOMS.map(room => {
-        const statusData = roomStatuses[room.id] || {};
-        const storedStatus = statusData.status || 'clean';
-        
-        const isCheckout = checkoutRoomIds.includes(room.id);
-        const checkoutBooking = isCheckout ? checkoutsToday.find(b => b.roomId === room.id) : null;
-        const needsEarlyCheckinPrep = checkoutBooking && checkoutBooking.earlyCheckIn;
-        const isLongTermCleanToday = longTermCleaningRoomsToday.has(room.id);
-        
-        let calculatedPriority = 3; 
-
-        if (isCheckout) {
-            calculatedPriority = needsEarlyCheckinPrep ? 1 : 2; 
-        } else if (storedStatus === 'dirty') {
-            calculatedPriority = 3; 
-        }
-        
-        if (needsEarlyCheckinPrep) {
-            calculatedPriority = 1;
-        }
-
-        return {
-            roomId: room.id,
-            roomName: room.name,
-            propertyName: room.propertyName,
-            roomType: room.type,
-            status: isCheckout ? 'checkout_dirty' : storedStatus, 
-            assignedStaff: statusData.assignedStaff || 'Unassigned',
-            priority: statusData.priority !== undefined ? Number(statusData.priority) : calculatedPriority,
-            needsCleaning: isCheckout || storedStatus === 'dirty' || isLongTermCleanToday,
-            isEarlyCheckinPrep: needsEarlyCheckinPrep,
-            isLongTermCleaning: isLongTermCleanToday,
-            checkoutBooking: checkoutBooking
-        };
-    });
-
-    return allRoomsData
-        .filter(r => r.needsCleaning)
-        .sort((a, b) => a.priority - b.priority || a.roomName.localeCompare(b.roomName));
-  }, [bookings, roomStatuses, TODAY_STR]);
+  const {
+    high: tomorrowHighPriorityRooms,
+    normal: tomorrowNormalPriorityRooms,
+    low: tomorrowLowPriorityRooms,
+  } = useMemo(
+    () => splitTomorrowCleaningByPriority(cleaningTasksTomorrow, bookings, TOMORROW_STR),
+    [cleaningTasksTomorrow, bookings, TOMORROW_STR]
+  );
 
   const checkBookingConflict = useCallback((newBookingData, excludeBookingId = null) => {
     const newCheckIn = new Date(newBookingData.checkIn).getTime();
@@ -1905,6 +1950,58 @@ export default function App() {
     const tasksTodayCount = cleaningTasks ? cleaningTasks.length : 0;
     const openMaintenanceIssues = maintenanceIssues.filter(i => i.status !== 'completed').length;
 
+    const findIncomingTomorrow = (roomId) => bookings.find(
+      (b) => b.roomId === roomId && b.checkIn === TOMORROW_STR && b.status !== 'cancelled'
+    );
+
+    const findInHouseTomorrow = (roomId) => bookings.find(
+      (b) => b.roomId === roomId && b.status !== 'cancelled' && b.checkIn <= TOMORROW_STR && b.checkOut > TOMORROW_STR
+    );
+
+    const renderTomorrowGroup = (title, subtitle, items, accentClass) => (
+      <div className="space-y-3">
+        <div className="flex items-center text-sm font-semibold text-slate-800">
+          <span className={`w-2 h-2 rounded-full mr-2 ${accentClass}`} />
+          <span>{title}</span>
+          <span className="ml-2 text-xs text-slate-500">{subtitle}</span>
+        </div>
+        {items.length === 0 ? (
+          <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">No rooms in this category.</div>
+        ) : (
+          <div className="space-y-2">
+            {items.map((task) => {
+              const incoming = findIncomingTomorrow(task.roomId);
+              const inHouse = findInHouseTomorrow(task.roomId);
+              return (
+                <div key={task.roomId} className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-white shadow-sm">
+                  <div>
+                    <div className="font-bold text-slate-800">{task.roomName}</div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-400">{task.propertyName}</div>
+                  </div>
+                  <div className="text-xs text-right text-slate-600 space-y-1">
+                    {incoming && (
+                      <div className="font-semibold text-slate-700">Incoming: {incoming.guestName}</div>
+                    )}
+                    {inHouse && !incoming && (
+                      <div className="font-semibold text-slate-700">In-house: {inHouse.guestName}</div>
+                    )}
+                    {task.isLongTermCleaning && (
+                      <div className="text-blue-700 font-semibold">Weekly clean (long stay)</div>
+                    )}
+                    {incoming && incoming.earlyCheckIn && (
+                      <div className="text-orange-600 font-semibold flex items-center justify-end">
+                        <Sunrise size={14} className="mr-1" /> Early check-in
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+
     return (
       <div className="space-y-8">
         <div>
@@ -2101,6 +2198,26 @@ export default function App() {
                             </div>
                             <div className="flex justify-between">
                               <span className="text-slate-500">Early check-ins</span>
+
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-6">
+            <div>
+              <h3 className="font-serif font-bold text-xl mb-2" style={{ color: COLORS.darkGreen }}>Tomorrow's Cleaning Plan</h3>
+              <p className="text-slate-500 text-sm">Prioritized by check-in type and long-stay weekly cleans.</p>
+            </div>
+            <div className="text-xs text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 leading-snug max-w-md">
+              <div>High = early check-in tomorrow (ready before 13:30).</div>
+              <div>Normal = standard turnovers (before 15:00).</div>
+              <div>Low = weekly long-stay cleans (flexible).</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {renderTomorrowGroup('High Priority', 'Clean before 13:30', tomorrowHighPriorityRooms, 'bg-orange-500')}
+            {renderTomorrowGroup('Normal Priority', 'Clean before 15:00', tomorrowNormalPriorityRooms, 'bg-slate-400')}
+            {renderTomorrowGroup('Low Priority', 'Weekly long-stay cleans', tomorrowLowPriorityRooms, 'bg-blue-600')}
+          </div>
+        </div>
                               <span className="font-semibold text-orange-600">{summary.earlyCheckIns}</span>
                             </div>
                             <div className="flex justify-between">
