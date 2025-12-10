@@ -1939,6 +1939,7 @@ export default function App() {
   const renderDashboard = () => {
     const activeBookings = bookings.filter(b => b.checkIn <= TODAY_STR && b.checkOut > TODAY_STR && b.status !== 'cancelled');
     const checkingIn = bookings.filter(b => b.checkIn === TODAY_STR && b.status !== 'cancelled');
+    const checkingInTomorrow = bookings.filter(b => b.checkIn === TOMORROW_STR && b.status !== 'cancelled');
     // const checkingOut = bookings.filter(b => b.checkOut === TODAY_STR && b.status !== 'cancelled');
     const checkingOutTomorrow = bookings.filter(b => b.checkOut === TOMORROW_STR && b.status !== 'cancelled');
     
@@ -1948,6 +1949,7 @@ export default function App() {
 
     const occupancyRate = ALL_ROOMS.length > 0 ? Math.round((activeBookings.length / ALL_ROOMS.length) * 100) : 0;
     const tasksTodayCount = cleaningTasks ? cleaningTasks.length : 0;
+    const tasksTomorrowCount = cleaningTasksTomorrow ? cleaningTasksTomorrow.length : 0;
     const openMaintenanceIssues = maintenanceIssues.filter(i => i.status !== 'completed').length;
 
     const findIncomingTomorrow = (roomId) => bookings.find(
@@ -2003,99 +2005,160 @@ export default function App() {
     );
 
     return (
-      <div className="space-y-8">
-        <div>
-          <h2 className="text-3xl font-serif font-bold mb-2" style={{ color: COLORS.darkGreen }}>Overview</h2>
-          <p className="text-slate-500">Welcome back to Kolab Living.</p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <StatCard title="Occupancy" value={`${occupancyRate}%`} icon={<Home />} subtext={`${activeBookings.length} / ${ALL_ROOMS.length} rooms`} />
-          <StatCard title="Checking In" value={checkingIn.length} icon={<User />} subtext="Today" />
-          <StatCard title="Cleaning Tasks" value={tasksTodayCount} icon={<Bed />} subtext="To be completed today" />
-          <StatCard title="Open Issues" value={openMaintenanceIssues} icon={<Wrench />} subtext="Maintenance tickets" />
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-             <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
-               <User size={20} className="mr-3 text-slate-400" />
-               Checking In Today ({checkingIn.length})
-             </h3>
-             <div className="space-y-3">
-               {checkingIn.length === 0 ? (
-                   <p className="text-green-600 text-sm flex items-center bg-green-50 p-4 rounded-xl border border-green-100">
-                       <CheckCircle size={18} className="mr-2" /> No check-ins scheduled.
-                   </p>
-               ) : (
-                   checkingIn.map(booking => (
-                         <div key={booking.id} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm ${
-                           booking.earlyCheckIn ? 'bg-yellow-50/50 border-yellow-200' : 'bg-[#E2F05D]/30 border-[#E2F05D]'
-                         }`}>
-                           <span className="text-sm font-bold text-slate-800">{booking.guestName}</span>
-                           <div className="flex items-center space-x-2">
-                             {booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500" title="Early Check-in Requested"/>}
-                             <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
-                               {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
-                             </span>
-                           </div>
-                         </div>
-                   ))
-               )}
-             </div>
+      <div className="space-y-10">
+        <div className="space-y-3">
+          <h2 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Today</h2>
+          <p className="text-slate-500">Snapshot for {TODAY_STR}.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <StatCard title="Occupancy" value={`${occupancyRate}%`} icon={<Home />} subtext={`${activeBookings.length} / ${ALL_ROOMS.length} rooms`} />
+            <StatCard title="Checking In" value={checkingIn.length} icon={<User />} subtext="Today" />
+            <StatCard title="Cleaning Tasks" value={tasksTodayCount} icon={<Bed />} subtext="To be completed today" />
+            <StatCard title="Open Issues" value={openMaintenanceIssues} icon={<Wrench />} subtext="Maintenance tickets" />
           </div>
-          
-          <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-             <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
-               <LogOut size={20} className="mr-3 text-slate-400" />
-               Checking Out Tomorrow ({checkingOutTomorrow.length})
-             </h3>
-             <div className="space-y-3">
-               {checkingOutTomorrow.length === 0 ? (
-                   <p className="text-slate-400 text-sm p-4 rounded-xl border border-dashed border-slate-200 text-center">
-                       No check-outs scheduled for tomorrow.
-                   </p>
-               ) : (
-                     checkingOutTomorrow.map(booking => {
-                     const roomName = ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'Unknown room';
-                     return (
-                       <div key={booking.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
-                         <span className="text-sm font-bold text-slate-700">{booking.guestName}</span>
-                         <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
-                           {roomName}
-                         </span>
-                       </div>
-                     );
-                     })
-               )}
-             </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
+               <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
+                 <User size={20} className="mr-3 text-slate-400" />
+                 Checking In Today ({checkingIn.length})
+               </h3>
+               <div className="space-y-3">
+                 {checkingIn.length === 0 ? (
+                     <p className="text-green-600 text-sm flex items-center bg-green-50 p-4 rounded-xl border border-green-100">
+                         <CheckCircle size={18} className="mr-2" /> No check-ins scheduled.
+                     </p>
+                 ) : (
+                     checkingIn.map(booking => (
+                           <div key={booking.id} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm ${
+                             booking.earlyCheckIn ? 'bg-yellow-50/50 border-yellow-200' : 'bg-[#E2F05D]/30 border-[#E2F05D]'
+                           }`}>
+                             <span className="text-sm font-bold text-slate-800">{booking.guestName}</span>
+                             <div className="flex items-center space-x-2">
+                               {booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500" title="Early Check-in Requested"/>}
+                               <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
+                                 {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
+                               </span>
+                             </div>
+                           </div>
+                     ))
+                 )}
+               </div>
+            </div>
+            
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
+               <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
+                 <Bed size={20} className="mr-3 text-slate-400" />
+                 Today Cleaning Tasks
+               </h3>
+               <div className="space-y-3">
+                 {(!cleaningTasks || cleaningTasks.length === 0) ? (
+                     <p className="text-green-600 text-sm flex items-center bg-green-50 p-4 rounded-xl border border-green-100">
+                         <CheckCircle size={18} className="mr-2" /> All rooms are clean and ready!
+                     </p>
+                 ) : (
+                     cleaningTasks.slice(0, 5).map(task => (
+                         <div key={task.roomId} className="flex justify-between items-center p-3 bg-red-50/50 rounded-xl border border-red-100">
+                             <span className="text-sm font-bold text-red-900">
+                               {task.roomName} <span className="font-normal opacity-70">({task.propertyName})</span>
+                               {task.isLongTermCleaning && (
+                                 <div className="text-[10px] font-bold text-blue-700 mt-1">Weekly long term clean</div>
+                               )}
+                               {task.isEarlyCheckinPrep && (
+                                 <div className="text-[11px] font-bold text-orange-600 mt-1 flex items-center"><Sunrise size={14} className="mr-1"/>Early check-in today</div>
+                               )}
+                             </span>
+                             <div className="flex items-center space-x-2">
+                                 {task.isEarlyCheckinPrep && <Sunrise size={16} className="text-orange-500" title="Early Check-in Priority"/>}
+                                 <span className="text-xs font-medium text-red-700">Priority {task.priority}</span>
+                             </div>
+                         </div>
+                     ))
+                 )}
+               </div>
+            </div>
+
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
+               <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
+                 <LogOut size={20} className="mr-3 text-slate-400" />
+                 Checking Out Tomorrow ({checkingOutTomorrow.length})
+               </h3>
+               <div className="space-y-3">
+                 {checkingOutTomorrow.length === 0 ? (
+                     <p className="text-slate-400 text-sm p-4 rounded-xl border border-dashed border-slate-200 text-center">
+                         No check-outs scheduled for tomorrow.
+                     </p>
+                 ) : (
+                       checkingOutTomorrow.map(booking => {
+                       const roomName = ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'Unknown room';
+                       return (
+                         <div key={booking.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
+                           <span className="text-sm font-bold text-slate-700">{booking.guestName}</span>
+                           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
+                             {roomName}
+                           </span>
+                         </div>
+                       );
+                       })
+                 )}
+               </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <h2 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Tomorrow</h2>
+          <p className="text-slate-500">Plan for {TOMORROW_STR}.</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <StatCard title="Check-ins" value={checkingInTomorrow.length} icon={<User />} subtext="Arriving tomorrow" />
+            <StatCard title="Check-outs" value={checkingOutTomorrow.length} icon={<LogOut />} subtext="Departing tomorrow" />
+            <StatCard title="Cleaning Tasks" value={tasksTomorrowCount} icon={<Bed />} subtext="Scheduled for tomorrow" />
           </div>
 
-          <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-             <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
-               <Bed size={20} className="mr-3 text-slate-400" />
-               Current Cleaning Tasks
-             </h3>
-             <div className="space-y-3">
-               {(!cleaningTasks || cleaningTasks.length === 0) ? (
-                   <p className="text-green-600 text-sm flex items-center bg-green-50 p-4 rounded-xl border border-green-100">
-                       <CheckCircle size={18} className="mr-2" /> All rooms are clean and ready!
-                   </p>
-               ) : (
-                   cleaningTasks.slice(0, 5).map(task => (
-                       <div key={task.roomId} className="flex justify-between items-center p-3 bg-red-50/50 rounded-xl border border-red-100">
-                           <span className="text-sm font-bold text-red-900">
-                             {task.roomName} <span className="font-normal opacity-70">({task.propertyName})</span>
-                             {task.isLongTermCleaning && (
-                               <div className="text-[10px] font-bold text-blue-700 mt-1">Weekly long term clean</div>
-                             )}
-                           </span>
-                           <div className="flex items-center space-x-2">
-                               {task.isEarlyCheckinPrep && <Sunrise size={16} className="text-orange-500" title="Early Check-in Priority"/>}
-                               <span className="text-xs font-medium text-red-700">Priority {task.priority}</span>
-                           </div>
-                       </div>
-                   ))
-               )}
-             </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
+              <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
+                <User size={20} className="mr-3 text-slate-400" />
+                Checking In Tomorrow ({checkingInTomorrow.length})
+              </h3>
+              <div className="space-y-3">
+                {checkingInTomorrow.length === 0 ? (
+                    <p className="text-slate-400 text-sm p-4 rounded-xl border border-dashed border-slate-200 text-center">
+                        No check-ins scheduled for tomorrow.
+                    </p>
+                ) : (
+                    checkingInTomorrow.map(booking => (
+                          <div key={booking.id} className="flex justify-between items-center p-3 rounded-xl border shadow-sm bg-slate-50">
+                            <span className="text-sm font-bold text-slate-800">{booking.guestName}</span>
+                            <div className="flex items-center space-x-2">
+                              {booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500" title="Early check-in"/>}
+                              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                                {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
+                              </span>
+                            </div>
+                          </div>
+                    ))
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB] lg:col-span-2">
+              <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-6">
+                <div>
+                  <h3 className="font-serif font-bold text-xl mb-2" style={{ color: COLORS.darkGreen }}>Tomorrow's Cleaning Plan</h3>
+                  <p className="text-slate-500 text-sm">Prioritized by check-in type and long-stay weekly cleans.</p>
+                </div>
+                <div className="text-xs text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 leading-snug max-w-md">
+                  <div>High = early check-in tomorrow (ready before 13:30).</div>
+                  <div>Normal = standard turnovers (before 15:00).</div>
+                  <div>Low = weekly long-stay cleans (flexible).</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {renderTomorrowGroup('High Priority', 'Clean before 13:30', tomorrowHighPriorityRooms, 'bg-orange-500')}
+                {renderTomorrowGroup('Normal Priority', 'Clean before 15:00', tomorrowNormalPriorityRooms, 'bg-slate-400')}
+                {renderTomorrowGroup('Low Priority', 'Weekly long-stay cleans', tomorrowLowPriorityRooms, 'bg-blue-600')}
+              </div>
+            </div>
           </div>
         </div>
       </div>
