@@ -1,3 +1,15 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+html {
+	zoom: 0.7;
+}
+
+@supports not (zoom: 0.7) {
+	body {
+		transform: scale(0.7);
+		transform-origin: top left;
+		width: calc(100% / 0.7);
+	}
+}
