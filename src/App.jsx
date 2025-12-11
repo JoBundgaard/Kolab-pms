@@ -220,21 +220,27 @@ function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
     const statusData = roomStatuses[room.id] || {};
     const storedStatus = statusData.status || 'clean';
 
+    const incomingToday = bookings.find(
+      (b) => b.roomId === room.id && b.checkIn === targetDateStr && b.status !== 'cancelled'
+    );
+
     const isCheckout = checkoutRoomIds.includes(room.id);
     const checkoutBooking = isCheckout ? checkoutsForDate.find((b) => b.roomId === room.id) : null;
-    const needsEarlyCheckinPrep = !!(checkoutBooking && checkoutBooking.earlyCheckIn);
     const isLongTermClean = longTermCleaningRooms.has(room.id);
+    const isArrivalOnThisDay = !!incomingToday;
+    const hasEarlyCheckIn = !!(incomingToday && incomingToday.earlyCheckIn);
+    const isWeeklyServiceClean = isLongTermClean;
+
+    const needsEarlyCheckinPrep = hasEarlyCheckIn;
 
     let calculatedPriority = 3;
 
-    if (isCheckout) {
-      calculatedPriority = needsEarlyCheckinPrep ? 1 : 2;
-    } else if (storedStatus === 'dirty') {
+    if (isWeeklyServiceClean) {
       calculatedPriority = 3;
-    }
-
-    if (needsEarlyCheckinPrep) {
+    } else if (isArrivalOnThisDay && hasEarlyCheckIn) {
       calculatedPriority = 1;
+    } else if (isArrivalOnThisDay) {
+      calculatedPriority = 2;
     }
 
     return {
@@ -248,6 +254,9 @@ function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
       needsCleaning: isCheckout || storedStatus === 'dirty' || isLongTermClean,
       isEarlyCheckinPrep: needsEarlyCheckinPrep,
       isLongTermCleaning: isLongTermClean,
+      isArrivalOnThisDay,
+      hasEarlyCheckIn,
+      isWeeklyServiceClean,
       checkoutBooking,
     };
   });
@@ -257,26 +266,25 @@ function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
     .sort((a, b) => a.priority - b.priority || a.roomName.localeCompare(b.roomName));
 }
 
-// Splits tomorrow's cleaning tasks into priority buckets for planning.
-function splitTomorrowCleaningByPriority(cleaningTasksTomorrow, bookings, tomorrowStr) {
+// Splits cleaning tasks into priority buckets for planning (arrival vs weekly with early check-in high).
+function splitTomorrowCleaningByPriority(cleaningTasksTomorrow) {
   const high = [];
   const normal = [];
   const low = [];
 
   cleaningTasksTomorrow.forEach((task) => {
-    if (task.isLongTermCleaning && task.status !== 'checkout_dirty') {
+    if (task.isWeeklyServiceClean) {
       low.push(task);
       return;
     }
 
-    const incomingTomorrow = bookings.find(
-      (b) => b.roomId === task.roomId && b.checkIn === tomorrowStr && b.status !== 'cancelled'
-    );
-    const hasEarlyIncoming = !!(incomingTomorrow && incomingTomorrow.earlyCheckIn);
-    const isEarlyPrepFlag = !!task.isEarlyCheckinPrep;
-
-    if (hasEarlyIncoming || isEarlyPrepFlag) {
+    if (task.isArrivalOnThisDay && task.hasEarlyCheckIn) {
       high.push(task);
+      return;
+    }
+
+    if (task.isArrivalOnThisDay && !task.hasEarlyCheckIn) {
+      normal.push(task);
       return;
     }
 
@@ -1621,8 +1629,8 @@ export default function App() {
     normal: tomorrowNormalPriorityRooms,
     low: tomorrowLowPriorityRooms,
   } = useMemo(
-    () => splitTomorrowCleaningByPriority(cleaningTasksTomorrow, bookings, TOMORROW_STR),
-    [cleaningTasksTomorrow, bookings, TOMORROW_STR]
+    () => splitTomorrowCleaningByPriority(cleaningTasksTomorrow),
+    [cleaningTasksTomorrow]
   );
 
   const checkBookingConflict = useCallback((newBookingData, excludeBookingId = null) => {
@@ -1951,7 +1959,7 @@ export default function App() {
       high: todayHighPriorityRooms,
       normal: todayNormalPriorityRooms,
       low: todayLowPriorityRooms,
-    } = splitTomorrowCleaningByPriority(cleaningTasks, bookings, TODAY_STR);
+    } = splitTomorrowCleaningByPriority(cleaningTasks);
 
     const findIncomingForDate = (roomId, targetDate) => bookings.find(
       (b) => b.roomId === roomId && b.checkIn === targetDate && b.status !== 'cancelled'
@@ -1996,9 +2004,9 @@ export default function App() {
                   {inHouse && !incoming && <div className="text-xs text-slate-600">In-house: {inHouse.guestName}</div>}
                 </div>
                 <div className="flex flex-col items-end gap-1 text-xs">
-                  {task.isLongTermCleaning && <span className="text-blue-700 font-semibold">Weekly</span>}
+                  {task.isWeeklyServiceClean && <span className="text-blue-700 font-semibold">Weekly</span>}
                   {isEarly && <span className="text-orange-600 font-semibold flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
-                  <span className={getRoomTagClasses(task.roomId, { highlightPriority: isEarly || task.isEarlyCheckinPrep, highlightWeekly: task.isLongTermCleaning })}>
+                  <span className={getRoomTagClasses(task.roomId, { highlightPriority: isEarly || task.hasEarlyCheckIn, highlightWeekly: task.isWeeklyServiceClean })}>
                     {incoming ? 'Incoming' : task.propertyName}
                   </span>
                 </div>
@@ -2064,9 +2072,9 @@ export default function App() {
                                <span>{task.roomName}</span>
                              </div>
                              <div className="flex items-center gap-2 text-xs">
-                               {task.isLongTermCleaning && <span className="text-blue-700 font-semibold">Weekly</span>}
-                               {task.isEarlyCheckinPrep && <span className="text-orange-600 font-semibold flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
-                               <span className={getRoomTagClasses(task.roomId, { highlightPriority: task.isEarlyCheckinPrep || task.priority <= 2, highlightWeekly: task.isLongTermCleaning })}>
+                                             {task.isWeeklyServiceClean && <span className="text-blue-700 font-semibold">Weekly</span>}
+                                             {task.hasEarlyCheckIn && <span className="text-orange-600 font-semibold flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
+                                             <span className={getRoomTagClasses(task.roomId, { highlightPriority: task.hasEarlyCheckIn || task.priority <= 2, highlightWeekly: task.isWeeklyServiceClean })}>
                                  {task.propertyName}
                                </span>
                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold border border-red-200 text-red-700">Prio {task.priority}</span>
