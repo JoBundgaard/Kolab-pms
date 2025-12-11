@@ -2849,8 +2849,6 @@ export default function App() {
     ? (user.isAnonymous ? 'Session: Anonymous' : `Session: ${user.displayName || user.email || 'Staff account'}`)
     : 'Session: Signing in...';
 
-  if (loading) return <div className="flex items-center justify-center h-screen bg-[#F9F8F2] text-[#26402E] font-serif font-bold text-xl">Loading Kolab Living PMS...</div>;
-
   return (
     <div className="flex min-h-screen font-sans" style={{ backgroundColor: COLORS.cream }}>
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
@@ -2861,6 +2859,11 @@ export default function App() {
         </header>
         <div className="flex-1 overflow-auto p-6 md:p-10">
           <div className="max-w-7xl mx-auto">
+             {loading && (
+               <div className="mb-4 flex items-center gap-2 text-sm text-slate-600 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm">
+                 <RefreshCcw size={16} className="animate-spin" /> Loading latest data…
+               </div>
+             )}
              {dataError && (
                <div className="mb-6 p-4 rounded-xl border border-red-200 bg-red-50 text-red-800 text-sm">
                  Firestore read error: {dataError}. Check Firestore rules/connection and reload.
