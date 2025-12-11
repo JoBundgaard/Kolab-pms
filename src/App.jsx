@@ -1634,7 +1634,7 @@ export default function App() {
 
     requestAnimationFrame(() => {
       const el = timelineRef.current;
-      const targetIndex = Math.max(idx - 5, 0);
+      const targetIndex = Math.min(idx + 5, dates.length - 1);
       const targetDateStr = formatDate(dates[targetIndex]);
       const targetCell = el?.querySelector(`[data-day-cell][data-date="${targetDateStr}"]`);
       const width = targetCell?.getBoundingClientRect()?.width || dayWidthRef.current;
