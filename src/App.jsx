@@ -2285,7 +2285,7 @@ export default function App() {
             <StatCard title="⚙ Open Issues" value={openMaintenanceIssues} icon={null} subtext="Maintenance tickets" />
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-6">
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
                <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
                  ⬅️ Checking Out Today ({checkingOutToday.length})
@@ -2307,36 +2307,6 @@ export default function App() {
                          </div>
                        );
                        })
-                 )}
-               </div>
-            </div>
-
-            <div className="bg-white p-8 rounded-2xl shadow-lg border border-red-300/80">
-               <h3 className="font-serif font-bold text-xl mb-4" style={{ color: COLORS.darkGreen }}>
-                 🧹 Today's Cleaning Tasks ({tasksTodayCount})
-               </h3>
-               <div className="space-y-3">
-                 {(!cleaningTasks || cleaningTasks.length === 0) ? (
-                     <p className="text-green-600 text-sm flex items-center bg-green-50 p-4 rounded-xl border border-green-100">
-                         <CheckCircle size={18} className="mr-2" /> All rooms are clean and ready!
-                     </p>
-                 ) : (
-                     cleaningTasks.slice(0, 6).map(task => (
-                         <div key={task.roomId} className={`flex items-center justify-between p-3 rounded-xl border shadow-sm ${task.isEarlyCheckinPrep ? 'bg-orange-50/60 border-orange-200' : 'bg-white border-slate-200'}`}>
-                             <div className="flex items-center text-sm font-bold text-slate-800">
-                               {rowIcon('🧹')}
-                               <span>{task.roomName}</span>
-                             </div>
-                             <div className="flex items-center gap-2 text-xs">
-                                             {task.isWeeklyServiceClean && <span className="text-blue-700 font-semibold">Weekly</span>}
-                                             {task.hasEarlyCheckIn && <span className="text-orange-600 font-semibold flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
-                                             <span className={getRoomTagClasses(task.roomId, { highlightPriority: task.hasEarlyCheckIn || task.priority <= 2, highlightWeekly: task.isWeeklyServiceClean })}>
-                                 {task.propertyName}
-                               </span>
-                               <span className="px-2 py-0.5 rounded-full text-[11px] font-bold border border-red-200 text-red-700">Prio {task.priority}</span>
-                             </div>
-                         </div>
-                     ))
                  )}
                </div>
             </div>
