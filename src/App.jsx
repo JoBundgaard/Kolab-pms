@@ -1652,7 +1652,7 @@ export default function App() {
       });
       el.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
       setSelectedCalendarDate(pendingCenterDate);
-      // Do not clear pendingCenterDate here; cleanup on tab switch handles reset so we don't re-center mid-session.
+      setPendingCenterDate(null); // clear after first center to avoid repeated snapping while scrolling
     });
   }, [activeTab, pendingCenterDate, dates, visibleStartDate, visibleEndDate]);
 
