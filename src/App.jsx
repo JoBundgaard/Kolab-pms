@@ -1601,7 +1601,7 @@ export default function App() {
     const endTime = new Date(visibleEndDate).getTime();
     const todayTime = todayStart.getTime();
 
-    // If today is outside the rendered window, reset a 30-day back buffer and 60-day forward window.
+    // If today is outside the rendered window, reset a 30-day back buffer and 60-day forward window once.
     if (todayTime < startTime || todayTime > endTime) {
       setVisibleStartDate(() => {
         const d = new Date(todayStart);
@@ -1616,7 +1616,12 @@ export default function App() {
     }
 
     setSelectedCalendarDate(TODAY_STR);
-    setPendingCenterDate(TODAY_STR); // center once per activation; user can still scroll
+    setPendingCenterDate(TODAY_STR); // center once per activation
+
+    // After this activation, do not force-center again until the user leaves and returns to calendar.
+    return () => {
+      setPendingCenterDate(null);
+    };
   }, [activeTab, TODAY_STR, visibleStartDate, visibleEndDate]);
 
   useLayoutEffect(() => {
@@ -1650,7 +1655,7 @@ export default function App() {
       });
       el.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
       setSelectedCalendarDate(pendingCenterDate);
-      setPendingCenterDate(null);
+      // Do not clear pendingCenterDate here; cleanup on tab switch handles reset so we don't re-center mid-session.
     });
   }, [activeTab, pendingCenterDate, dates, visibleStartDate, visibleEndDate]);
 
