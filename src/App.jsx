@@ -2567,8 +2567,13 @@ export default function App() {
                               {booking && shouldRenderBlock && (
                                 (() => {
                                   const stayCat = getBookingStayCategory(booking);
+                                  const catBorder = stayCat === 'long'
+                                    ? 'ring-2 ring-blue-200'
+                                    : stayCat === 'medium'
+                                      ? 'ring-2 ring-amber-200'
+                                      : 'ring-1 ring-white/40';
                                   return (
-                                    <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-0 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`}
+                                    <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-0 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'} ${catBorder}`}
                                       style={{
                                         width: widthCalc,
                                         left: leftOffset,
@@ -2581,9 +2586,6 @@ export default function App() {
                                         <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block mr-1.5" title="Weekly cleaning today"></span>
                                       )}
                                       <span className="font-semibold truncate mr-1.5">{booking.guestName}</span>
-                                      <span className={`text-[10px] px-2 py-0.5 rounded-full border ${stayCat === 'long' ? 'bg-blue-50 text-blue-700 border-blue-200' : stayCat === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-white/30 text-slate-700 border-white/50'}`}>
-                                        {formatStayCategoryLabel(stayCat)}
-                                      </span>
                                       {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
                                     </div>
                                   );
