@@ -1501,6 +1501,7 @@ export default function App() {
   const timelineRef = useRef(null);
   const dayWidthRef = useRef(48);
   const extendLockRef = useRef(false);
+  const calendarInitRef = useRef(false);
   const dates = useMemo(() => getDaysArray(new Date(visibleStartDate), new Date(visibleEndDate)), [visibleStartDate, visibleEndDate]);
 
   useEffect(() => {
@@ -1594,35 +1595,31 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (activeTab !== 'calendar') return;
+    if (activeTab !== 'calendar') {
+      calendarInitRef.current = false;
+      return;
+    }
+
+    if (calendarInitRef.current) return;
 
     const todayStart = new Date(TODAY_STR);
-    const startTime = new Date(visibleStartDate).getTime();
-    const endTime = new Date(visibleEndDate).getTime();
-    const todayTime = todayStart.getTime();
 
-    // If today is outside the rendered window, reset a 30-day back buffer and 60-day forward window once.
-    if (todayTime < startTime || todayTime > endTime) {
-      setVisibleStartDate(() => {
-        const d = new Date(todayStart);
-        d.setDate(d.getDate() - 30);
-        return d;
-      });
-      setVisibleEndDate(() => {
-        const d = new Date(todayStart);
-        d.setDate(d.getDate() + 60);
-        return d;
-      });
-    }
+    setVisibleStartDate(() => {
+      const d = new Date(todayStart);
+      d.setDate(d.getDate() - 30);
+      return d;
+    });
+    setVisibleEndDate(() => {
+      const d = new Date(todayStart);
+      d.setDate(d.getDate() + 60);
+      return d;
+    });
 
     setSelectedCalendarDate(TODAY_STR);
     setPendingCenterDate(TODAY_STR); // center once per activation
 
-    // After this activation, do not force-center again until the user leaves and returns to calendar.
-    return () => {
-      setPendingCenterDate(null);
-    };
-  }, [activeTab, TODAY_STR, visibleStartDate, visibleEndDate]);
+    calendarInitRef.current = true;
+  }, [activeTab, TODAY_STR]);
 
   useLayoutEffect(() => {
     if (activeTab !== 'calendar') return;
