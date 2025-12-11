@@ -1597,10 +1597,19 @@ export default function App() {
   useEffect(() => {
     if (activeTab !== 'calendar') return;
 
-    const isTodayInRange = (() => {
-      const target = new Date(TODAY_STR).getTime();
-      return target >= new Date(visibleStartDate).getTime() && target <= new Date(visibleEndDate).getTime();
-    })();
+    const todayStart = new Date(TODAY_STR);
+    const startSameAsToday = formatDate(visibleStartDate) === TODAY_STR;
+    const endCoversToday = new Date(visibleEndDate).getTime() >= todayStart.getTime();
+
+    // If the visible window drifted far from today (e.g., due to prior scroll), reset it around today.
+    if (!startSameAsToday || !endCoversToday) {
+      setVisibleStartDate(() => new Date(todayStart));
+      setVisibleEndDate(() => {
+        const d = new Date(todayStart);
+        d.setDate(d.getDate() + 60);
+        return d;
+      });
+    }
 
     // Reset scroll to the start of the rendered window when entering the calendar.
     if (timelineRef.current) {
@@ -1608,14 +1617,8 @@ export default function App() {
     }
 
     setSelectedCalendarDate(TODAY_STR);
-
-    if (!isTodayInRange) {
-      ensureDateVisible(TODAY_STR, 'tab-activate-out-of-range');
-    } else {
-      // If today is already visible as the first rendered column, no centering needed.
-      setPendingCenterDate(null);
-    }
-  }, [activeTab, TODAY_STR, ensureDateVisible, visibleStartDate, visibleEndDate]);
+    setPendingCenterDate(null); // no centering needed when today is the first column
+  }, [activeTab, TODAY_STR, visibleStartDate, visibleEndDate]);
 
   useLayoutEffect(() => {
     if (activeTab !== 'calendar') return;
