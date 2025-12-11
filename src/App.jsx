@@ -1863,6 +1863,7 @@ export default function App() {
   );
 
   const checkBookingConflict = useCallback((newBookingData, excludeBookingId = null) => {
+    // Treat check-in as inclusive and check-out as exclusive to allow true back-to-back stays.
     const newCheckIn = new Date(newBookingData.checkIn).getTime();
     const newCheckOut = new Date(newBookingData.checkOut).getTime();
     const newRoomId = newBookingData.roomId;
@@ -1879,12 +1880,34 @@ export default function App() {
       const existingCheckIn = new Date(existingBooking.checkIn).getTime();
       const existingCheckOut = new Date(existingBooking.checkOut).getTime(); 
 
+      // Inclusive check-in, exclusive check-out to permit same-day turnover.
       const overlaps = (newCheckIn < existingCheckOut) && (newCheckOut > existingCheckIn);
 
       return overlaps;
     });
 
     if (conflictingBooking) {
+      console.warn('[booking-conflict]', {
+        newBooking: {
+          roomId: newRoomId,
+          checkIn: newBookingData.checkIn,
+          checkOut: newBookingData.checkOut,
+          nights: newBookingData.nights ?? calculateNights(newBookingData.checkIn, newBookingData.checkOut),
+        },
+        conflicting: {
+          id: conflictingBooking.id,
+          roomId: conflictingBooking.roomId,
+          checkIn: conflictingBooking.checkIn,
+          checkOut: conflictingBooking.checkOut,
+        },
+        overlapCheck: {
+          newCheckIn,
+          newCheckOut,
+          existingCheckIn: new Date(conflictingBooking.checkIn).getTime(),
+          existingCheckOut: new Date(conflictingBooking.checkOut).getTime(),
+          formula: '(newCheckIn < existingCheckOut) && (newCheckOut > existingCheckIn)',
+        },
+      });
       return { 
         conflict: true, 
         reason: `Room is booked by ${conflictingBooking.guestName} from ${conflictingBooking.checkIn} to ${conflictingBooking.checkOut}.`,
