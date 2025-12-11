@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
 import { 
   signInAnonymously, 
   onAuthStateChanged
@@ -1599,7 +1599,7 @@ export default function App() {
     }
   }, [activeTab, TODAY_STR, ensureDateVisible]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (activeTab !== 'calendar') return;
     if (!pendingCenterDate) return;
     if (!timelineRef.current || dates.length === 0) return;
@@ -1613,10 +1613,21 @@ export default function App() {
     requestAnimationFrame(() => {
       const el = timelineRef.current;
       const cell = el?.querySelector(`[data-day-cell][data-date="${pendingCenterDate}"]`);
-      const width = cell?.getBoundingClientRect().width || dayWidthRef.current;
+      const rect = cell?.getBoundingClientRect();
+      const width = rect?.width || dayWidthRef.current;
       if (width) dayWidthRef.current = width;
-      const target = idx * dayWidthRef.current - el.clientWidth / 2 + dayWidthRef.current / 2;
-      console.debug('[calendar] center perform', { pendingCenterDate, idx, target, dayWidth: dayWidthRef.current, scrollLeftBefore: el.scrollLeft, clientWidth: el.clientWidth });
+      const offset = cell?.offsetLeft ?? idx * dayWidthRef.current;
+      const target = offset - el.clientWidth / 2 + dayWidthRef.current / 2;
+      console.debug('[calendar] center perform', {
+        pendingCenterDate,
+        idx,
+        target,
+        offset,
+        dayWidth: dayWidthRef.current,
+        scrollLeftBefore: el.scrollLeft,
+        clientWidth: el.clientWidth,
+        cellFound: !!cell,
+      });
       el.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
       setSelectedCalendarDate(pendingCenterDate);
       setPendingCenterDate(null);
