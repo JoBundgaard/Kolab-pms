@@ -1496,7 +1496,7 @@ export default function App() {
     d.setDate(d.getDate() + 30);
     return d;
   });
-  const hasCenteredOnTodayRef = useRef(false);
+  const [pendingCenterDate, setPendingCenterDate] = useState(null);
   const [timelineScrollLeft, setTimelineScrollLeft] = useState(0);
   const timelineRef = useRef(null);
   const dayWidthRef = useRef(48);
@@ -1571,7 +1571,9 @@ export default function App() {
     el.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
   }, [dates]);
 
-  const ensureDateVisible = useCallback((dateStr) => {
+  const ensureDateVisible = useCallback((dateStr, reason = 'ensure') => {
+    console.debug('[calendar] schedule center', { dateStr, reason });
+    setPendingCenterDate(dateStr);
     const target = new Date(dateStr);
     setVisibleStartDate((prev) => {
       if (target < prev) {
@@ -1589,28 +1591,37 @@ export default function App() {
       }
       return prev;
     });
-    requestAnimationFrame(() => scrollToDate(dateStr));
-  }, [scrollToDate]);
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'calendar') {
-      hasCenteredOnTodayRef.current = false;
+      ensureDateVisible(TODAY_STR, 'tab-activate');
     }
-  }, [activeTab]);
+  }, [activeTab, TODAY_STR, ensureDateVisible]);
 
   useEffect(() => {
     if (activeTab !== 'calendar') return;
-    if (hasCenteredOnTodayRef.current) return;
+    if (!pendingCenterDate) return;
     if (!timelineRef.current || dates.length === 0) return;
-    setSelectedCalendarDate(TODAY_STR);
+
+    const idx = dates.findIndex((d) => formatDate(d) === pendingCenterDate);
+    if (idx === -1) {
+      console.debug('[calendar] pending center date not in range yet', { pendingCenterDate, visibleStartDate, visibleEndDate });
+      return;
+    }
+
     requestAnimationFrame(() => {
-      ensureDateVisible(TODAY_STR);
-      requestAnimationFrame(() => {
-        scrollToDate(TODAY_STR);
-        hasCenteredOnTodayRef.current = true;
-      });
+      const el = timelineRef.current;
+      const cell = el?.querySelector(`[data-day-cell][data-date="${pendingCenterDate}"]`);
+      const width = cell?.getBoundingClientRect().width || dayWidthRef.current;
+      if (width) dayWidthRef.current = width;
+      const target = idx * dayWidthRef.current - el.clientWidth / 2 + dayWidthRef.current / 2;
+      console.debug('[calendar] center perform', { pendingCenterDate, idx, target, dayWidth: dayWidthRef.current, scrollLeftBefore: el.scrollLeft, clientWidth: el.clientWidth });
+      el.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
+      setSelectedCalendarDate(pendingCenterDate);
+      setPendingCenterDate(null);
     });
-  }, [activeTab, dates, ensureDateVisible, scrollToDate, TODAY_STR]);
+  }, [activeTab, pendingCenterDate, dates, visibleStartDate, visibleEndDate]);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
