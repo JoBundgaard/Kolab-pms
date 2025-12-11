@@ -1634,21 +1634,23 @@ export default function App() {
 
     requestAnimationFrame(() => {
       const el = timelineRef.current;
-      const cell = el?.querySelector(`[data-day-cell][data-date="${pendingCenterDate}"]`);
-      const rect = cell?.getBoundingClientRect();
-      const width = rect?.width || dayWidthRef.current;
+      const targetIndex = Math.max(idx - 5, 0);
+      const targetDateStr = formatDate(dates[targetIndex]);
+      const targetCell = el?.querySelector(`[data-day-cell][data-date="${targetDateStr}"]`);
+      const width = targetCell?.getBoundingClientRect()?.width || dayWidthRef.current;
       if (width) dayWidthRef.current = width;
-      const offset = cell?.offsetLeft ?? idx * dayWidthRef.current;
-      const target = offset - el.clientWidth / 2 + dayWidthRef.current / 2;
+      const offset = targetCell?.offsetLeft ?? targetIndex * dayWidthRef.current;
+      const target = offset;
       console.debug('[calendar] center perform', {
         pendingCenterDate,
         idx,
+        targetIndex,
         target,
         offset,
         dayWidth: dayWidthRef.current,
         scrollLeftBefore: el.scrollLeft,
         clientWidth: el.clientWidth,
-        cellFound: !!cell,
+        targetCellFound: !!targetCell,
       });
       el.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
       setSelectedCalendarDate(pendingCenterDate);
