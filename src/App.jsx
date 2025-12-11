@@ -1488,12 +1488,13 @@ export default function App() {
   const [hoveredCalendarDate, setHoveredCalendarDate] = useState(null);
   const [visibleStartDate, setVisibleStartDate] = useState(() => {
     const d = new Date();
-    d.setDate(d.getDate() - 30);
+    // Start rendering at today so no initial scroll is needed.
     return d;
   });
   const [visibleEndDate, setVisibleEndDate] = useState(() => {
     const d = new Date();
-    d.setDate(d.getDate() + 30);
+    // Render forward window; backfill older days only when user scrolls left.
+    d.setDate(d.getDate() + 60);
     return d;
   });
   const [pendingCenterDate, setPendingCenterDate] = useState(null);
