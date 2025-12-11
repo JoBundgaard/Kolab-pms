@@ -1488,12 +1488,11 @@ export default function App() {
   const [hoveredCalendarDate, setHoveredCalendarDate] = useState(null);
   const [visibleStartDate, setVisibleStartDate] = useState(() => {
     const d = new Date();
-    // Start rendering at today so no initial scroll is needed.
+    d.setDate(d.getDate() - 30);
     return d;
   });
   const [visibleEndDate, setVisibleEndDate] = useState(() => {
     const d = new Date();
-    // Render forward window; backfill older days only when user scrolls left.
     d.setDate(d.getDate() + 60);
     return d;
   });
@@ -1598,12 +1597,17 @@ export default function App() {
     if (activeTab !== 'calendar') return;
 
     const todayStart = new Date(TODAY_STR);
-    const startSameAsToday = formatDate(visibleStartDate) === TODAY_STR;
-    const endCoversToday = new Date(visibleEndDate).getTime() >= todayStart.getTime();
+    const startTime = new Date(visibleStartDate).getTime();
+    const endTime = new Date(visibleEndDate).getTime();
+    const todayTime = todayStart.getTime();
 
-    // If the visible window drifted far from today (e.g., due to prior scroll), reset it around today.
-    if (!startSameAsToday || !endCoversToday) {
-      setVisibleStartDate(() => new Date(todayStart));
+    // If today is outside the rendered window, reset a 30-day back buffer and 60-day forward window.
+    if (todayTime < startTime || todayTime > endTime) {
+      setVisibleStartDate(() => {
+        const d = new Date(todayStart);
+        d.setDate(d.getDate() - 30);
+        return d;
+      });
       setVisibleEndDate(() => {
         const d = new Date(todayStart);
         d.setDate(d.getDate() + 60);
@@ -1611,13 +1615,8 @@ export default function App() {
       });
     }
 
-    // Reset scroll to the start of the rendered window when entering the calendar.
-    if (timelineRef.current) {
-      timelineRef.current.scrollLeft = 0;
-    }
-
     setSelectedCalendarDate(TODAY_STR);
-    setPendingCenterDate(null); // no centering needed when today is the first column
+    setPendingCenterDate(TODAY_STR); // center once per activation; user can still scroll
   }, [activeTab, TODAY_STR, visibleStartDate, visibleEndDate]);
 
   useLayoutEffect(() => {
