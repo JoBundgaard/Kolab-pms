@@ -542,6 +542,12 @@ const StatCard = ({ title, value, icon, subtext, colorClass = 'bg-emerald-500' }
 );
 
 const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, checkBookingConflict }) => {
+  const deriveStayCategory = useCallback((nights) => {
+    if (nights > 30) return 'long';
+    if (nights > 7) return 'medium';
+    return 'short';
+  }, []);
+
   const [formData, setFormData] = useState({
     guestName: '',
     email: '',
@@ -553,24 +559,32 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     status: 'confirmed',
     notes: '',
     earlyCheckIn: false,
+    stayCategory: 'short',
     isLongTerm: false,
     weeklyCleaningDay: 'monday',
   });
   
   const [nights, setNights] = useState(0);
   const [conflictError, setConflictError] = useState(null);
+  const [categoryManual, setCategoryManual] = useState(false);
 
   useEffect(() => {
     if (booking) {
+      const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
+      const inferredCategory = booking.stayCategory || deriveStayCategory(bookingNights);
       setFormData({
         ...booking,
         earlyCheckIn: !!booking.earlyCheckIn,
-        isLongTerm: !!booking.isLongTerm,
+        stayCategory: inferredCategory,
+        isLongTerm: ['medium', 'long'].includes(inferredCategory) || !!booking.isLongTerm,
         weeklyCleaningDay: booking.weeklyCleaningDay || 'monday',
       });
+      setCategoryManual(!!booking.stayCategory);
     } else {
       const defaultCheckIn = formatDate(new Date());
       const defaultCheckOut = formatDate(new Date(Date.now() + 86400000));
+      const defaultNights = calculateNights(defaultCheckIn, defaultCheckOut);
+      const inferredCategory = deriveStayCategory(defaultNights);
       setFormData({
         guestName: '',
         email: '',
@@ -578,28 +592,39 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         checkIn: defaultCheckIn,
         checkOut: defaultCheckOut,
         price: 500000,
-        nights: calculateNights(defaultCheckIn, defaultCheckOut), 
+        nights: defaultNights, 
         status: 'confirmed',
         notes: '',
         earlyCheckIn: false,
-        isLongTerm: false,
+        stayCategory: inferredCategory,
+        isLongTerm: ['medium', 'long'].includes(inferredCategory),
         weeklyCleaningDay: 'monday',
       });
+      setCategoryManual(false);
     }
     setConflictError(null);
-  }, [booking, isOpen, rooms]);
+  }, [booking, isOpen, rooms, deriveStayCategory]);
   
   useEffect(() => {
     if (formData.checkIn && formData.checkOut) {
       const calculatedNights = calculateNights(formData.checkIn, formData.checkOut);
       setNights(calculatedNights);
       setFormData(prev => ({ ...prev, nights: calculatedNights }));
+      if (!categoryManual) {
+        const inferredCategory = deriveStayCategory(calculatedNights);
+        setFormData(prev => ({
+          ...prev,
+          stayCategory: inferredCategory,
+          isLongTerm: ['medium', 'long'].includes(inferredCategory),
+          weeklyCleaningDay: ['medium', 'long'].includes(inferredCategory) ? prev.weeklyCleaningDay || 'monday' : '',
+        }));
+      }
       setConflictError(null);
     } else {
       setNights(0);
       setFormData(prev => ({ ...prev, nights: 0 }));
     }
-  }, [formData.checkIn, formData.checkOut]);
+  }, [formData.checkIn, formData.checkOut, categoryManual, deriveStayCategory]);
 
   const blockedDatesForRoom = useMemo(() => {
     const blocked = new Set();
@@ -660,8 +685,16 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         setConflictError(conflictResult.reason);
         return; 
     }
-    
-    onSave(formData);
+    const inferredCategory = formData.stayCategory || deriveStayCategory(formData.nights);
+    const isLongTermCategory = ['medium', 'long'].includes(inferredCategory);
+    const finalWeeklyDay = isLongTermCategory ? formData.weeklyCleaningDay || 'monday' : '';
+
+    onSave({
+      ...formData,
+      stayCategory: inferredCategory,
+      isLongTerm: isLongTermCategory,
+      weeklyCleaningDay: finalWeeklyDay,
+    });
   };
 
   const handleChange = (e) => {
@@ -671,6 +704,16 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       setFormData(prev => ({ 
         ...prev, 
         [name]: value === '' ? '' : Number(value) 
+      }));
+    } else if (name === 'stayCategory') {
+      const nextCategory = value;
+      const isLongTermCategory = ['medium', 'long'].includes(nextCategory);
+      setCategoryManual(true);
+      setFormData(prev => ({
+        ...prev,
+        stayCategory: nextCategory,
+        isLongTerm: isLongTermCategory,
+        weeklyCleaningDay: isLongTermCategory ? prev.weeklyCleaningDay || 'monday' : '',
       }));
     } else {
       setFormData(prev => ({ 
@@ -797,19 +840,32 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
             </label>
           </div>
 
-          <div className="flex items-center pt-2">
-            <input
-              type="checkbox"
-              id="isLongTerm"
-              name="isLongTerm"
-              checked={formData.isLongTerm}
-              onChange={handleChange}
-              className="h-5 w-5 rounded border-gray-300 text-lime focus:ring-lime"
-              style={{ color: COLORS.darkGreen, accentColor: COLORS.darkGreen }}
-            />
-            <label htmlFor="isLongTerm" className="ml-2 text-sm font-medium" style={{ color: COLORS.darkGreen }}>
-              Long term booking
-            </label>
+          <div className="pt-2">
+            <label className="block text-xs font-bold uppercase tracking-wider mb-2" style={{ color: COLORS.darkGreen }}>Stay Category</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {[
+                { value: 'short', label: 'Short Term', helper: '1-7 nights' },
+                { value: 'medium', label: 'Medium Term', helper: '8-30 nights' },
+                { value: 'long', label: 'Long Term', helper: '31+ nights' },
+              ].map((opt) => {
+                const active = formData.stayCategory === opt.value;
+                return (
+                  <button
+                    type="button"
+                    key={opt.value}
+                    onClick={(e) => handleChange({ target: { name: 'stayCategory', value: opt.value, type: 'radio' } })}
+                    className={`w-full text-left px-3 py-3 rounded-xl border transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/30 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-sm" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
+                      <span className={`w-3 h-3 rounded-full border ${active ? 'bg-[#26402E] border-[#26402E]' : 'border-slate-300'}`}></span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">{opt.helper}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-xs text-slate-500 mt-2">Medium & Long follow weekly cleaning + laundry, no turnover unless overlapping check-in/out.</div>
           </div>
 
           {formData.isLongTerm && (
@@ -841,6 +897,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
             <Clock size={16} className="text-slate-500 mr-2" />
             <span className={nights > 0 ? "text-slate-700" : "text-red-500 font-bold"}>
                 {nights} night{nights !== 1 ? 's' : ''}
+            </span>
+            <span className="ml-3 px-3 py-1 rounded-full text-xs font-bold border border-slate-200 bg-white text-slate-700">
+              {formData.stayCategory === 'short' ? 'Short Term' : formData.stayCategory === 'medium' ? 'Medium Term' : 'Long Term'}
             </span>
           </div>
 
@@ -1363,6 +1422,30 @@ export default function App() {
   const [maintenanceIssues, setMaintenanceIssues] = useState([]);
   const [recurringTasks, setRecurringTasks] = useState([]);
   const [dataError, setDataError] = useState(null); // surfaces listener/auth errors
+  const [bookingCategoryFilter, setBookingCategoryFilter] = useState('all');
+
+  const deriveStayCategory = useCallback((nights) => {
+    if (nights > 30) return 'long';
+    if (nights > 7) return 'medium';
+    return 'short';
+  }, []);
+
+  const getBookingStayCategory = useCallback((b) => {
+    const nights = b?.nights || calculateNights(b?.checkIn, b?.checkOut);
+    if (b?.stayCategory) return b.stayCategory;
+    if (b?.isLongTerm) {
+      // Backward compat: treat legacy long-term flag as long unless nights suggest medium.
+      if (nights > 7 && nights <= 30) return 'medium';
+      return 'long';
+    }
+    return deriveStayCategory(nights);
+  }, [deriveStayCategory]);
+
+  const formatStayCategoryLabel = (cat) => {
+    if (cat === 'medium') return 'Medium Term';
+    if (cat === 'long') return 'Long Term';
+    return 'Short Term';
+  };
 
   // Note: We intentionally do NOT sync to localStorage anymore
   // Firestore is the single source of truth, accessed via real-time listeners
@@ -2473,21 +2556,29 @@ export default function App() {
                             <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
                               {isTodayCol && <div className="absolute inset-y-1 left-0 w-[3px] bg-[#26402E]/60 rounded-full pointer-events-none" />}
                               {booking && shouldRenderBlock && (
-                                <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-0 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`}
-                                  style={{
-                                    width: widthCalc,
-                                    left: leftOffset,
-                                    zIndex: 10,
-                                    outline: '1px solid rgba(255,255,255,0.35)',
-                                  }}
-                                  onClick={(e) => { e.stopPropagation(); setEditingBooking(booking); setIsModalOpen(true); }}
-                                >
-                                  {booking.isLongTerm && hasLongTermCleaningToday && (
-                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block mr-1.5" title="Weekly cleaning today"></span>
-                                  )}
-                                  <span className="font-semibold truncate mr-1.5">{booking.guestName}</span>
-                                  {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
-                                </div>
+                                (() => {
+                                  const stayCat = getBookingStayCategory(booking);
+                                  return (
+                                    <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-0 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'}`}
+                                      style={{
+                                        width: widthCalc,
+                                        left: leftOffset,
+                                        zIndex: 10,
+                                        outline: '1px solid rgba(255,255,255,0.35)',
+                                      }}
+                                      onClick={(e) => { e.stopPropagation(); setEditingBooking(booking); setIsModalOpen(true); }}
+                                    >
+                                      {booking.isLongTerm && hasLongTermCleaningToday && (
+                                        <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block mr-1.5" title="Weekly cleaning today"></span>
+                                      )}
+                                      <span className="font-semibold truncate mr-1.5">{booking.guestName}</span>
+                                      <span className={`text-[10px] px-2 py-0.5 rounded-full border ${stayCat === 'long' ? 'bg-blue-50 text-blue-700 border-blue-200' : stayCat === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-white/30 text-slate-700 border-white/50'}`}>
+                                        {formatStayCategoryLabel(stayCat)}
+                                      </span>
+                                      {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
+                                    </div>
+                                  );
+                                })()
                               )}
                             </div>
                           );
@@ -2507,9 +2598,21 @@ export default function App() {
     <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
       <div className="p-6 border-b border-[#E5E7EB] flex justify-between items-center bg-[#F9F8F2]">
         <h2 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>All Bookings</h2>
-        <div className="relative">
-             <input type="text" placeholder="Search guest..." className="pl-10 pr-4 py-2.5 border border-slate-300 rounded-full text-sm focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none w-64 shadow-sm bg-white" />
-             <Search size={18} className="absolute left-3.5 top-3 text-slate-400" />
+        <div className="flex items-center gap-3">
+          <div className="relative">
+               <input type="text" placeholder="Search guest..." className="pl-10 pr-4 py-2.5 border border-slate-300 rounded-full text-sm focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none w-64 shadow-sm bg-white" />
+               <Search size={18} className="absolute left-3.5 top-3 text-slate-400" />
+          </div>
+          <select
+            value={bookingCategoryFilter}
+            onChange={(e) => setBookingCategoryFilter(e.target.value)}
+            className="px-3 py-2 border border-slate-300 rounded-full text-sm bg-white shadow-sm"
+          >
+            <option value="all">All Categories</option>
+            <option value="short">Short Term</option>
+            <option value="medium">Medium Term</option>
+            <option value="long">Long Term</option>
+          </select>
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -2518,12 +2621,19 @@ export default function App() {
             <tr><th className="px-6 py-4">Guest</th><th className="px-6 py-4">Room</th><th className="px-6 py-4">Status</th><th className="px-6 py-4">Dates</th><th className="px-6 py-4">Price</th><th className="px-6 py-4 text-right">Actions</th></tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {bookings.length === 0 ? <tr><td colSpan="6" className="px-6 py-12 text-center text-slate-500">No bookings found.</td></tr> : bookings.map((booking) => {
+            {bookings.length === 0 ? <tr><td colSpan="6" className="px-6 py-12 text-center text-slate-500">No bookings found.</td></tr> : bookings
+            .filter((b) => bookingCategoryFilter === 'all' ? true : getBookingStayCategory(b) === bookingCategoryFilter)
+            .map((booking) => {
                 const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
                 const perNight = bookingNights > 0 ? Math.round(Number(booking.price) / bookingNights) : 0;
+                const stayCat = getBookingStayCategory(booking);
                 return (
               <tr key={booking.id} className="hover:bg-[#F9F8F2] transition-colors group">
-                <td className="px-6 py-4 font-bold text-slate-700 flex items-center">{booking.guestName}{booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500 ml-3"/>}</td>
+                <td className="px-6 py-4 font-bold text-slate-700 flex items-center gap-2">{booking.guestName}{booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500"/>}
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full border ${stayCat === 'long' ? 'bg-blue-50 text-blue-700 border-blue-200' : stayCat === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                    {formatStayCategoryLabel(stayCat)}
+                  </span>
+                </td>
                 <td className="px-6 py-4 text-slate-600">
                   {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
                   <div className="text-xs opacity-60">{ALL_ROOMS.find(r => r.id === booking.roomId)?.propertyName || 'Unknown property'}</div>
@@ -2561,7 +2671,7 @@ export default function App() {
                     {(!cleaningTasks || cleaningTasks.length === 0) ? <tr><td colSpan="5" className="px-6 py-12 text-center text-green-600 bg-green-50/50">All rooms are clean!</td></tr> : cleaningTasks.map((task) => (
                       <tr key={task.roomId} className={`hover:bg-[#F9F8F2] ${task.isEarlyCheckinPrep ? 'bg-orange-50/50' : task.status === 'checkout_dirty' ? 'bg-yellow-50/50' : ''}`}>
                         <td className="px-6 py-4 text-center"><input type="number" min="1" max="99" value={task.priority} onChange={(e) => updateHousekeepingField(task.roomId, 'priority', Number(e.target.value))} className="w-12 text-center border rounded"/></td>
-                        <td className="px-6 py-4 font-bold text-slate-700">{task.roomName}<div className="text-xs font-normal opacity-60">{task.propertyName}</div>{task.isEarlyCheckinPrep && <div className="text-xs font-bold text-orange-600 flex items-center mt-1"><Sunrise size={14} className="mr-1"/> EARLY CHECK-IN</div>}{task.isLongTermCleaning && <div className="text-[11px] font-bold text-blue-700 flex items-center mt-1">Weekly long term clean</div>}</td>
+                        <td className="px-6 py-4 font-bold text-slate-700">{task.roomName}<div className="text-xs font-normal opacity-60">{task.propertyName}</div>{task.isEarlyCheckinPrep && <div className="text-xs font-bold text-orange-600 flex items-center mt-1"><Sunrise size={14} className="mr-1"/> EARLY CHECK-IN</div>}{task.isLongTermCleaning && <div className="text-[11px] font-bold text-blue-700 flex items-center mt-1">Weekly service clean</div>}</td>
                         <td className="px-6 py-4"><span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-100">{task.status}</span></td>
                         <td className="px-6 py-4"><select value={task.assignedStaff} onChange={(e) => updateHousekeepingField(task.roomId, 'assignedStaff', e.target.value)} className="border rounded px-2 py-1">{STAFF.map(s => <option key={s} value={s}>{s}</option>)}</select></td>
                         <td className="px-6 py-4"><button onClick={() => markRoomClean(task.roomId)} className="px-4 py-2 rounded-full text-sm font-bold flex items-center shadow-md" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}><CheckCircle size={16} className="mr-2"/> Mark Clean</button></td>
