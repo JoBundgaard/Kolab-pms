@@ -295,7 +295,7 @@ function splitTomorrowCleaningByPriority(cleaningTasksTomorrow) {
 }
 
 // --- Custom Date Picker Component ---
-const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), minDate }) => {
+const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), minDate, boundaryRef }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [viewDate, setViewDate] = useState(value ? new Date(value) : new Date());
   const containerRef = useRef(null);
@@ -318,19 +318,20 @@ const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), mi
 
     const containerRect = containerRef.current.getBoundingClientRect();
     const dropdownRect = dropdownRef.current.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
+    const boundaryRect = boundaryRef?.current?.getBoundingClientRect();
+    const bound = boundaryRect || { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight };
 
-    const spaceBelow = viewportHeight - containerRect.bottom;
-    const spaceAbove = containerRect.top;
-    const spaceRight = viewportWidth - containerRect.left;
+    const spaceBelow = bound.bottom - containerRect.bottom;
+    const spaceAbove = containerRect.top - bound.top;
+    const spaceRight = bound.right - containerRect.right;
+    const spaceLeft = containerRect.left - bound.left;
 
     const dropdownHeight = dropdownRect.height || 320;
     const nextPosition = spaceBelow < dropdownHeight + 12 && spaceAbove > spaceBelow ? 'top' : 'bottom';
-    const isMobile = viewportWidth < 768;
+    const isMobile = bound.width < 768;
     const nextAlign = isMobile
       ? 'full'
-      : spaceRight < dropdownRect.width && containerRect.right > dropdownRect.width
+      : spaceRight < dropdownRect.width && spaceLeft > spaceRight
         ? 'right'
         : 'left';
 
@@ -426,7 +427,7 @@ const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), mi
       {isOpen && (
         <div
           ref={dropdownRef}
-          className={`absolute z-50 p-4 bg-white rounded-xl shadow-xl border border-slate-100 w-full sm:w-auto max-w-xs sm:max-w-sm md:max-w-md max-h-[340px] overflow-y-auto ${position === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'}`}
+          className={`absolute z-[60] p-4 bg-white rounded-xl shadow-xl border border-slate-100 w-full sm:w-auto max-w-xs sm:max-w-sm md:max-w-md max-h-[340px] overflow-y-auto ${position === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'}`}
           style={{
             left: align === 'right' ? 'auto' : 0,
             right: align === 'right' ? 0 : 'auto',
@@ -542,6 +543,7 @@ const StatCard = ({ title, value, icon, subtext, colorClass = 'bg-emerald-500' }
 );
 
 const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, checkBookingConflict }) => {
+  const modalContentRef = useRef(null);
   const deriveStayCategory = useCallback((nights) => {
     if (nights > 30) return 'long';
     if (nights > 7) return 'medium';
@@ -729,7 +731,12 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl" style={{ overflow: 'visible', maxHeight: '95vh' }}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-xl"
+        data-modal-root
+        ref={modalContentRef}
+        style={{ overflow: 'visible', maxHeight: '95vh', position: 'relative' }}
+      >
         <div 
             className="px-6 py-5 border-b flex justify-between items-center"
             style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}
@@ -742,7 +749,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
           </button>
         </div>
         
-        <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto" style={{ backgroundColor: COLORS.cream, maxHeight: '85vh' }}>
+        <form onSubmit={handleSubmit} className="p-6 space-y-5" style={{ backgroundColor: COLORS.cream, maxHeight: '85vh', overflow: 'visible', position: 'relative' }}>
           
           {conflictError && (
             <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl relative flex items-start space-x-3">
@@ -812,6 +819,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 value={formData.checkIn}
                 onChange={(e) => handleDateChange('checkIn', e.target.value)}
                 blockedDates={blockedDatesForRoom}
+                boundaryRef={modalContentRef}
               />
             </div>
             <div>
@@ -821,6 +829,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 onChange={(e) => handleDateChange('checkOut', e.target.value)}
                 blockedDates={blockedDatesForRoom} 
                 minDate={formData.checkIn}
+                boundaryRef={modalContentRef}
               />
             </div>
           </div>
