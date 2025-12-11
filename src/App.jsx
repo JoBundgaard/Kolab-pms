@@ -564,11 +564,14 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     stayCategory: 'short',
     isLongTerm: false,
     weeklyCleaningDay: 'monday',
+    channel: 'airbnb',
+    paymentStatus: '',
   });
   
   const [nights, setNights] = useState(0);
   const [conflictError, setConflictError] = useState(null);
   const [categoryManual, setCategoryManual] = useState(false);
+  const [paymentStatusError, setPaymentStatusError] = useState(null);
 
   useEffect(() => {
     if (booking) {
@@ -580,6 +583,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         stayCategory: inferredCategory,
         isLongTerm: ['medium', 'long'].includes(inferredCategory) || !!booking.isLongTerm,
         weeklyCleaningDay: booking.weeklyCleaningDay || 'monday',
+        channel: booking.channel || 'airbnb',
+        paymentStatus: booking.channel === 'direct' ? (booking.paymentStatus || '') : '',
       });
       setCategoryManual(!!booking.stayCategory);
     } else {
@@ -601,10 +606,13 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         stayCategory: inferredCategory,
         isLongTerm: ['medium', 'long'].includes(inferredCategory),
         weeklyCleaningDay: 'monday',
+        channel: 'airbnb',
+        paymentStatus: '',
       });
       setCategoryManual(false);
     }
     setConflictError(null);
+    setPaymentStatusError(null);
   }, [booking, isOpen, rooms, deriveStayCategory]);
   
   useEffect(() => {
@@ -675,10 +683,16 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   const handleSubmit = (e) => {
     e.preventDefault();
     setConflictError(null);
+    setPaymentStatusError(null);
 
     if (nights <= 0) {
         console.warn("Check-out must be after check-in. Nights calculation is 0.");
         return;
+    }
+
+    if (formData.channel === 'direct' && !formData.paymentStatus) {
+      setPaymentStatusError('Select whether this booking is paid or unpaid.');
+      return;
     }
     
     const conflictResult = checkBookingConflict(formData, booking ? booking.id : null);
@@ -696,6 +710,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       stayCategory: inferredCategory,
       isLongTerm: isLongTermCategory,
       weeklyCleaningDay: finalWeeklyDay,
+      channel: formData.channel || 'airbnb',
+      paymentStatus: formData.channel === 'direct' ? formData.paymentStatus : null,
     });
   };
 
@@ -716,6 +732,21 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         stayCategory: nextCategory,
         isLongTerm: isLongTermCategory,
         weeklyCleaningDay: isLongTermCategory ? prev.weeklyCleaningDay || 'monday' : '',
+      }));
+      setPaymentStatusError(null);
+    } else if (name === 'channel') {
+      const nextChannel = value;
+      setPaymentStatusError(null);
+      setFormData(prev => ({
+        ...prev,
+        channel: nextChannel,
+        paymentStatus: nextChannel === 'direct' ? prev.paymentStatus || '' : '',
+      }));
+    } else if (name === 'paymentStatus') {
+      setPaymentStatusError(null);
+      setFormData(prev => ({
+        ...prev,
+        paymentStatus: value,
       }));
     } else {
       setFormData(prev => ({ 
@@ -811,6 +842,62 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
               </select>
             </div>
           </div>
+
+          <div className="pt-2">
+            <label className="block text-xs font-bold uppercase tracking-wider mb-2" style={{ color: COLORS.darkGreen }}>Channel</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {[
+                { value: 'airbnb', label: 'Airbnb' },
+                { value: 'direct', label: 'Direct' },
+                { value: 'coliving', label: 'Coliving.com' },
+              ].map((opt) => {
+                const active = formData.channel === opt.value;
+                return (
+                  <button
+                    type="button"
+                    key={opt.value}
+                    onClick={() => handleChange({ target: { name: 'channel', value: opt.value } })}
+                    className={`w-full text-left px-3 py-3 rounded-xl border transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/30 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-sm" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
+                      <span className={`w-3 h-3 rounded-full border ${active ? 'bg-[#26402E] border-[#26402E]' : 'border-slate-300'}`}></span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {formData.channel === 'direct' && (
+            <div className="mt-3 space-y-2">
+              <label className="block text-xs font-bold uppercase tracking-wider" style={{ color: COLORS.darkGreen }}>Payment Status</label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { value: 'paid', label: 'Paid' },
+                  { value: 'unpaid', label: 'Unpaid' },
+                ].map((opt) => {
+                  const active = formData.paymentStatus === opt.value;
+                  return (
+                    <button
+                      type="button"
+                      key={opt.value}
+                      onClick={() => handleChange({ target: { name: 'paymentStatus', value: opt.value } })}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/40 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-sm" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
+                        <span className={`w-3 h-3 rounded-full border ${active ? 'bg-[#26402E] border-[#26402E]' : 'border-slate-300'}`}></span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              {paymentStatusError && (
+                <p className="text-xs text-red-600">{paymentStatusError}</p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -1456,6 +1543,12 @@ export default function App() {
     return 'Short Term';
   };
 
+  const formatChannelLabel = (channel) => {
+    if (channel === 'direct') return 'Direct';
+    if (channel === 'coliving') return 'Coliving.com';
+    return 'Airbnb';
+  };
+
   // Note: We intentionally do NOT sync to localStorage anymore
   // Firestore is the single source of truth, accessed via real-time listeners
 
@@ -1898,11 +1991,15 @@ export default function App() {
     try {
       const normalizedPrice = Number(bookingData.price) || 0;
       const normalizedNights = calculateNights(bookingData.checkIn, bookingData.checkOut);
+      const normalizedChannel = bookingData.channel || 'airbnb';
+      const normalizedPaymentStatus = normalizedChannel === 'direct' ? (bookingData.paymentStatus || null) : null;
 
       const normalizedData = {
         ...bookingData,
         price: normalizedPrice,
         nights: normalizedNights,
+        channel: normalizedChannel,
+        paymentStatus: normalizedPaymentStatus,
       };
 
       if (editingBooking) {
@@ -2629,15 +2726,16 @@ export default function App() {
       <div className="overflow-x-auto">
         <table className="w-full text-left">
           <thead className="bg-[#26402E] text-white text-xs uppercase font-bold tracking-wider">
-            <tr><th className="px-6 py-4">Guest</th><th className="px-6 py-4">Room</th><th className="px-6 py-4">Status</th><th className="px-6 py-4">Dates</th><th className="px-6 py-4">Price</th><th className="px-6 py-4 text-right">Actions</th></tr>
+            <tr><th className="px-6 py-4">Guest</th><th className="px-6 py-4">Room</th><th className="px-6 py-4">Status</th><th className="px-6 py-4">Channel</th><th className="px-6 py-4">Dates</th><th className="px-6 py-4">Price</th><th className="px-6 py-4 text-right">Actions</th></tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {bookings.length === 0 ? <tr><td colSpan="6" className="px-6 py-12 text-center text-slate-500">No bookings found.</td></tr> : bookings
+            {bookings.length === 0 ? <tr><td colSpan="7" className="px-6 py-12 text-center text-slate-500">No bookings found.</td></tr> : bookings
             .filter((b) => bookingCategoryFilter === 'all' ? true : getBookingStayCategory(b) === bookingCategoryFilter)
             .map((booking) => {
                 const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
                 const perNight = bookingNights > 0 ? Math.round(Number(booking.price) / bookingNights) : 0;
                 const stayCat = getBookingStayCategory(booking);
+                const channelValue = booking.channel || 'airbnb';
                 return (
               <tr key={booking.id} className="hover:bg-[#F9F8F2] transition-colors group">
                 <td className="px-6 py-4 font-bold text-slate-700 flex items-center gap-2">{booking.guestName}{booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500"/>}
@@ -2650,6 +2748,14 @@ export default function App() {
                   <div className="text-xs opacity-60">{ALL_ROOMS.find(r => r.id === booking.roomId)?.propertyName || 'Unknown property'}</div>
                 </td>
                 <td className="px-6 py-4"><span className={`px-3 py-1 rounded-full text-xs font-bold border ${booking.status === 'confirmed' ? 'bg-[#E2F05D]/20 text-[#4c5c23] border-[#E2F05D]/50' : 'bg-slate-100'}`}>{booking.status}</span></td>
+                <td className="px-6 py-4 text-sm text-slate-700">
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full border ${channelValue === 'direct' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : channelValue === 'coliving' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+                    {formatChannelLabel(channelValue)}
+                  </span>
+                  {channelValue === 'direct' && booking.paymentStatus && (
+                    <span className="ml-2 text-xs text-slate-500">{booking.paymentStatus === 'paid' ? 'Paid' : 'Unpaid'}</span>
+                  )}
+                </td>
                 <td className="px-6 py-4 text-sm text-slate-600">{booking.checkIn} → {booking.checkOut}</td>
                 <td className="px-6 py-4 text-sm font-bold text-slate-700">
                     {Number(booking.price).toLocaleString('vi-VN')} ₫
