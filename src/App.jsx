@@ -1595,10 +1595,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'calendar') {
-      ensureDateVisible(TODAY_STR, 'tab-activate');
+    if (activeTab !== 'calendar') return;
+
+    const isTodayInRange = (() => {
+      const target = new Date(TODAY_STR).getTime();
+      return target >= new Date(visibleStartDate).getTime() && target <= new Date(visibleEndDate).getTime();
+    })();
+
+    // Reset scroll to the start of the rendered window when entering the calendar.
+    if (timelineRef.current) {
+      timelineRef.current.scrollLeft = 0;
     }
-  }, [activeTab, TODAY_STR, ensureDateVisible]);
+
+    setSelectedCalendarDate(TODAY_STR);
+
+    if (!isTodayInRange) {
+      ensureDateVisible(TODAY_STR, 'tab-activate-out-of-range');
+    } else {
+      // If today is already visible as the first rendered column, no centering needed.
+      setPendingCenterDate(null);
+    }
+  }, [activeTab, TODAY_STR, ensureDateVisible, visibleStartDate, visibleEndDate]);
 
   useLayoutEffect(() => {
     if (activeTab !== 'calendar') return;
@@ -1629,7 +1646,7 @@ export default function App() {
         clientWidth: el.clientWidth,
         cellFound: !!cell,
       });
-      el.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
+      el.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
       setSelectedCalendarDate(pendingCenterDate);
       setPendingCenterDate(null);
     });
