@@ -2457,10 +2457,21 @@ export default function App() {
         const updatedTask = { ...taskData, id: editingRecurringTask.id };
         await setDoc(doc(db, 'recurringTasks', editingRecurringTask.id), updatedTask, { merge: true });
         pushAlert({ title: 'Recurring updated', message: updatedTask.description || 'Task saved', tone: 'success' });
-      } else if (taskData.appliesTo === 'multiple') {
-        const { selectedRoomIds = [] } = taskData;
+        setIsRecurringModalOpen(false);
+        setEditingRecurringTask(null);
+        return;
+      }
+
+      if (taskData.appliesTo === 'multiple') {
+        const deduped = Array.from(new Set(taskData.selectedRoomIds || []));
+        if (deduped.length === 0) {
+          pushAlert({ title: 'Recurring save failed', message: 'Select at least 1 room.', tone: 'error' });
+          return;
+        }
+
+        console.log('[recurring-bulk] Saving recurring task for rooms:', deduped);
         const results = { success: [], failed: [] };
-        for (const roomId of selectedRoomIds) {
+        for (const roomId of deduped) {
           const task = {
             description: taskData.description,
             frequency: taskData.frequency,
@@ -2473,28 +2484,33 @@ export default function App() {
           try {
             await setDoc(doc(db, 'recurringTasks', task.id), task);
             results.success.push(roomId);
+            console.log('[recurring-bulk] Saved room', roomId, '✅');
           } catch (err) {
-            console.error('[recurring-bulk] setDoc failed for room', roomId, err);
+            console.error('[recurring-bulk] Failed room', roomId, '❌ error:', err);
             results.failed.push({ roomId, err });
           }
         }
 
-        if (results.success.length && !results.failed.length) {
+        if (results.success.length === deduped.length) {
           pushAlert({ title: 'Recurring created', message: `Created for ${results.success.length} room${results.success.length === 1 ? '' : 's'}`, tone: 'success' });
-        } else if (results.success.length && results.failed.length) {
-          pushAlert({ title: 'Partial success', message: `Saved ${results.success.length}, failed ${results.failed.length}. Check console for details.`, tone: 'error' });
+          setIsRecurringModalOpen(false);
+          setEditingRecurringTask(null);
         } else {
-          pushAlert({ title: 'Recurring save failed', message: 'All saves failed. Check console for details.', tone: 'error' });
+          const savedCount = results.success.length;
+          const failed = results.failed[0];
+          pushAlert({ title: 'Partial save', message: `Saved ${savedCount}/${deduped.length}. Failed on room ${failed?.roomId || ''}. Check console.`, tone: 'error' });
+          // Keep modal open so user can retry; do not clear editing state
         }
-      } else {
-        const newTask = {
-          ...taskData,
-          appliesTo: 'single',
-          id: Math.random().toString(36).substr(2, 9),
-        };
-        await setDoc(doc(db, 'recurringTasks', newTask.id), newTask);
-        pushAlert({ title: 'Recurring created', message: 'Task saved', tone: 'success' });
+        return;
       }
+
+      const newTask = {
+        ...taskData,
+        appliesTo: 'single',
+        id: Math.random().toString(36).substr(2, 9),
+      };
+      await setDoc(doc(db, 'recurringTasks', newTask.id), newTask);
+      pushAlert({ title: 'Recurring created', message: 'Task saved', tone: 'success' });
       setIsRecurringModalOpen(false);
       setEditingRecurringTask(null);
     } catch (error) {
