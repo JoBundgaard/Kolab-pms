@@ -1066,7 +1066,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
 const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
   const [formData, setFormData] = useState({
-    locationId: allLocations[0]?.id || '',
+    locationId: allLocations?.[0]?.id || '',
     description: '',
     status: 'open',
     assignedStaff: 'Needs assignment',
@@ -1079,7 +1079,7 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
     } else {
       setFormData(prev => ({ 
         ...prev, 
-        locationId: allLocations[0]?.id || '',
+        locationId: allLocations?.[0]?.id || '',
         description: '',
         status: 'open',
         assignedStaff: 'Needs assignment',
@@ -1092,8 +1092,11 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
   
   const handleSubmit = (e) => {
     e.preventDefault();
-    const locationInfo = allLocations.find(loc => loc.id === formData.locationId);
-    if (!locationInfo) return console.error("Location not found.");
+    const locationInfo = allLocations?.find((loc) => loc.id === formData.locationId);
+    if (!locationInfo) {
+      pushAlert({ title: 'Missing location', message: 'Please select a room/area before saving.', tone: 'error' });
+      return;
+    }
 
     onSave({
       ...formData,
@@ -1130,8 +1133,9 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
               className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
               value={formData.locationId}
               onChange={handleChange}
+              disabled={!allLocations || allLocations.length === 0}
             >
-              {PROPERTIES.map(prop => (
+              {(allLocations && allLocations.length > 0 ? PROPERTIES : []).map(prop => (
                 <optgroup key={prop.id} label={prop.name}>
                   {prop.rooms.map(room => (
                     <option key={room.id} value={room.id}>{room.name} (Room)</option>
@@ -1142,6 +1146,9 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
                 </optgroup>
               ))}
             </select>
+            {!allLocations?.length && (
+              <div className="text-xs text-red-600 mt-1">No locations loaded. Please reload.</div>
+            )}
           </div>
           
           <div>
@@ -1223,7 +1230,8 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
             </button>
             <button 
               type="submit"
-              className="px-6 py-2.5 rounded-full font-medium shadow-sm transition-all transform hover:-translate-y-0.5 hover:shadow-md"
+              disabled={!allLocations?.length}
+              className={`px-6 py-2.5 rounded-full font-medium shadow-sm transition-all transform hover:-translate-y-0.5 hover:shadow-md ${!allLocations?.length ? 'opacity-50 cursor-not-allowed' : ''}`}
               style={{ backgroundColor: COLORS.darkGreen, color: COLORS.white }}
             >
               {issue ? 'Update Issue' : 'Report Issue'}
