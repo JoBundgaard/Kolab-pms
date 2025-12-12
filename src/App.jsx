@@ -1064,7 +1064,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   );
 };
 
-const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
+const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations, isSaving }) => {
   const [formData, setFormData] = useState({
     locationId: allLocations?.[0]?.id || '',
     description: '',
@@ -1072,6 +1072,7 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
     assignedStaff: 'Needs assignment',
     severity: 'normal',
   });
+  const [localError, setLocalError] = useState('');
 
   useEffect(() => {
     if (issue) {
@@ -1086,6 +1087,7 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
         severity: 'normal',
       }));
     }
+    setLocalError('');
   }, [issue, isOpen, allLocations]);
 
   if (!isOpen) return null;
@@ -1094,7 +1096,8 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
     e.preventDefault();
     const locationInfo = allLocations?.find((loc) => loc.id === formData.locationId);
     if (!locationInfo) {
-      pushAlert({ title: 'Missing location', message: 'Please select a room/area before saving.', tone: 'error' });
+      setLocalError('Could not open report issue form: missing room/area data. Please select a location.');
+      console.error('[maintenance-modal] missing location', { formData, allLocations });
       return;
     }
 
@@ -1109,6 +1112,27 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
+
+  if (!isOpen) return null;
+
+  if (!allLocations || allLocations.length === 0) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="px-6 py-5 border-b" style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}>
+            <h3 className="font-serif font-bold text-xl text-white">Could not open report issue form</h3>
+          </div>
+          <div className="p-6 space-y-3 text-sm" style={{ backgroundColor: COLORS.cream }}>
+            <div className="text-slate-700">Locations did not load. Please reload and try again.</div>
+            <div className="text-xs text-slate-500">If this persists, check console for errors.</div>
+            <div className="pt-3 flex justify-end">
+              <button onClick={onClose} className="px-4 py-2 rounded-full border border-slate-200 bg-white text-slate-700">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -1161,6 +1185,7 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
               value={formData.description}
               onChange={handleChange}
             ></textarea>
+            {localError && <div className="text-xs text-red-600 mt-2">{localError}</div>}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -1230,11 +1255,11 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
             </button>
             <button 
               type="submit"
-              disabled={!allLocations?.length}
-              className={`px-6 py-2.5 rounded-full font-medium shadow-sm transition-all transform hover:-translate-y-0.5 hover:shadow-md ${!allLocations?.length ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={!allLocations?.length || isSaving}
+              className={`px-6 py-2.5 rounded-full font-medium shadow-sm transition-all transform hover:-translate-y-0.5 hover:shadow-md ${(!allLocations?.length || isSaving) ? 'opacity-50 cursor-not-allowed' : ''}`}
               style={{ backgroundColor: COLORS.darkGreen, color: COLORS.white }}
             >
-              {issue ? 'Update Issue' : 'Report Issue'}
+              {isSaving ? 'Saving…' : issue ? 'Update Issue' : 'Report Issue'}
             </button>
           </div>
         </form>
@@ -1955,6 +1980,7 @@ export default function App() {
   
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [editingMaintenanceIssue, setEditingMaintenanceIssue] = useState(null);
+  const [isSavingMaintenanceIssue, setIsSavingMaintenanceIssue] = useState(false);
   const [isRecurringModalOpen, setIsRecurringModalOpen] = useState(false);
   const [editingRecurringTask, setEditingRecurringTask] = useState(null);
   
@@ -2505,6 +2531,7 @@ export default function App() {
   
   const handleSaveMaintenanceIssue = async (issueData, actingUser = user) => {
     try {
+      setIsSavingMaintenanceIssue(true);
       const payload = {
         ...issueData,
         assignedStaff: issueData.assignedStaff || 'Needs assignment',
@@ -2529,6 +2556,8 @@ export default function App() {
     } catch (error) {
       console.error('Error saving maintenance issue:', error);
       pushAlert({ title: 'Save failed', message: error?.message || 'Unable to save issue', code: error?.code, raw: error });
+    } finally {
+      setIsSavingMaintenanceIssue(false);
     }
   };
 
@@ -4384,7 +4413,7 @@ export default function App() {
         </div>
       </main>
       <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} />
-      <MaintenanceModal isOpen={isMaintenanceModalOpen} onClose={() => setIsMaintenanceModalOpen(false)} onSave={handleSaveMaintenanceIssue} issue={editingMaintenanceIssue} allLocations={ALL_LOCATIONS} />
+      <MaintenanceModal isOpen={isMaintenanceModalOpen} onClose={() => setIsMaintenanceModalOpen(false)} onSave={handleSaveMaintenanceIssue} issue={editingMaintenanceIssue} allLocations={ALL_LOCATIONS} isSaving={isSavingMaintenanceIssue} />
       <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} onDelete={handleDeleteRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} defaultMode={recurringModalMode} />
       <InvoiceModal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} bookings={bookings} />
       <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
