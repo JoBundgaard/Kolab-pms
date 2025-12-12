@@ -126,6 +126,27 @@ const formatDate = (date) => {
 const normalizeDescription = (text) => (text || '').trim().toLowerCase().replace(/\s+/g, ' ');
 const buildRecurringGroupKey = (task) => `${normalizeDescription(task.description)}|${task.frequency || 'monthly'}`;
 
+const computeDuplicateIssues = (issues) => {
+  const buckets = {};
+  issues.forEach((issue) => {
+    const dateKey = formatDate(issue.reportedAt || issue.createdAt || new Date());
+    const descKey = normalizeDescription(issue.description);
+    const primaryKey = issue.recurringTaskId
+      ? `${issue.recurringTaskId}|${issue.recurringDueDateKey || dateKey}|${issue.locationId || 'unknown'}`
+      : `${descKey}|${issue.locationId || 'unknown'}|${dateKey}`;
+    if (!buckets[primaryKey]) buckets[primaryKey] = [];
+    buckets[primaryKey].push(issue);
+  });
+
+  const duplicates = [];
+  Object.values(buckets).forEach((list) => {
+    if (list.length <= 1) return;
+    const sorted = [...list].sort((a, b) => new Date(a.reportedAt || a.createdAt || 0) - new Date(b.reportedAt || b.createdAt || 0));
+    duplicates.push(...sorted.slice(1)); // keep oldest, mark rest as dupes
+  });
+  return duplicates;
+};
+
 function getWeekdayKey(dateStr) {
   const d = new Date(dateStr);
   const idx = d.getDay();
@@ -1734,6 +1755,10 @@ export default function App() {
   const undoTimerRef = useRef(null);
   const [recurringModalMode, setRecurringModalMode] = useState('single');
   const [expandedRecurringGroups, setExpandedRecurringGroups] = useState({});
+  const [issueFilters, setIssueFilters] = useState({ status: 'open', property: 'all', search: '', dateRange: 'all', recurringOnly: false });
+  const [selectedIssues, setSelectedIssues] = useState([]);
+  const [bulkAssignValue, setBulkAssignValue] = useState('Needs assignment');
+  const processedRecurringRef = useRef(new Set());
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -2012,6 +2037,7 @@ export default function App() {
       setMaintenanceIssues([]);
       setRecurringTasks([]);
       setLoadingRecurring(true);
+      processedRecurringRef.current = new Set();
     } catch (err) {
       console.error('Sign-out failed:', err);
       alert('Sign-out failed. Please try again.');
@@ -2351,16 +2377,30 @@ export default function App() {
 
     const ensureRecurringIssues = async () => {
       for (const task of recurringTasks) {
-        if (!task.nextDue || task.nextDue > today) continue;
+        const dueDateStr = formatDate(task.nextDue);
+        if (!dueDateStr) continue;
+        if (dueDateStr > today) continue; // only create when due or overdue
 
-        const hasOpen = maintenanceIssues.some(
-          (i) => i.templateId === task.id && !isResolvedStatus(i.status)
+        const processKey = `${task.id}|${dueDateStr}`;
+        if (processedRecurringRef.current.has(processKey)) continue;
+
+        const hasExisting = maintenanceIssues.some(
+          (i) =>
+            (i.templateId === task.id || i.recurringTaskId === task.id) &&
+            (i.recurringDueDateKey === dueDateStr || i.dueDate === dueDateStr)
         );
-        if (hasOpen) continue;
+        if (hasExisting) {
+          processedRecurringRef.current.add(processKey);
+          continue;
+        }
 
         const locationInfo = ALL_LOCATIONS.find((loc) => loc.id === task.locationId);
-        const issueId = Math.random().toString(36).substr(2, 9);
+        if (!locationInfo) {
+          console.warn('[recurring] skipped task with unknown location', task);
+          continue;
+        }
 
+        const issueId = Math.random().toString(36).substr(2, 9);
         const newIssue = {
           id: issueId,
           locationId: task.locationId,
@@ -2371,14 +2411,17 @@ export default function App() {
           assignedStaff: 'Unassigned',
           reportedAt: new Date().toISOString(),
           templateId: task.id,
+          recurringTaskId: task.id,
+          recurringDueDateKey: dueDateStr,
           isRecurring: true,
-          dueDate: task.nextDue,
+          dueDate: dueDateStr,
         };
 
         try {
           await setDoc(doc(db, 'maintenance', issueId), newIssue);
-          const nextDue = task.frequency === 'monthly' ? addMonths(task.nextDue, 1) : task.nextDue;
+          const nextDue = task.frequency === 'monthly' ? addMonths(dueDateStr, 1) : dueDateStr;
           await setDoc(doc(db, 'recurringTasks', task.id), { nextDue }, { merge: true });
+          processedRecurringRef.current.add(processKey);
           console.log(`Created recurring maintenance issue from task ${task.id}`);
         } catch (err) {
           console.error('Recurring task generation error:', err);
@@ -2667,6 +2710,93 @@ export default function App() {
         console.error('Error deleting maintenance issue:', error);
         pushAlert({ title: 'Delete failed', message: error?.message || 'Unable to delete issue', code: error?.code, raw: error });
       }
+  };
+
+  const handleBulkDeleteIssues = async (ids) => {
+    if (!ids || ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} selected issue${ids.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    const failures = [];
+    for (const id of ids) {
+      try {
+        await deleteDoc(doc(db, 'maintenance', id));
+      } catch (error) {
+        console.error('Bulk delete failed for issue', id, error);
+        failures.push({ id, error });
+      }
+    }
+    setSelectedIssues((prev) => prev.filter((id) => !ids.includes(id)));
+    if (failures.length) {
+      pushAlert({ title: 'Partial delete', message: `Failed to delete ${failures.length}/${ids.length} issues`, tone: 'error' });
+    } else {
+      pushAlert({ title: 'Issues deleted', message: `Deleted ${ids.length} issue${ids.length === 1 ? '' : 's'}`, tone: 'success' });
+    }
+  };
+
+  const handleBulkResolveIssues = async (ids) => {
+    if (!ids || ids.length === 0) return;
+    const now = new Date().toISOString();
+    const failures = [];
+    for (const id of ids) {
+      try {
+        await setDoc(doc(db, 'maintenance', id), { status: 'resolved', resolvedAt: now, updatedAt: now }, { merge: true });
+      } catch (error) {
+        console.error('Bulk resolve failed for issue', id, error);
+        failures.push({ id, error });
+      }
+    }
+    if (failures.length) {
+      pushAlert({ title: 'Partial close', message: `Closed ${ids.length - failures.length}/${ids.length}. Some failed.`, tone: 'error' });
+    } else {
+      pushAlert({ title: 'Issues closed', message: `Closed ${ids.length} issue${ids.length === 1 ? '' : 's'}`, tone: 'success' });
+    }
+  };
+
+  const handleBulkAssignIssues = async (ids, staff) => {
+    if (!ids || ids.length === 0) return;
+    const failures = [];
+    for (const id of ids) {
+      try {
+        await setDoc(doc(db, 'maintenance', id), { assignedStaff: staff || 'Needs assignment', updatedAt: new Date().toISOString() }, { merge: true });
+      } catch (error) {
+        console.error('Bulk assign failed for issue', id, error);
+        failures.push({ id, error });
+      }
+    }
+    if (failures.length) {
+      pushAlert({ title: 'Partial assign', message: `Assigned ${ids.length - failures.length}/${ids.length}. Some failed.`, tone: 'error' });
+    } else {
+      pushAlert({ title: 'Issues assigned', message: `Assigned ${staff} to ${ids.length} issue${ids.length === 1 ? '' : 's'}`, tone: 'success' });
+    }
+  };
+
+  const handleCleanupDuplicateIssues = async (issuePool) => {
+    const duplicates = computeDuplicateIssues(issuePool || maintenanceIssues);
+    if (!duplicates.length) {
+      pushAlert({ title: 'No duplicates', message: 'No duplicate issues detected in this view.', tone: 'info' });
+      return;
+    }
+    const sample = duplicates[0];
+    const location = ALL_LOCATIONS.find((l) => l.id === sample.locationId);
+    const sampleText = `${sample.description || 'No description'} · ${location?.name || 'Unknown room'}`;
+    if (!confirm(`Found ${duplicates.length} duplicate issue${duplicates.length === 1 ? '' : 's'}. Delete them? Example: ${sampleText}`)) return;
+
+    const failures = [];
+    for (const dup of duplicates) {
+      try {
+        await deleteDoc(doc(db, 'maintenance', dup.id));
+      } catch (error) {
+        console.error('Cleanup duplicate failed', dup.id, error);
+        failures.push({ dup, error });
+      }
+    }
+
+    setSelectedIssues((prev) => prev.filter((id) => !duplicates.some((d) => d.id === id)));
+
+    if (failures.length) {
+      pushAlert({ title: 'Partial cleanup', message: `Deleted ${duplicates.length - failures.length}/${duplicates.length}. Some failed.`, tone: 'error' });
+    } else {
+      pushAlert({ title: 'Duplicates deleted', message: `Removed ${duplicates.length} duplicate issue${duplicates.length === 1 ? '' : 's'}`, tone: 'success' });
+    }
   };
 
   // --- STATISTICS CALCULATIONS ---
@@ -3426,7 +3556,35 @@ export default function App() {
   const renderMaintenance = () => {
     const openIssues = maintenanceIssues.filter((i) => !isResolvedStatus(i.status));
     const severityOrder = { critical: 0, normal: 1, low: 2 };
-    const sortedActiveIssues = [...openIssues].sort((a, b) => {
+    const todayStr = formatDate(new Date());
+
+    const filteredIssues = maintenanceIssues.filter((issue) => {
+      const location = ALL_LOCATIONS.find((l) => l.id === issue.locationId);
+      const propertyId = location?.propertyId;
+      const dateStr = formatDate(issue.reportedAt || issue.createdAt);
+
+      if (issueFilters.status === 'open' && isResolvedStatus(issue.status)) return false;
+      if (issueFilters.status === 'closed' && !isResolvedStatus(issue.status)) return false;
+
+      if (issueFilters.property !== 'all' && propertyId !== issueFilters.property) return false;
+
+      if (issueFilters.recurringOnly && !(issue.recurringTaskId || issue.templateId || issue.isRecurring)) return false;
+
+      if (issueFilters.dateRange === 'today' && dateStr !== todayStr) return false;
+      if (issueFilters.dateRange === 'last7') {
+        const diffDays = Math.floor((new Date(todayStr) - new Date(dateStr)) / (1000 * 60 * 60 * 24));
+        if (isNaN(diffDays) || diffDays < 0 || diffDays > 7) return false;
+      }
+
+      if (issueFilters.search) {
+        const text = `${issue.description || ''} ${location?.name || ''} ${location?.propertyName || ''}`.toLowerCase();
+        if (!text.includes(issueFilters.search.toLowerCase())) return false;
+      }
+
+      return true;
+    });
+
+    const sortedActiveIssues = [...filteredIssues].sort((a, b) => {
       const sa = severityOrder[a.severity || 'normal'];
       const sb = severityOrder[b.severity || 'normal'];
       if (sa !== sb) return sa - sb;
@@ -3434,6 +3592,9 @@ export default function App() {
       const ageB = new Date(b.reportedAt || b.createdAt || 0).getTime();
       return ageA - ageB; // oldest first
     });
+
+    const allFilteredSelected = filteredIssues.length > 0 && filteredIssues.every((i) => selectedIssues.includes(i.id));
+    const duplicateCandidates = computeDuplicateIssues(filteredIssues);
 
     const criticalIssues = openIssues.filter((i) => (i.severity || 'normal') === 'critical');
     const overdueRecurring = groupedRecurringTasks.reduce((sum, g) => sum + g.overdueCount, 0);
@@ -3562,26 +3723,147 @@ export default function App() {
 
         {/* Active issues command center */}
         <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-3">
               <AlertTriangle size={20} className="text-red-500" />
               <div>
                 <h3 className="font-bold text-lg text-slate-800">Active Issues</h3>
-                <p className="text-xs text-slate-500">Click a row to act. Sorted by severity then oldest.</p>
+                <p className="text-xs text-slate-500">Filter, select, and bulk act. Sorted by severity then oldest.</p>
               </div>
             </div>
-            <span className="text-xs px-3 py-1 rounded-full bg-slate-100 text-slate-600">{openIssues.length} open</span>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600">{openIssues.length} open</span>
+              <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600">{filteredIssues.length} shown</span>
+            </div>
           </div>
-          {openIssues.length === 0 ? (
+
+          <div className="px-6 py-3 border-b border-slate-100 grid grid-cols-1 md:grid-cols-5 gap-2 text-sm">
+            <select
+              className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
+              value={issueFilters.status}
+              onChange={(e) => { setIssueFilters((prev) => ({ ...prev, status: e.target.value })); setSelectedIssues([]); }}
+            >
+              <option value="open">Status: Open</option>
+              <option value="closed">Status: Closed</option>
+              <option value="all">Status: All</option>
+            </select>
+            <select
+              className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
+              value={issueFilters.property}
+              onChange={(e) => { setIssueFilters((prev) => ({ ...prev, property: e.target.value })); setSelectedIssues([]); }}
+            >
+              <option value="all">All properties</option>
+              {PROPERTIES.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <select
+              className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
+              value={issueFilters.dateRange}
+              onChange={(e) => { setIssueFilters((prev) => ({ ...prev, dateRange: e.target.value })); setSelectedIssues([]); }}
+            >
+              <option value="all">Any date</option>
+              <option value="today">Created today</option>
+              <option value="last7">Last 7 days</option>
+            </select>
+            <label className="inline-flex items-center gap-2 text-slate-600 text-sm">
+              <input
+                type="checkbox"
+                className="accent-[#26402E]"
+                checked={issueFilters.recurringOnly}
+                onChange={(e) => { setIssueFilters((prev) => ({ ...prev, recurringOnly: e.target.checked })); setSelectedIssues([]); }}
+              />
+              Only recurring-generated
+            </label>
+            <input
+              type="text"
+              className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
+              placeholder="Search description or room"
+              value={issueFilters.search}
+              onChange={(e) => { setIssueFilters((prev) => ({ ...prev, search: e.target.value })); setSelectedIssues([]); }}
+            />
+          </div>
+
+          <div className="px-6 py-3 flex flex-wrap gap-3 items-center border-b border-slate-100 bg-slate-50">
+            <div className="text-sm text-slate-700 font-semibold">Selected: {selectedIssues.length}</div>
+            <button
+              onClick={() => {
+                if (allFilteredSelected) {
+                  setSelectedIssues((prev) => prev.filter((id) => !filteredIssues.some((i) => i.id === id)));
+                } else {
+                  setSelectedIssues(Array.from(new Set([...selectedIssues, ...filteredIssues.map((i) => i.id)])));
+                }
+              }}
+              className="px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700"
+            >
+              {allFilteredSelected ? 'Clear selection' : 'Select all filtered'}
+            </button>
+            <button
+              disabled={selectedIssues.length === 0}
+              onClick={() => handleBulkDeleteIssues(selectedIssues)}
+              className={`px-3 py-1.5 rounded-full border text-xs font-semibold ${selectedIssues.length ? 'border-red-200 text-red-700 bg-white hover:bg-red-50' : 'border-slate-200 text-slate-400 bg-white cursor-not-allowed'}`}
+            >
+              Delete selected
+            </button>
+            <button
+              disabled={selectedIssues.length === 0}
+              onClick={() => handleBulkResolveIssues(selectedIssues)}
+              className={`px-3 py-1.5 rounded-full border text-xs font-semibold ${selectedIssues.length ? 'border-green-200 text-green-700 bg-white hover:bg-green-50' : 'border-slate-200 text-slate-400 bg-white cursor-not-allowed'}`}
+            >
+              Close selected
+            </button>
+            <div className="flex items-center gap-2 text-xs">
+              <select
+                className="border border-slate-200 rounded-full px-3 py-1.5 bg-white text-slate-700"
+                value={bulkAssignValue}
+                onChange={(e) => setBulkAssignValue(e.target.value)}
+              >
+                <option value="Needs assignment">Needs assignment</option>
+                {STAFF.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <button
+                disabled={selectedIssues.length === 0}
+                onClick={() => handleBulkAssignIssues(selectedIssues, bulkAssignValue)}
+                className={`px-3 py-1.5 rounded-full border text-xs font-semibold ${selectedIssues.length ? 'border-slate-200 text-slate-700 bg-white hover:bg-slate-100' : 'border-slate-200 text-slate-400 bg-white cursor-not-allowed'}`}
+              >
+                Assign selected
+              </button>
+            </div>
+            <button
+              onClick={() => handleCleanupDuplicateIssues(filteredIssues)}
+              className={`px-3 py-1.5 rounded-full border text-xs font-semibold ${duplicateCandidates.length ? 'border-amber-200 text-amber-800 bg-white hover:bg-amber-50' : 'border-slate-200 text-slate-400 bg-white cursor-not-allowed'}`}
+              disabled={duplicateCandidates.length === 0}
+            >
+              Clean up duplicates {duplicateCandidates.length ? `(${duplicateCandidates.length})` : ''}
+            </button>
+          </div>
+
+          {filteredIssues.length === 0 ? (
             <div className="p-8 text-center text-slate-500">
               <CheckCircle size={48} className="mx-auto mb-3 text-green-500 opacity-60" />
-              <p>All clear. No open issues.</p>
+              <p>No issues match this view.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-bold tracking-wider">
                   <tr>
+                    <th className="px-4 py-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        className="accent-[#26402E]"
+                        checked={allFilteredSelected}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedIssues(Array.from(new Set([...selectedIssues, ...filteredIssues.map((i) => i.id)])));
+                          } else {
+                            setSelectedIssues((prev) => prev.filter((id) => !filteredIssues.some((i) => i.id === id)));
+                          }
+                        }}
+                      />
+                    </th>
                     <th className="px-6 py-3">Severity</th>
                     <th className="px-6 py-3">Location</th>
                     <th className="px-6 py-3">Status · Age</th>
@@ -3593,26 +3875,37 @@ export default function App() {
                   {sortedActiveIssues.map((issue) => {
                     const location = ALL_LOCATIONS.find((l) => l.id === issue.locationId);
                     const sev = severityMeta(issue.severity);
+                    const isSelected = selectedIssues.includes(issue.id);
                     return (
-                      <tr key={issue.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => openIssuePanel(issue)}>
-                        <td className="px-6 py-3">
+                      <tr key={issue.id} className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-slate-50' : ''}`}>
+                        <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="accent-[#26402E]"
+                            checked={isSelected}
+                            onChange={() => {
+                              setSelectedIssues((prev) => prev.includes(issue.id) ? prev.filter((id) => id !== issue.id) : [...prev, issue.id]);
+                            }}
+                          />
+                        </td>
+                        <td className="px-6 py-3" onClick={() => openIssuePanel(issue)}>
                           <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${sev.bg} ${sev.color} border-current gap-2`}>
                             <span className={`w-2 h-2 rounded-full ${sev.dot}`}></span>
                             {sev.label}
                           </div>
                         </td>
-                        <td className="px-6 py-3 text-sm text-slate-700">
+                        <td className="px-6 py-3 text-sm text-slate-700" onClick={() => openIssuePanel(issue)}>
                           <div className="font-semibold">{location?.name || 'Unknown'}</div>
                           <div className="text-xs text-slate-500">{location?.propertyName}</div>
                         </td>
-                        <td className="px-6 py-3 text-sm">
+                        <td className="px-6 py-3 text-sm" onClick={() => openIssuePanel(issue)}>
                           <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusBadgeClass(issue.status)}`}>{statusLabel(issue.status)}</span>
                           <div className="text-xs text-slate-500 mt-1">{formatIssueAge(issue.reportedAt || issue.createdAt)}</div>
                         </td>
-                        <td className="px-6 py-3 text-sm text-slate-700">
+                        <td className="px-6 py-3 text-sm text-slate-700" onClick={() => openIssuePanel(issue)}>
                           {assignedLabel(issue.assignedStaff)}
                         </td>
-                        <td className="px-6 py-3 text-sm text-slate-600 max-w-xs truncate" title={issue.description}>{issue.description}</td>
+                        <td className="px-6 py-3 text-sm text-slate-600 max-w-xs truncate" title={issue.description} onClick={() => openIssuePanel(issue)}>{issue.description}</td>
                       </tr>
                     );
                   })}
