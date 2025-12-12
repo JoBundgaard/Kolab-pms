@@ -1095,27 +1095,86 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
         </div>
         
         <form onSubmit={handleSubmit} className="p-6 space-y-5" style={{ backgroundColor: COLORS.cream }}>
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Location</label>
-            <select 
-              name="locationId"
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
-              value={formData.locationId}
-              onChange={handleChange}
-              disabled={!!issue} 
-            >
-              {PROPERTIES.map(prop => (
-                <optgroup key={prop.id} label={prop.name}>
-                  {prop.rooms.map(room => (
-                    <option key={room.id} value={room.id}>{room.name} (Room)</option>
-                  ))}
-                  {prop.commonAreas.map(area => (
-                    <option key={area.id} value={area.id}>{area.name} ({area.type})</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+          <div className="flex items-center gap-3">
+            <label className="block text-xs font-bold uppercase tracking-wider" style={{ color: COLORS.darkGreen }}>Applies to</label>
+            <div className="flex gap-2 text-xs font-semibold">
+              <button type="button" onClick={() => setAppliesTo('single')} className={`px-3 py-1.5 rounded-full border ${appliesTo === 'single' ? 'bg-[#E2F05D]/40 border-[#26402E]' : 'bg-white border-slate-200'}`}>Single room</button>
+              <button type="button" onClick={() => setAppliesTo('multiple')} className={`px-3 py-1.5 rounded-full border ${appliesTo === 'multiple' ? 'bg-[#E2F05D]/40 border-[#26402E]' : 'bg-white border-slate-200'}`}>Multiple rooms</button>
+            </div>
           </div>
+
+          {appliesTo === 'single' && (
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Location</label>
+              <select 
+                name="locationId"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                value={formData.locationId}
+                onChange={handleChange}
+              >
+                {PROPERTIES.map(prop => (
+                  <optgroup key={prop.id} label={prop.name}>
+                    {prop.rooms.map(room => (
+                      <option key={room.id} value={room.id}>{room.name} (Room)</option>
+                    ))}
+                    {prop.commonAreas.map(area => (
+                      <option key={area.id} value={area.id}>{area.name} ({area.type})</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {appliesTo === 'multiple' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold uppercase tracking-wider" style={{ color: COLORS.darkGreen }}>Select rooms</label>
+                <div className="text-xs text-slate-500">Selected: {selectedRooms.length} rooms</div>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
+                <div className="p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-semibold text-slate-800">Townhouse</div>
+                    <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+                      <input type="checkbox" className="accent-[#26402E]" checked={townhouseRooms.every((r) => selectedRooms.includes(r.id)) && townhouseRooms.length > 0} onChange={(e) => selectAll(townhouseRooms.map((r) => r.id), e.target.checked)} />
+                      All Townhouse rooms
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {townhouseRooms.map((room) => (
+                      <label key={room.id} className="flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" className="accent-[#26402E]" checked={selectedRooms.includes(room.id)} onChange={() => toggleRoom(room.id)} />
+                        {room.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-semibold text-slate-800">Neighbours</div>
+                    <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+                      <input type="checkbox" className="accent-[#26402E]" checked={neighboursRooms.every((r) => selectedRooms.includes(r.id)) && neighboursRooms.length > 0} onChange={(e) => selectAll(neighboursRooms.map((r) => r.id), e.target.checked)} />
+                      All Neighbours rooms
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {neighboursRooms.map((room) => (
+                      <label key={room.id} className="flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" className="accent-[#26402E]" checked={selectedRooms.includes(room.id)} onChange={() => toggleRoom(room.id)} />
+                        {room.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-500">Common spaces are excluded from bulk selection.</span>
+                <button type="button" onClick={clearAll} className="text-[#26402E] font-semibold">Clear all</button>
+              </div>
+              {error && <div className="text-xs text-red-600">{error}</div>}
+            </div>
+          )}
           
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Description</label>
@@ -1208,17 +1267,24 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
   );
 };
 
-const RecurringTaskModal = ({ isOpen, onClose, onSave, task, allLocations }) => {
+const RecurringTaskModal = ({ isOpen, onClose, onSave, task, allLocations, defaultMode = 'single' }) => {
   const [formData, setFormData] = useState({
     locationId: allLocations[0]?.id || '',
     description: '',
     frequency: 'monthly',
     nextDue: formatDate(new Date()),
   });
+  const [appliesTo, setAppliesTo] = useState(defaultMode); // 'single' | 'multiple'
+  const townhouseRooms = PROPERTIES.find((p) => p.id === 'prop_1')?.rooms || [];
+  const neighboursRooms = PROPERTIES.find((p) => p.id === 'prop_2')?.rooms || [];
+  const [selectedRooms, setSelectedRooms] = useState([]);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (task) {
       setFormData(task);
+      setAppliesTo('single');
+      setSelectedRooms([]);
     } else {
       setFormData({
         locationId: allLocations[0]?.id || '',
@@ -1226,19 +1292,46 @@ const RecurringTaskModal = ({ isOpen, onClose, onSave, task, allLocations }) => 
         frequency: 'monthly',
         nextDue: formatDate(new Date()),
       });
+      setAppliesTo(defaultMode);
+      setSelectedRooms([]);
     }
-  }, [task, isOpen, allLocations]);
+    setError('');
+  }, [task, isOpen, allLocations, defaultMode]);
 
   if (!isOpen) return null;
 
+  const toggleRoom = (id) => {
+    setSelectedRooms((prev) => (prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]));
+  };
+
+  const selectAll = (rooms, enabled) => {
+    if (!enabled) {
+      setSelectedRooms((prev) => prev.filter((id) => !rooms.includes(id)));
+      return;
+    }
+    setSelectedRooms((prev) => Array.from(new Set([...prev, ...rooms])));
+  };
+
+  const clearAll = () => setSelectedRooms([]);
+
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSave(formData);
+    if (appliesTo === 'multiple') {
+      if (selectedRooms.length === 0) {
+        setError('Select at least one room. Common spaces are not included.');
+        return;
+      }
+      setError('');
+      onSave({ ...formData, appliesTo, selectedRoomIds: selectedRooms });
+      return;
+    }
+    setError('');
+    onSave({ ...formData, appliesTo: 'single' });
   };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   return (
@@ -1560,6 +1653,7 @@ export default function App() {
   const [activeIssue, setActiveIssue] = useState(null);
   const [undoAction, setUndoAction] = useState(null);
   const undoTimerRef = useRef(null);
+  const [recurringModalMode, setRecurringModalMode] = useState('single');
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -2279,18 +2373,34 @@ export default function App() {
       if (editingRecurringTask) {
         const updatedTask = { ...taskData, id: editingRecurringTask.id };
         await setDoc(doc(db, 'recurringTasks', editingRecurringTask.id), updatedTask, { merge: true });
+        pushAlert({ title: 'Recurring updated', message: updatedTask.description || 'Task saved', tone: 'success' });
+      } else if (taskData.appliesTo === 'multiple') {
+        const { selectedRoomIds = [] } = taskData;
+        const tasks = selectedRoomIds.map((roomId) => ({
+          description: taskData.description,
+          frequency: taskData.frequency,
+          nextDue: taskData.nextDue,
+          locationId: roomId,
+          appliesTo: 'single',
+          createdFrom: 'bulk',
+          id: Math.random().toString(36).substr(2, 9),
+        }));
+        await Promise.all(tasks.map((t) => setDoc(doc(db, 'recurringTasks', t.id), t)));
+        pushAlert({ title: 'Recurring created', message: `Created for ${tasks.length} room${tasks.length === 1 ? '' : 's'}`, tone: 'success' });
       } else {
         const newTask = {
           ...taskData,
+          appliesTo: 'single',
           id: Math.random().toString(36).substr(2, 9),
         };
         await setDoc(doc(db, 'recurringTasks', newTask.id), newTask);
+        pushAlert({ title: 'Recurring created', message: 'Task saved', tone: 'success' });
       }
       setIsRecurringModalOpen(false);
       setEditingRecurringTask(null);
     } catch (error) {
       console.error('Error saving recurring task:', error);
-      alert('Error saving recurring task. Please check the console.');
+      pushAlert({ title: 'Recurring save failed', message: error?.message || 'Please try again', code: error?.code, raw: error });
     }
   };
 
@@ -3181,12 +3291,20 @@ export default function App() {
               Report Issue
             </button>
             <button
-              onClick={() => { setEditingRecurringTask(null); setIsRecurringModalOpen(true); }}
+              onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(null); setIsRecurringModalOpen(true); }}
               className="px-4 py-3 rounded-full flex items-center shadow-md hover:shadow-lg transition-all font-bold text-xs uppercase tracking-wide"
               style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}
             >
               <RefreshCcw size={16} className="mr-2" />
               Recurring
+            </button>
+            <button
+              onClick={() => { setRecurringModalMode('multiple'); setEditingRecurringTask(null); setIsRecurringModalOpen(true); }}
+              className="px-4 py-3 rounded-full flex items-center shadow-md hover:shadow-lg transition-all font-bold text-[11px] uppercase tracking-wide"
+              style={{ backgroundColor: COLORS.white, color: COLORS.darkGreen, border: '1px solid #E5E7EB' }}
+            >
+              <RefreshCcw size={16} className="mr-2" />
+              Recurring (Bulk)
             </button>
           </div>
         </div>
@@ -3359,7 +3477,7 @@ export default function App() {
                     <div className="font-semibold text-slate-800">Upcoming: {nextRecurring.description}</div>
                     <div className="text-xs text-slate-500">Due {nextRecurring.nextDue}</div>
                   </div>
-                  <button onClick={() => { setEditingRecurringTask(nextRecurring); setIsRecurringModalOpen(true); }} className="text-slate-400 hover:text-[#26402E]"><Edit2 size={16} /></button>
+                  <button onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(nextRecurring); setIsRecurringModalOpen(true); }} className="text-slate-400 hover:text-[#26402E]"><Edit2 size={16} /></button>
                 </div>
               ) : (
                 <div className="p-4 text-sm text-slate-500">No upcoming recurring tasks.</div>
@@ -3374,7 +3492,7 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-3 text-xs">
                       <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">Auto-generated</span>
-                      <button onClick={() => { setEditingRecurringTask(task); setIsRecurringModalOpen(true); }} className="text-amber-700 hover:text-amber-900"><Edit2 size={16} /></button>
+                      <button onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(task); setIsRecurringModalOpen(true); }} className="text-amber-700 hover:text-amber-900"><Edit2 size={16} /></button>
                     </div>
                   </div>
                 );
@@ -3654,7 +3772,7 @@ export default function App() {
       </main>
       <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} />
       <MaintenanceModal isOpen={isMaintenanceModalOpen} onClose={() => setIsMaintenanceModalOpen(false)} onSave={handleSaveMaintenanceIssue} issue={editingMaintenanceIssue} allLocations={ALL_LOCATIONS} />
-      <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} />
+      <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} defaultMode={recurringModalMode} />
       <InvoiceModal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} bookings={bookings} />
       <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
         {alerts.map((alert) => {
