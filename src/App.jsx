@@ -1523,6 +1523,7 @@ export default function App() {
   const [dataError, setDataError] = useState(null); // surfaces listener/auth errors
   const [bookingCategoryFilter, setBookingCategoryFilter] = useState('all');
   const [bookingTimeFilter, setBookingTimeFilter] = useState('current'); // 'current' | 'future' | 'past'
+  const [loginHint, setLoginHint] = useState('');
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -1680,10 +1681,15 @@ export default function App() {
   const handleGoogleSignIn = async () => {
     try {
       const provider = new GoogleAuthProvider();
+      setLoginHint('');
       await signInWithPopup(auth, provider);
     } catch (err) {
-      console.error('Google sign-in failed:', err);
-      alert('Sign-in failed. Please try again.');
+      console.error('Google sign-in failed:', err?.code, err?.message, err);
+      if (err?.code === 'auth/popup-blocked') {
+        setLoginHint('Pop-up was blocked. Please allow pop-ups for this site and try again.');
+      } else {
+        setLoginHint('Sign-in failed. Please try again.');
+      }
     }
   };
 
@@ -2752,6 +2758,7 @@ export default function App() {
         >
           Sign in with Google
         </button>
+        {loginHint && <div className="text-xs text-red-600">{loginHint}</div>}
       </div>
     </div>
   );
