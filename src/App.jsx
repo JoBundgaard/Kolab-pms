@@ -31,6 +31,7 @@ import {
   Clock,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   User, 
   RefreshCcw,
   AlertTriangle,
@@ -62,6 +63,7 @@ const COLORS = {
 };
 
 const DATE_HEADER_HEIGHT = 56; // Keeps sticky offsets aligned for headers
+const DUE_SOON_DAYS = 3; // threshold for recurring task "due soon" badge
 
 const PROPERTIES = [
   {
@@ -120,6 +122,9 @@ const formatDate = (date) => {
 
   return `${year}-${month}-${day}`;
 };
+
+const normalizeDescription = (text) => (text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const buildRecurringGroupKey = (task) => `${normalizeDescription(task.description)}|${task.frequency || 'monthly'}`;
 
 function getWeekdayKey(dateStr) {
   const d = new Date(dateStr);
@@ -1716,6 +1721,7 @@ export default function App() {
   const [roomStatuses, setRoomStatuses] = useState({});
   const [maintenanceIssues, setMaintenanceIssues] = useState([]);
   const [recurringTasks, setRecurringTasks] = useState([]);
+  const [loadingRecurring, setLoadingRecurring] = useState(true);
   const [dataError, setDataError] = useState(null); // surfaces listener/auth errors
   const [bookingCategoryFilter, setBookingCategoryFilter] = useState('all');
   const [bookingTimeFilter, setBookingTimeFilter] = useState('current'); // 'current' | 'future' | 'past'
@@ -1727,6 +1733,7 @@ export default function App() {
   const [undoAction, setUndoAction] = useState(null);
   const undoTimerRef = useRef(null);
   const [recurringModalMode, setRecurringModalMode] = useState('single');
+  const [expandedRecurringGroups, setExpandedRecurringGroups] = useState({});
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -1892,17 +1899,20 @@ export default function App() {
         }
       );
 
+      setLoadingRecurring(true);
       const recurringQuery = query(collection(db, 'recurringTasks'));
       unsubRecurring = onSnapshot(
         recurringQuery,
         (snapshot) => {
           console.log('[Firestore] recurring tasks snapshot size:', snapshot.size);
           setRecurringTasks(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+          setLoadingRecurring(false);
         },
         (error) => {
           console.error('Error listening to recurring tasks:', error);
           setDataError(error.message || 'Unable to read recurring tasks');
           setLoading(false);
+          setLoadingRecurring(false);
           pushAlert({ title: 'Sync error: recurring tasks', message: error.message, code: error.code || 'firestore-error', raw: error });
         }
       );
@@ -2001,6 +2011,7 @@ export default function App() {
       setRoomStatuses({});
       setMaintenanceIssues([]);
       setRecurringTasks([]);
+      setLoadingRecurring(true);
     } catch (err) {
       console.error('Sign-out failed:', err);
       alert('Sign-out failed. Please try again.');
@@ -2200,6 +2211,74 @@ export default function App() {
     () => buildCleaningTasksForDate(TOMORROW_STR, bookings, roomStatuses),
     [bookings, roomStatuses, TOMORROW_STR]
   );
+
+  const recurringCompletionMap = useMemo(() => {
+    const map = {};
+    maintenanceIssues.forEach((issue) => {
+      if (!issue.templateId) return;
+      if (!isResolvedStatus(issue.status)) return;
+      const completedAt = issue.resolvedAt || issue.updatedAt || issue.reportedAt;
+      if (!completedAt) return;
+      const ts = new Date(completedAt).getTime();
+      if (!map[issue.templateId] || ts > new Date(map[issue.templateId]).getTime()) {
+        map[issue.templateId] = completedAt;
+      }
+    });
+    return map;
+  }, [maintenanceIssues]);
+
+  const groupedRecurringTasks = useMemo(() => {
+    const today = new Date(TODAY_STR);
+    const groups = {};
+
+    recurringTasks.forEach((task) => {
+      const key = buildRecurringGroupKey(task);
+      const location = ALL_LOCATIONS.find((l) => l.id === task.locationId);
+      const nextDue = task.nextDue || '';
+
+      const statusMeta = (() => {
+        const dueDate = new Date(nextDue);
+        if (!nextDue || isNaN(dueDate.getTime())) {
+          return { status: 'unknown', label: 'No date', color: 'bg-slate-100 text-slate-600 border-slate-200' };
+        }
+        const diffDays = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays < 0) return { status: 'overdue', label: `Overdue by ${Math.abs(diffDays)}d`, color: 'bg-red-50 text-red-700 border-red-200' };
+        if (diffDays <= DUE_SOON_DAYS) return { status: 'soon', label: `Due in ${diffDays}d`, color: 'bg-amber-50 text-amber-800 border-amber-200' };
+        return { status: 'ok', label: `Due in ${diffDays}d`, color: 'bg-green-50 text-green-700 border-green-200' };
+      })();
+
+      if (!groups[key]) {
+        groups[key] = {
+          key,
+          description: task.description || 'Untitled task',
+          frequency: task.frequency || 'monthly',
+          tasks: [],
+        };
+      }
+
+      groups[key].tasks.push({
+        ...task,
+        locationName: location?.name || 'Unknown',
+        propertyName: location?.propertyName || 'Unknown property',
+        statusMeta,
+        lastDone: recurringCompletionMap[task.id] || task.lastCompleted || null,
+        nextDue,
+      });
+    });
+
+    return Object.values(groups)
+      .map((group) => {
+        const nextDue = group.tasks.reduce((prev, cur) => {
+          if (!cur.nextDue) return prev;
+          if (!prev) return cur.nextDue;
+          return new Date(cur.nextDue) < new Date(prev) ? cur.nextDue : prev;
+        }, null);
+        const overdueCount = group.tasks.filter((t) => t.statusMeta.status === 'overdue').length;
+        const dueSoonCount = group.tasks.filter((t) => t.statusMeta.status === 'soon').length;
+        return { ...group, nextDue, overdueCount, dueSoonCount, roomCount: group.tasks.length };
+      })
+      .sort((a, b) => a.description.localeCompare(b.description));
+  }, [recurringTasks, recurringCompletionMap, TODAY_STR]);
 
   const {
     high: tomorrowHighPriorityRooms,
@@ -2530,15 +2609,51 @@ export default function App() {
     }
   };
 
-  const handleDeleteRecurringTask = async (id) => {
+  const handleDeleteRecurringTask = async (id, options = {}) => {
+    const { roomName } = options;
     if (!id) return;
-    if (!confirm('Delete this recurring task template?')) return;
+    const message = roomName ? `Delete recurring task for ${roomName}?` : 'Delete this recurring task template?';
+    if (!confirm(`${message} This cannot be undone.`)) return;
     try {
       await deleteDoc(doc(db, 'recurringTasks', id));
+      pushAlert({ title: 'Recurring deleted', message: roomName ? `Removed for ${roomName}` : 'Template removed', tone: 'success' });
     } catch (error) {
       console.error('Error deleting recurring task:', error);
-      alert('Error deleting recurring task. Please check the console.');
+      pushAlert({ title: 'Delete failed', message: error?.message || 'Unable to delete recurring task', code: error?.code, raw: error });
     }
+  };
+
+  const handleBulkDeleteRecurringGroup = async (groupKey) => {
+    const tasksInGroup = recurringTasks.filter((t) => buildRecurringGroupKey(t) === groupKey);
+    if (!tasksInGroup.length) {
+      pushAlert({ title: 'Delete failed', message: 'No tasks found for this group', tone: 'error' });
+      return;
+    }
+
+    const groupLabel = tasksInGroup[0]?.description || 'Recurring task';
+    if (!confirm(`Delete "${groupLabel}" for ${tasksInGroup.length} room(s)? This cannot be undone.`)) return;
+
+    pushAlert({ title: 'Deleting recurring group', message: `Removing ${tasksInGroup.length} room template${tasksInGroup.length === 1 ? '' : 's'}…`, tone: 'info' });
+
+    const failures = [];
+    for (const task of tasksInGroup) {
+      try {
+        await deleteDoc(doc(db, 'recurringTasks', task.id));
+      } catch (error) {
+        console.error('Error deleting recurring task', task.id, error);
+        failures.push({ task, error });
+      }
+    }
+
+    if (failures.length) {
+      const failedRooms = failures
+        .map((f) => ALL_LOCATIONS.find((l) => l.id === f.task.locationId)?.name || f.task.locationId)
+        .join(', ');
+      pushAlert({ title: 'Partial delete', message: `Failed for ${failures.length}/${tasksInGroup.length} room(s): ${failedRooms}`, tone: 'error' });
+      return;
+    }
+
+    pushAlert({ title: 'Recurring deleted', message: `Deleted for ${tasksInGroup.length} room(s)`, tone: 'success' });
   };
 
   const handleDeleteMaintenanceIssue = async (id) => {
@@ -3321,11 +3436,7 @@ export default function App() {
     });
 
     const criticalIssues = openIssues.filter((i) => (i.severity || 'normal') === 'critical');
-    const overdueRecurring = recurringTasks.filter((t) => new Date(t.nextDue) < new Date()).length;
-    const nextRecurring = recurringTasks
-      .filter((t) => new Date(t.nextDue) >= new Date())
-      .sort((a, b) => new Date(a.nextDue) - new Date(b.nextDue))[0];
-    const overdueRecurringList = recurringTasks.filter((t) => new Date(t.nextDue) < new Date());
+    const overdueRecurring = groupedRecurringTasks.reduce((sum, g) => sum + g.overdueCount, 0);
 
     const statusLabel = (status) => {
       if (status === 'in-progress') return 'In progress';
@@ -3583,52 +3694,125 @@ export default function App() {
           })}
         </div>
 
-        {/* Recurring tasks (secondary) */}
+        {/* Recurring tasks command center */}
         <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
-          <details open={overdueRecurringList.length > 0}>
-            <summary className="px-6 py-4 flex items-center justify-between cursor-pointer select-none">
-              <div className="flex items-center gap-2">
-                <RefreshCcw size={18} className="text-slate-500" />
-                <div>
-                  <div className="font-bold text-slate-800">Recurring Tasks</div>
-                  <div className="text-xs text-slate-500">Secondary · shows next upcoming and overdue</div>
-                </div>
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <RefreshCcw size={18} className="text-slate-500" />
+              <div>
+                <div className="font-bold text-slate-800">Recurring Tasks</div>
+                <div className="text-xs text-slate-500">Grouped by task · expand for room detail</div>
               </div>
-              {overdueRecurringList.length > 0 && (
-                <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                  {overdueRecurringList.length} overdue
-                </span>
-              )}
-            </summary>
-            <div className="divide-y divide-slate-100">
-              {nextRecurring ? (
-                <div className="p-4 flex items-center justify-between bg-slate-50">
-                  <div>
-                    <div className="font-semibold text-slate-800">Upcoming: {nextRecurring.description}</div>
-                    <div className="text-xs text-slate-500">Due {nextRecurring.nextDue}</div>
-                  </div>
-                  <button onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(nextRecurring); setIsRecurringModalOpen(true); }} className="text-slate-400 hover:text-[#26402E]"><Edit2 size={16} /></button>
-                </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              {loadingRecurring ? (
+                <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">Loading…</span>
               ) : (
-                <div className="p-4 text-sm text-slate-500">No upcoming recurring tasks.</div>
+                <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">{groupedRecurringTasks.length} group{groupedRecurringTasks.length === 1 ? '' : 's'}</span>
               )}
-              {overdueRecurringList.map((task) => {
-                const loc = ALL_LOCATIONS.find((l) => l.id === task.locationId);
+            </div>
+          </div>
+          {loadingRecurring ? (
+            <div className="p-6 text-sm text-slate-500 flex items-center gap-2"><RefreshCcw size={16} className="animate-spin text-slate-400" /> Loading recurring tasks…</div>
+          ) : groupedRecurringTasks.length === 0 ? (
+            <div className="p-6 text-sm text-slate-500">No recurring tasks yet.</div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {groupedRecurringTasks.map((group) => {
+                const expanded = !!expandedRecurringGroups[group.key];
                 return (
-                  <div key={task.id} className="p-4 flex items-center justify-between bg-amber-50 border-t border-amber-100">
-                    <div>
-                      <div className="font-semibold text-amber-900">Overdue: {task.description}</div>
-                      <div className="text-xs text-amber-800">{loc?.name} · {loc?.propertyName} · was due {task.nextDue}</div>
+                  <div key={group.key} className="hover:bg-slate-50/50 transition-colors">
+                    <div className="px-6 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div className="flex items-start gap-3 md:items-center">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedRecurringGroups((prev) => ({ ...prev, [group.key]: !expanded }))}
+                          className="mt-1 md:mt-0 text-slate-500 hover:text-slate-700 focus:outline-none"
+                          aria-label={expanded ? 'Collapse' : 'Expand'}
+                        >
+                          {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                        </button>
+                        <div>
+                          <div className="font-semibold text-slate-800">{group.description}</div>
+                          <div className="text-xs text-slate-500 flex flex-wrap gap-3 mt-1">
+                            <span className="uppercase tracking-wide font-semibold text-[11px]">Every {group.frequency}</span>
+                            <span>Applies to {group.roomCount} room{group.roomCount === 1 ? '' : 's'}</span>
+                            {group.nextDue && <span className="text-slate-600">Next due {group.nextDue}</span>}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {group.overdueCount > 0 && (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200">
+                            {group.overdueCount} overdue
+                          </span>
+                        )}
+                        {group.dueSoonCount > 0 && (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                            {group.dueSoonCount} due soon
+                          </span>
+                        )}
+                        <button
+                          onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(group.tasks[0]); setIsRecurringModalOpen(true); }}
+                          className="px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-200 text-slate-700 bg-white hover:bg-slate-100"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleBulkDeleteRecurringGroup(group.key)}
+                          className="px-3 py-1.5 rounded-full text-xs font-semibold border border-red-200 text-red-700 bg-white hover:bg-red-50"
+                        >
+                          Delete all
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 text-xs">
-                      <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">Auto-generated</span>
-                      <button onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(task); setIsRecurringModalOpen(true); }} className="text-amber-700 hover:text-amber-900"><Edit2 size={16} /></button>
-                    </div>
+                    {expanded && (
+                      <div className="border-t border-slate-100 bg-slate-50">
+                        <div className="px-6 py-2 text-[11px] uppercase tracking-wide text-slate-500 grid grid-cols-2 md:grid-cols-5 gap-2">
+                          <div>Room</div>
+                          <div>Last done</div>
+                          <div>Next due</div>
+                          <div>Status</div>
+                          <div className="text-right">Actions</div>
+                        </div>
+                        <div className="divide-y divide-slate-100">
+                          {group.tasks.map((task) => (
+                            <div key={task.id} className="px-6 py-3 grid grid-cols-2 md:grid-cols-5 gap-2 items-center text-sm text-slate-700">
+                              <div>
+                                <div className="font-semibold">{task.locationName}</div>
+                                <div className="text-xs text-slate-500">{task.propertyName}</div>
+                              </div>
+                              <div className="text-slate-600">{task.lastDone ? (formatDate(task.lastDone) || task.lastDone) : 'Never'}</div>
+                              <div className="text-slate-600">{task.nextDue || '—'}</div>
+                              <div>
+                                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${task.statusMeta.color}`}>
+                                  {task.statusMeta.label}
+                                </span>
+                              </div>
+                              <div className="flex justify-end gap-2 text-xs">
+                                <button
+                                  onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(task); setIsRecurringModalOpen(true); }}
+                                  className="px-3 py-1 rounded-full border border-slate-200 text-slate-700 bg-white hover:bg-slate-100"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteRecurringTask(task.id, { roomName: task.locationName })}
+                                  className="px-3 py-1 rounded-full border border-red-200 text-red-700 bg-white hover:bg-red-50"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
-          </details>
+          )}
         </div>
 
         {activeIssue && (
