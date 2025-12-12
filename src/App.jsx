@@ -7,13 +7,13 @@ import {
 } from 'firebase/auth';
 import { 
   collection, 
-  deleteDoc, 
   doc, 
   onSnapshot, 
   query, 
-  setDoc 
+  getDoc,
 } from 'firebase/firestore';
 import app, { auth, db } from './firebase';
+import { upsertBooking, removeBooking } from './services/bookingsService';
 import { 
   Calendar, 
   Home, 
@@ -544,7 +544,7 @@ const StatCard = ({ title, value, icon, subtext, colorClass = 'bg-emerald-500' }
   </div>
 );
 
-const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, checkBookingConflict }) => {
+const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, checkBookingConflict, isSaving }) => {
   const modalContentRef = useRef(null);
   const deriveStayCategory = useCallback((nights) => {
       if (nights >= 31) return 'long';
@@ -1023,11 +1023,11 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
             </button>
             <button 
               type="submit"
-              disabled={nights <= 0}
-              className={`px-6 py-2.5 rounded-full font-medium shadow-sm transition-all transform hover:-translate-y-0.5 ${nights <= 0 ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-md'}`}
+              disabled={nights <= 0 || isSaving}
+              className={`px-6 py-2.5 rounded-full font-medium shadow-sm transition-all transform hover:-translate-y-0.5 ${(nights <= 0 || isSaving) ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-md'}`}
               style={{ backgroundColor: COLORS.darkGreen, color: COLORS.white }}
             >
-              {booking ? 'Update Reservation' : 'Create Reservation'}
+              {isSaving ? 'Saving…' : booking ? 'Update Reservation' : 'Create Reservation'}
             </button>
           </div>
         </form>
@@ -1524,6 +1524,9 @@ export default function App() {
   const [bookingCategoryFilter, setBookingCategoryFilter] = useState('all');
   const [bookingTimeFilter, setBookingTimeFilter] = useState('current'); // 'current' | 'future' | 'past'
   const [loginHint, setLoginHint] = useState('');
+  const [alerts, setAlerts] = useState([]);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [savingBookingId, setSavingBookingId] = useState(null);
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -1548,11 +1551,32 @@ export default function App() {
     return 'Short Term';
   };
 
+  const pushAlert = useCallback((alert) => {
+    const id = Math.random().toString(36).substr(2, 9);
+    const entry = { id, title: alert.title || 'Error', message: alert.message || '', code: alert.code, tone: alert.tone || 'error' };
+    console.error('[app-alert]', entry.code, entry.message, alert.raw || '');
+    setAlerts((prev) => [...prev.slice(-9), entry]);
+    setTimeout(() => {
+      setAlerts((prev) => prev.filter((a) => a.id !== id));
+    }, 6000);
+  }, []);
+
   const formatChannelLabel = (channel) => {
     if (channel === 'direct') return 'Direct';
     if (channel === 'coliving') return 'Coliving.com';
     return 'Airbnb';
   };
+
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Firestore is the single source of truth, accessed via real-time listeners
   useEffect(() => {
@@ -1578,6 +1602,7 @@ export default function App() {
           console.error('Error listening to bookings:', error);
           setDataError(error.message || 'Unable to read bookings from Firestore');
           setLoading(false);
+          pushAlert({ title: 'Sync error: bookings', message: error.message, code: error.code || 'firestore-error', raw: error });
         }
       );
 
@@ -1593,6 +1618,7 @@ export default function App() {
           console.error('Error listening to maintenance issues:', error);
           setDataError(error.message || 'Unable to read maintenance issues');
           setLoading(false);
+          pushAlert({ title: 'Sync error: maintenance', message: error.message, code: error.code || 'firestore-error', raw: error });
         }
       );
 
@@ -1607,6 +1633,7 @@ export default function App() {
           console.error('Error listening to recurring tasks:', error);
           setDataError(error.message || 'Unable to read recurring tasks');
           setLoading(false);
+          pushAlert({ title: 'Sync error: recurring tasks', message: error.message, code: error.code || 'firestore-error', raw: error });
         }
       );
 
@@ -1625,6 +1652,7 @@ export default function App() {
           console.error('Error listening to room statuses:', error);
           setDataError(error.message || 'Unable to read room statuses');
           setLoading(false);
+          pushAlert({ title: 'Sync error: room statuses', message: error.message, code: error.code || 'firestore-error', raw: error });
         }
       );
 
@@ -1655,6 +1683,7 @@ export default function App() {
         setDataError(error.message || 'Authentication failed');
         setAuthLoading(false);
         setLoading(false);
+        pushAlert({ title: 'Auth Error', message: error.message, code: error.code || 'auth-error', raw: error });
       }
     });
 
@@ -1690,6 +1719,7 @@ export default function App() {
       } else {
         setLoginHint('Sign-in failed. Please try again.');
       }
+      pushAlert({ title: 'Sign-in failed', message: err?.message, code: err?.code || 'auth-error', raw: err });
     }
   };
 
@@ -2059,11 +2089,14 @@ export default function App() {
   };
 
   const handleSaveBooking = async (bookingData, actingUser = user) => {
+    const targetId = editingBooking?.id || Math.random().toString(36).substr(2, 9);
+    setSavingBookingId(targetId);
     try {
       const normalizedPrice = Number(bookingData.price) || 0;
       const normalizedNights = calculateNights(bookingData.checkIn, bookingData.checkOut);
       const normalizedChannel = bookingData.channel || 'airbnb';
       const normalizedPaymentStatus = normalizedChannel === 'direct' ? (bookingData.paymentStatus || null) : null;
+      const nowIso = new Date().toISOString();
 
       const normalizedData = {
         ...bookingData,
@@ -2073,50 +2106,60 @@ export default function App() {
         paymentStatus: normalizedPaymentStatus,
       };
 
-      if (editingBooking) {
-        const updatedBooking = { 
-          ...normalizedData, 
-          id: editingBooking.id, 
-          createdAt: editingBooking.createdAt || new Date().toISOString(), 
-          updatedAt: new Date().toISOString() 
-        };
-        // Save to Firestore - real-time listener will update state
-        await setDoc(doc(db, 'bookings', editingBooking.id), updatedBooking, { merge: true });
-        console.log('[Firestore] booking saved:', updatedBooking.id);
-        // Optimistic local update so UI reflects immediately even if listener is blocked
-        setBookings((prev) => prev.map((b) => (b.id === editingBooking.id ? updatedBooking : b)));
-      } else {
-        const newBooking = {
+      const payload = editingBooking
+        ? {
             ...normalizedData,
-            id: Math.random().toString(36).substr(2, 9),
-            createdAt: new Date().toISOString()
-        };
-        // Save to Firestore - real-time listener will update state
-        await setDoc(doc(db, 'bookings', newBooking.id), newBooking);
-        console.log('[Firestore] booking saved:', newBooking.id);
-        // Optimistic local add
-        setBookings((prev) => {
-          if (prev.some((b) => b.id === newBooking.id)) return prev;
-          return [...prev, newBooking];
-        });
+            id: editingBooking.id,
+            createdAt: editingBooking.createdAt || nowIso,
+            updatedAt: nowIso,
+          }
+        : {
+            ...normalizedData,
+            id: targetId,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
+
+      const result = await upsertBooking({ db, data: payload, existingId: editingBooking?.id, timeoutMs: 6000 });
+      if (!result.ok) {
+        pushAlert({ title: 'Save failed', message: result.message, code: result.code, raw: result.raw });
+        return;
       }
+
+      const upserted = result.data || payload;
+      setBookings((prev) => {
+        const existing = prev.find((b) => b.id === upserted.id);
+        if (existing) return prev.map((b) => (b.id === upserted.id ? { ...existing, ...upserted } : b));
+        return [...prev, upserted];
+      });
+
       setIsModalOpen(false);
       setEditingBooking(null);
+      pushAlert({ title: 'Booking saved', message: `${upserted.guestName || 'Guest'} updated`, tone: 'success' });
     } catch (error) {
       console.error('Error saving booking:', error);
-      alert('Error saving booking. Please check the console.');
+      pushAlert({ title: 'Save failed', message: error?.message || 'Unknown error', code: error?.code, raw: error });
+    } finally {
+      setSavingBookingId(null);
     }
   };
 
   const handleDeleteBooking = async (id) => {
-    if(confirm("Are you sure you want to delete this booking?")) {
-        try {
-          // Delete from Firestore - real-time listener will update state
-          await deleteDoc(doc(db, 'bookings', id));
-        } catch (error) {
-          console.error('Error deleting booking:', error);
-          alert('Error deleting booking. Please check the console.');
-        }
+    if (!confirm('Are you sure you want to delete this booking?')) return;
+    setSavingBookingId(id);
+    try {
+      const result = await removeBooking({ db, id, timeoutMs: 6000 });
+      if (!result.ok) {
+        pushAlert({ title: 'Delete failed', message: result.message, code: result.code, raw: result.raw });
+        return;
+      }
+      setBookings((prev) => prev.filter((b) => b.id !== id));
+      pushAlert({ title: 'Booking deleted', message: 'The booking has been removed', tone: 'success' });
+    } catch (error) {
+      console.error('Error deleting booking:', error);
+      pushAlert({ title: 'Delete failed', message: error?.message || 'Unknown error', code: error?.code, raw: error });
+    } finally {
+      setSavingBookingId(null);
     }
   };
   
@@ -3234,6 +3277,7 @@ export default function App() {
   const sessionLabel = user
     ? (user.isAnonymous ? 'Session: Anonymous' : `Session: ${user.displayName || user.email || 'Staff account'}`)
     : 'Session: Signing in...';
+  const isSavingBooking = !!savingBookingId;
 
   if (authLoading) {
     return (
@@ -3257,6 +3301,11 @@ export default function App() {
         </header>
         <div className="flex-1 overflow-auto p-6 md:p-10">
           <div className="max-w-7xl mx-auto">
+             {isOffline && (
+               <div className="mb-3 px-4 py-2 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-sm">
+                 Offline. Some actions are disabled until connection returns.
+               </div>
+             )}
              {loading && (
                <div className="mb-4 flex items-center gap-2 text-sm text-slate-600 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm">
                  <RefreshCcw size={16} className="animate-spin" /> Loading latest data…
@@ -3295,10 +3344,24 @@ export default function App() {
           </div>
         </div>
       </main>
-      <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} />
+      <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} />
       <MaintenanceModal isOpen={isMaintenanceModalOpen} onClose={() => setIsMaintenanceModalOpen(false)} onSave={handleSaveMaintenanceIssue} issue={editingMaintenanceIssue} allLocations={ALL_LOCATIONS} />
       <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} />
       <InvoiceModal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} bookings={bookings} />
+      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
+        {alerts.map((alert) => {
+          const isSuccess = alert.tone === 'success';
+          const isInfo = alert.tone === 'info';
+          const bg = isSuccess ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : isInfo ? 'bg-blue-50 border-blue-200 text-blue-800' : 'bg-red-50 border-red-200 text-red-800';
+          return (
+            <div key={alert.id} className={`rounded-xl border shadow-sm px-4 py-3 text-sm ${bg}`}>
+              <div className="font-semibold">{alert.title || 'Notice'}</div>
+              {alert.message && <div className="mt-1 leading-relaxed text-[13px]">{alert.message}</div>}
+              {alert.code && <div className="mt-1 text-[11px] uppercase tracking-wide opacity-70">{alert.code}</div>}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
