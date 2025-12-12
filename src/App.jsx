@@ -1350,26 +1350,86 @@ const RecurringTaskModal = ({ isOpen, onClose, onSave, task, allLocations, defau
         </div>
         
         <form onSubmit={handleSubmit} className="p-6 space-y-5" style={{ backgroundColor: COLORS.cream }}>
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Location</label>
-            <select 
-              name="locationId"
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
-              value={formData.locationId}
-              onChange={handleChange}
-            >
-              {PROPERTIES.map(prop => (
-                <optgroup key={prop.id} label={prop.name}>
-                  {prop.rooms.map(room => (
-                    <option key={room.id} value={room.id}>{room.name} (Room)</option>
-                  ))}
-                  {prop.commonAreas.map(area => (
-                    <option key={area.id} value={area.id}>{area.name} ({area.type})</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+          <div className="flex items-center gap-3">
+            <label className="block text-xs font-bold uppercase tracking-wider" style={{ color: COLORS.darkGreen }}>Applies to</label>
+            <div className="flex gap-2 text-xs font-semibold">
+              <button type="button" onClick={() => setAppliesTo('single')} className={`px-3 py-1.5 rounded-full border ${appliesTo === 'single' ? 'bg-[#E2F05D]/40 border-[#26402E]' : 'bg-white border-slate-200'}`}>Single room</button>
+              <button type="button" onClick={() => setAppliesTo('multiple')} className={`px-3 py-1.5 rounded-full border ${appliesTo === 'multiple' ? 'bg-[#E2F05D]/40 border-[#26402E]' : 'bg-white border-slate-200'}`}>Multiple rooms</button>
+            </div>
           </div>
+
+          {appliesTo === 'single' && (
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Location</label>
+              <select 
+                name="locationId"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                value={formData.locationId}
+                onChange={handleChange}
+              >
+                {PROPERTIES.map(prop => (
+                  <optgroup key={prop.id} label={prop.name}>
+                    {prop.rooms.map(room => (
+                      <option key={room.id} value={room.id}>{room.name} (Room)</option>
+                    ))}
+                    {prop.commonAreas.map(area => (
+                      <option key={area.id} value={area.id}>{area.name} ({area.type})</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {appliesTo === 'multiple' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold uppercase tracking-wider" style={{ color: COLORS.darkGreen }}>Select rooms</label>
+                <div className="text-xs text-slate-500">Selected: {selectedRooms.length} rooms</div>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
+                <div className="p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-semibold text-slate-800">Townhouse</div>
+                    <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+                      <input type="checkbox" className="accent-[#26402E]" checked={townhouseRooms.every((r) => selectedRooms.includes(r.id)) && townhouseRooms.length > 0} onChange={(e) => selectAll(townhouseRooms.map((r) => r.id), e.target.checked)} />
+                      All Townhouse rooms
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {townhouseRooms.map((room) => (
+                      <label key={room.id} className="flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" className="accent-[#26402E]" checked={selectedRooms.includes(room.id)} onChange={() => toggleRoom(room.id)} />
+                        {room.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-semibold text-slate-800">Neighbours</div>
+                    <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+                      <input type="checkbox" className="accent-[#26402E]" checked={neighboursRooms.every((r) => selectedRooms.includes(r.id)) && neighboursRooms.length > 0} onChange={(e) => selectAll(neighboursRooms.map((r) => r.id), e.target.checked)} />
+                      All Neighbours rooms
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {neighboursRooms.map((room) => (
+                      <label key={room.id} className="flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" className="accent-[#26402E]" checked={selectedRooms.includes(room.id)} onChange={() => toggleRoom(room.id)} />
+                        {room.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-500">Common spaces are excluded from bulk selection.</span>
+                <button type="button" onClick={clearAll} className="text-[#26402E] font-semibold">Clear all</button>
+              </div>
+              {error && <div className="text-xs text-red-600">{error}</div>}
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Task Description</label>
