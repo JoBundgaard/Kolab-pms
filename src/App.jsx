@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
 import { 
-  signInAnonymously, 
-  onAuthStateChanged
+  GoogleAuthProvider,
+  signInWithPopup,
+  onAuthStateChanged,
+  signOut
 } from 'firebase/auth';
 import { 
   collection, 
@@ -1508,6 +1510,7 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
 
 export default function App() {
   const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -1550,10 +1553,7 @@ export default function App() {
     return 'Airbnb';
   };
 
-  // Note: We intentionally do NOT sync to localStorage anymore
   // Firestore is the single source of truth, accessed via real-time listeners
-
-  // Simulate "loading" to feel like a real app
   useEffect(() => {
     let unsubBookings = () => {};
     let unsubMaintenance = () => {};
@@ -1590,7 +1590,7 @@ export default function App() {
         },
         (error) => {
           console.error('Error listening to maintenance issues:', error);
-          setDataError(error.message || 'Unable to read maintenance issues from Firestore');
+          setDataError(error.message || 'Unable to read maintenance issues');
           setLoading(false);
         }
       );
@@ -1634,15 +1634,25 @@ export default function App() {
       try {
         if (!currentUser) {
           setUser(null);
-          await signInAnonymously(auth);
-          return; // wait for auth to settle before attaching listeners
+          if (listenersStarted) {
+            unsubBookings();
+            unsubMaintenance();
+            unsubRecurring();
+            unsubRoomStatuses();
+            listenersStarted = false;
+          }
+          setAuthLoading(false);
+          setLoading(false);
+          return;
         }
 
         setUser(currentUser);
+        setAuthLoading(false);
         startListeners();
       } catch (error) {
         console.error('Auth initialization error:', error);
         setDataError(error.message || 'Authentication failed');
+        setAuthLoading(false);
         setLoading(false);
       }
     });
@@ -1666,6 +1676,30 @@ export default function App() {
   const [editingRecurringTask, setEditingRecurringTask] = useState(null);
   
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+
+  const handleGoogleSignIn = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      console.error('Google sign-in failed:', err);
+      alert('Sign-in failed. Please try again.');
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      setBookings([]);
+      setRoomStatuses({});
+      setMaintenanceIssues([]);
+      setRecurringTasks([]);
+    } catch (err) {
+      console.error('Sign-out failed:', err);
+      alert('Sign-out failed. Please try again.');
+    }
+  };
 
   // Ensure Bookings List defaults to "Current" each time it is opened
   useEffect(() => {
@@ -2703,6 +2737,24 @@ export default function App() {
       </div>
     );
   };
+
+  const renderLogin = () => (
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: COLORS.cream }}>
+      <div className="bg-white shadow-xl border border-slate-200 rounded-2xl p-10 w-full max-w-md text-center space-y-6">
+        <div>
+          <h1 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Kolab PMS</h1>
+          <p className="text-sm text-slate-500 mt-2">You must sign in to access the PMS.</p>
+        </div>
+        <button
+          onClick={handleGoogleSignIn}
+          className="w-full px-4 py-3 rounded-full font-semibold text-white shadow-lg hover:shadow-xl transition-all"
+          style={{ backgroundColor: COLORS.darkGreen }}
+        >
+          Sign in with Google
+        </button>
+      </div>
+    </div>
+  );
   const renderBookingsList = () => {
     const statusRank = {
       'checked-in': 0,
@@ -3176,6 +3228,18 @@ export default function App() {
     ? (user.isAnonymous ? 'Session: Anonymous' : `Session: ${user.displayName || user.email || 'Staff account'}`)
     : 'Session: Signing in...';
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: COLORS.cream }}>
+        <div className="text-slate-600 text-sm">Loading authentication…</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return renderLogin();
+  }
+
   return (
     <div className="flex min-h-screen font-sans" style={{ backgroundColor: COLORS.cream }}>
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
@@ -3197,7 +3261,15 @@ export default function App() {
                </div>
              )}
              <div className="flex flex-col gap-3 mb-8 md:flex-row md:items-center md:justify-between">
-               <div className="text-xs text-slate-500">{sessionLabel}</div>
+               <div className="flex items-center gap-3 text-xs text-slate-500">
+                 <span>{sessionLabel}</span>
+                 <button
+                   onClick={handleSignOut}
+                   className="px-3 py-1.5 rounded-full border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 text-[11px] font-semibold"
+                 >
+                   Sign out
+                 </button>
+               </div>
                <div className="flex justify-end">
                   {activeTab !== 'maintenance' && activeTab !== 'stats' && activeTab !== 'invoices' && (
                       <button onClick={() => { setEditingBooking(null); setIsModalOpen(true); }} className="px-6 py-3 rounded-full flex items-center shadow-lg transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
