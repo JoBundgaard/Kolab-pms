@@ -11,6 +11,8 @@ import {
   onSnapshot, 
   query, 
   getDoc,
+  setDoc,
+  deleteDoc,
 } from 'firebase/firestore';
 import app, { auth, db } from './firebase';
 import { upsertBooking, removeBooking } from './services/bookingsService';
@@ -2436,17 +2438,33 @@ export default function App() {
         pushAlert({ title: 'Recurring updated', message: updatedTask.description || 'Task saved', tone: 'success' });
       } else if (taskData.appliesTo === 'multiple') {
         const { selectedRoomIds = [] } = taskData;
-        const tasks = selectedRoomIds.map((roomId) => ({
-          description: taskData.description,
-          frequency: taskData.frequency,
-          nextDue: taskData.nextDue,
-          locationId: roomId,
-          appliesTo: 'single',
-          createdFrom: 'bulk',
-          id: Math.random().toString(36).substr(2, 9),
-        }));
-        await Promise.all(tasks.map((t) => setDoc(doc(db, 'recurringTasks', t.id), t)));
-        pushAlert({ title: 'Recurring created', message: `Created for ${tasks.length} room${tasks.length === 1 ? '' : 's'}`, tone: 'success' });
+        const results = { success: [], failed: [] };
+        for (const roomId of selectedRoomIds) {
+          const task = {
+            description: taskData.description,
+            frequency: taskData.frequency,
+            nextDue: taskData.nextDue,
+            locationId: roomId,
+            appliesTo: 'single',
+            createdFrom: 'bulk',
+            id: Math.random().toString(36).substr(2, 9),
+          };
+          try {
+            await setDoc(doc(db, 'recurringTasks', task.id), task);
+            results.success.push(roomId);
+          } catch (err) {
+            console.error('[recurring-bulk] setDoc failed for room', roomId, err);
+            results.failed.push({ roomId, err });
+          }
+        }
+
+        if (results.success.length && !results.failed.length) {
+          pushAlert({ title: 'Recurring created', message: `Created for ${results.success.length} room${results.success.length === 1 ? '' : 's'}`, tone: 'success' });
+        } else if (results.success.length && results.failed.length) {
+          pushAlert({ title: 'Partial success', message: `Saved ${results.success.length}, failed ${results.failed.length}. Check console for details.`, tone: 'error' });
+        } else {
+          pushAlert({ title: 'Recurring save failed', message: 'All saves failed. Check console for details.', tone: 'error' });
+        }
       } else {
         const newTask = {
           ...taskData,
