@@ -1041,7 +1041,8 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
     locationId: allLocations[0]?.id || '',
     description: '',
     status: 'open',
-    assignedStaff: 'Unassigned',
+    assignedStaff: 'Needs assignment',
+    severity: 'normal',
   });
 
   useEffect(() => {
@@ -1053,7 +1054,8 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
         locationId: allLocations[0]?.id || '',
         description: '',
         status: 'open',
-        assignedStaff: 'Unassigned',
+        assignedStaff: 'Needs assignment',
+        severity: 'normal',
       }));
     }
   }, [issue, isOpen, allLocations]);
@@ -1137,8 +1139,9 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
                 onChange={handleChange}
               >
                 <option value="open">Open</option>
-                <option value="in-progress">In Progress</option>
-                <option value="completed">Completed</option>
+                <option value="in-progress">In progress</option>
+                <option value="waiting">Waiting (vendor/parts)</option>
+                <option value="resolved">Resolved</option>
               </select>
             </div>
             <div>
@@ -1152,7 +1155,34 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
                 {STAFF.map(staff => (
                   <option key={staff} value={staff}>{staff}</option>
                 ))}
+                <option value="Needs assignment">Needs assignment</option>
               </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Severity</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { value: 'critical', label: 'Critical' },
+                { value: 'normal', label: 'Normal' },
+                { value: 'low', label: 'Low' },
+              ].map((opt) => {
+                const active = formData.severity === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setFormData((prev) => ({ ...prev, severity: opt.value }))}
+                    className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/40 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
+                      <span className={`w-2.5 h-2.5 rounded-full ${severityMeta(opt.value).dot}`}></span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
           
@@ -1527,6 +1557,9 @@ export default function App() {
   const [alerts, setAlerts] = useState([]);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [savingBookingId, setSavingBookingId] = useState(null);
+  const [activeIssue, setActiveIssue] = useState(null);
+  const [undoAction, setUndoAction] = useState(null);
+  const undoTimerRef = useRef(null);
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -1565,6 +1598,55 @@ export default function App() {
     if (channel === 'direct') return 'Direct';
     if (channel === 'coliving') return 'Coliving.com';
     return 'Airbnb';
+  };
+
+  const formatIssueAge = (reportedAt) => {
+    if (!reportedAt) return '–';
+    const then = new Date(reportedAt).getTime();
+    const now = Date.now();
+    const diffMs = Math.max(0, now - then);
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 60) return `${mins || 1}m`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 48) return `${hours}h`;
+    const days = Math.floor(hours / 24);
+    return `${days}d`;
+  };
+
+  const severityMeta = (sev) => {
+    const severity = sev || 'normal';
+    if (severity === 'critical') return { label: 'Critical', color: 'text-red-700', bg: 'bg-red-50', dot: 'bg-red-500' };
+    if (severity === 'low') return { label: 'Low', color: 'text-slate-600', bg: 'bg-slate-50', dot: 'bg-slate-400' };
+    return { label: 'Normal', color: 'text-amber-700', bg: 'bg-amber-50', dot: 'bg-amber-500' };
+  };
+
+  const assignedLabel = (val) => (!val || val === 'Unassigned' ? 'Needs assignment' : val);
+  const isResolvedStatus = (status) => status === 'resolved' || status === 'completed';
+
+  const startUndo = (action) => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndoAction(action);
+    undoTimerRef.current = setTimeout(() => {
+      setUndoAction(null);
+    }, 8000);
+  };
+
+  const handleUndo = async () => {
+    if (!undoAction) return;
+    try {
+      if (undoAction.type === 'delete' && undoAction.issue) {
+        await setDoc(doc(db, 'maintenance', undoAction.issue.id), undoAction.issue);
+        pushAlert({ title: 'Delete undone', message: 'Issue restored', tone: 'success' });
+      }
+      if (undoAction.type === 'resolve' && undoAction.issue) {
+        await setDoc(doc(db, 'maintenance', undoAction.issue.id), undoAction.issue, { merge: true });
+        pushAlert({ title: 'Resolution undone', message: 'Issue re-opened', tone: 'success' });
+      }
+    } catch (error) {
+      pushAlert({ title: 'Undo failed', message: error?.message || 'Unable to undo', code: error?.code, raw: error });
+    } finally {
+      setUndoAction(null);
+    }
   };
 
   useEffect(() => {
@@ -2005,7 +2087,7 @@ export default function App() {
         if (!task.nextDue || task.nextDue > today) continue;
 
         const hasOpen = maintenanceIssues.some(
-          (i) => i.templateId === task.id && i.status !== 'completed'
+          (i) => i.templateId === task.id && !isResolvedStatus(i.status)
         );
         if (hasOpen) continue;
 
@@ -2165,13 +2247,18 @@ export default function App() {
   
   const handleSaveMaintenanceIssue = async (issueData, actingUser = user) => {
     try {
+      const payload = {
+        ...issueData,
+        assignedStaff: issueData.assignedStaff || 'Needs assignment',
+        severity: issueData.severity || 'normal',
+      };
       if (editingMaintenanceIssue) {
-        const updatedIssue = { ...issueData, id: editingMaintenanceIssue.id, reportedAt: editingMaintenanceIssue.reportedAt, updatedAt: new Date().toISOString() };
+        const updatedIssue = { ...payload, id: editingMaintenanceIssue.id, reportedAt: editingMaintenanceIssue.reportedAt, updatedAt: new Date().toISOString() };
         // Save to Firestore - real-time listener will update state
         await setDoc(doc(db, 'maintenance', editingMaintenanceIssue.id), updatedIssue, { merge: true });
       } else {
         const newIssue = {
-            ...issueData,
+            ...payload,
             id: Math.random().toString(36).substr(2, 9),
             reportedAt: new Date().toISOString()
         };
@@ -2180,9 +2267,10 @@ export default function App() {
       }
       setIsMaintenanceModalOpen(false);
       setEditingMaintenanceIssue(null);
+      pushAlert({ title: 'Issue reported', message: issueData.locationName ? `Issue logged for ${issueData.locationName}` : 'Maintenance issue saved', tone: 'success' });
     } catch (error) {
       console.error('Error saving maintenance issue:', error);
-      alert('Error saving maintenance issue. Please check the console.');
+      pushAlert({ title: 'Save failed', message: error?.message || 'Unable to save issue', code: error?.code, raw: error });
     }
   };
 
@@ -2218,12 +2306,15 @@ export default function App() {
   };
 
   const handleDeleteMaintenanceIssue = async (id) => {
+      const issue = maintenanceIssues.find((i) => i.id === id);
       try {
         // Delete from Firestore - real-time listener will update state
         await deleteDoc(doc(db, 'maintenance', id));
+        pushAlert({ title: 'Issue deleted', message: 'Maintenance issue removed', tone: 'success' });
+        if (issue) startUndo({ type: 'delete', issue });
       } catch (error) {
         console.error('Error deleting maintenance issue:', error);
-        alert('Error deleting maintenance issue. Please check the console.');
+        pushAlert({ title: 'Delete failed', message: error?.message || 'Unable to delete issue', code: error?.code, raw: error });
       }
   };
 
@@ -2301,7 +2392,7 @@ export default function App() {
     const occupancyRate = ALL_ROOMS.length > 0 ? Math.round((activeBookings.length / ALL_ROOMS.length) * 100) : 0;
     const tasksTodayCount = cleaningTasks ? cleaningTasks.length : 0;
     const tasksTomorrowCount = cleaningTasksTomorrow ? cleaningTasksTomorrow.length : 0;
-    const openMaintenanceIssues = maintenanceIssues.filter(i => i.status !== 'completed').length;
+    const openMaintenanceIssues = maintenanceIssues.filter(i => !isResolvedStatus(i.status)).length;
     const {
       high: todayHighPriorityRooms,
       normal: todayNormalPriorityRooms,
@@ -2982,172 +3073,389 @@ export default function App() {
   );
 
   const renderMaintenance = () => {
-    const allOpenIssues = maintenanceIssues.filter(i => i.status !== 'completed');
+    const openIssues = maintenanceIssues.filter((i) => !isResolvedStatus(i.status));
+    const severityOrder = { critical: 0, normal: 1, low: 2 };
+    const sortedActiveIssues = [...openIssues].sort((a, b) => {
+      const sa = severityOrder[a.severity || 'normal'];
+      const sb = severityOrder[b.severity || 'normal'];
+      if (sa !== sb) return sa - sb;
+      const ageA = new Date(a.reportedAt || a.createdAt || 0).getTime();
+      const ageB = new Date(b.reportedAt || b.createdAt || 0).getTime();
+      return ageA - ageB; // oldest first
+    });
+
+    const criticalIssues = openIssues.filter((i) => (i.severity || 'normal') === 'critical');
+    const overdueRecurring = recurringTasks.filter((t) => new Date(t.nextDue) < new Date()).length;
+    const nextRecurring = recurringTasks
+      .filter((t) => new Date(t.nextDue) >= new Date())
+      .sort((a, b) => new Date(a.nextDue) - new Date(b.nextDue))[0];
+    const overdueRecurringList = recurringTasks.filter((t) => new Date(t.nextDue) < new Date());
+
+    const statusLabel = (status) => {
+      if (status === 'in-progress') return 'In progress';
+      if (status === 'waiting') return 'Waiting';
+      if (status === 'resolved') return 'Resolved';
+      return 'Open';
+    };
+
+    const updateIssue = async (issueId, updates, successMessage, undoPayload) => {
+      try {
+        await setDoc(doc(db, 'maintenance', issueId), { ...updates, updatedAt: new Date().toISOString() }, { merge: true });
+        setMaintenanceIssues((prev) => prev.map((i) => (i.id === issueId ? { ...i, ...updates } : i)));
+        setActiveIssue((prev) => (prev && prev.id === issueId ? { ...prev, ...updates } : prev));
+        if (successMessage) pushAlert({ title: successMessage, tone: 'success' });
+        if (undoPayload) startUndo(undoPayload);
+      } catch (error) {
+        pushAlert({ title: 'Update failed', message: error?.message || 'Unable to update issue', code: error?.code, raw: error });
+      }
+    };
+
+    const resolveIssue = (issue) => {
+      if (!issue) return;
+      updateIssue(issue.id, { status: 'resolved', resolvedAt: new Date().toISOString() }, 'Issue resolved', { type: 'resolve', issue: { ...issue } });
+    };
+
+    const assignIssue = (issue, staff) => {
+      if (!issue) return;
+      updateIssue(issue.id, { assignedStaff: staff || 'Needs assignment' }, 'Assignment updated');
+    };
+
+    const statusBadgeClass = (status) => {
+      if (status === 'in-progress') return 'bg-blue-50 text-blue-700 border-blue-200';
+      if (status === 'waiting') return 'bg-amber-50 text-amber-700 border-amber-200';
+      if (status === 'resolved') return 'bg-green-50 text-green-700 border-green-200';
+      return 'bg-red-50 text-red-700 border-red-200';
+    };
+
+    const roomsForProp = (prop) => {
+      const propLocations = ALL_LOCATIONS.filter((loc) => loc.propertyId === prop.id);
+      return [...propLocations].sort((a, b) => {
+        const aIssues = maintenanceIssues.filter((i) => i.locationId === a.id && !isResolvedStatus(i.status));
+        const bIssues = maintenanceIssues.filter((i) => i.locationId === b.id && !isResolvedStatus(i.status));
+        if (aIssues.length && !bIssues.length) return -1;
+        if (bIssues.length && !aIssues.length) return 1;
+        if (!aIssues.length && !bIssues.length) return a.name.localeCompare(b.name);
+        const aTop = aIssues.sort((x, y) => {
+          const sx = severityOrder[x.severity || 'normal'];
+          const sy = severityOrder[y.severity || 'normal'];
+          if (sx !== sy) return sx - sy;
+          return new Date(x.reportedAt || x.createdAt || 0) - new Date(y.reportedAt || y.createdAt || 0);
+        })[0];
+        const bTop = bIssues.sort((x, y) => {
+          const sx = severityOrder[x.severity || 'normal'];
+          const sy = severityOrder[y.severity || 'normal'];
+          if (sx !== sy) return sx - sy;
+          return new Date(x.reportedAt || x.createdAt || 0) - new Date(y.reportedAt || y.createdAt || 0);
+        })[0];
+        const sa = severityOrder[aTop.severity || 'normal'];
+        const sb = severityOrder[bTop.severity || 'normal'];
+        if (sa !== sb) return sa - sb;
+        return new Date(aTop.reportedAt || aTop.createdAt || 0) - new Date(bTop.reportedAt || bTop.createdAt || 0);
+      });
+    };
+
+    const oldestAgeLabel = (issues) => {
+      if (!issues.length) return '–';
+      const oldest = issues.reduce((prev, cur) => {
+        const prevTime = new Date(prev.reportedAt || prev.createdAt || 0).getTime();
+        const curTime = new Date(cur.reportedAt || cur.createdAt || 0).getTime();
+        return curTime < prevTime ? cur : prev;
+      }, issues[0]);
+      return formatIssueAge(oldest.reportedAt || oldest.createdAt);
+    };
 
     return (
-    <div className="space-y-8">
+      <div className="space-y-6">
         <div className="flex justify-between items-center">
-            <div>
-                <h2 className="text-3xl font-serif font-bold mb-2" style={{ color: COLORS.darkGreen }}>Maintenance Tracking</h2>
-                <p className="text-slate-500">
-                    Track and manage facility issues across all properties and common areas. 
-                </p>
-            </div>
-            <div className="flex space-x-3">
-              <button 
-                onClick={() => { setEditingRecurringTask(null); setIsRecurringModalOpen(true); }}
-                className="px-4 py-3 rounded-full flex items-center shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide"
-                style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}
-              >
-                <RefreshCcw size={18} className="mr-2" />
-                New Recurring Task
-              </button>
-              <button 
-                onClick={() => { setEditingMaintenanceIssue(null); setIsMaintenanceModalOpen(true); }}
-                className="px-6 py-3 rounded-full flex items-center shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide"
-                style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}
-              >
-                <ListChecks size={20} className="mr-2" />
-                Report New Issue
-              </button>
-            </div>
+          <div>
+            <h2 className="text-3xl font-serif font-bold mb-2" style={{ color: COLORS.darkGreen }}>Maintenance Tracking</h2>
+            <p className="text-slate-500">Command center for issues, rooms, and recurring tasks.</p>
+          </div>
+          <div className="flex space-x-3">
+            <button
+              onClick={() => { setEditingMaintenanceIssue(null); setIsMaintenanceModalOpen(true); }}
+              className="px-5 py-3 rounded-full flex items-center shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide"
+              style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}
+            >
+              <ListChecks size={18} className="mr-2" />
+              Report Issue
+            </button>
+            <button
+              onClick={() => { setEditingRecurringTask(null); setIsRecurringModalOpen(true); }}
+              className="px-4 py-3 rounded-full flex items-center shadow-md hover:shadow-lg transition-all font-bold text-xs uppercase tracking-wide"
+              style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}
+            >
+              <RefreshCcw size={16} className="mr-2" />
+              Recurring
+            </button>
+          </div>
         </div>
 
-        {/* Recurring tasks overview */}
+        {/* Today focus */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {[
+            { label: 'Open issues', value: openIssues.length, color: 'bg-white', text: 'text-slate-700' },
+            { label: 'Critical', value: criticalIssues.length, color: 'bg-red-50', text: 'text-red-700' },
+            { label: 'Overdue recurring', value: overdueRecurring, color: 'bg-amber-50', text: 'text-amber-800' },
+          ].map((item) => (
+            <div key={item.label} className={`flex items-center justify-between px-4 py-3 rounded-xl border border-slate-200 shadow-sm ${item.color}`}>
+              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{item.label}</div>
+              <div className={`text-xl font-semibold ${item.text}`}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Active issues command center */}
         <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-            <h3 className="font-bold text-lg text-slate-800 flex items-center">
-              <RefreshCcw size={18} className="mr-2 text-slate-500" />
-              Recurring Tasks
-            </h3>
-            <span className="text-xs text-slate-500">Auto-creates issues when due</span>
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <AlertTriangle size={20} className="text-red-500" />
+              <div>
+                <h3 className="font-bold text-lg text-slate-800">Active Issues</h3>
+                <p className="text-xs text-slate-500">Click a row to act. Sorted by severity then oldest.</p>
+              </div>
+            </div>
+            <span className="text-xs px-3 py-1 rounded-full bg-slate-100 text-slate-600">{openIssues.length} open</span>
           </div>
-          {recurringTasks.length === 0 ? (
-            <div className="p-6 text-sm text-slate-500">No recurring tasks yet. Create one to schedule monthly reminders.</div>
+          {openIssues.length === 0 ? (
+            <div className="p-8 text-center text-slate-500">
+              <CheckCircle size={48} className="mx-auto mb-3 text-green-500 opacity-60" />
+              <p>All clear. No open issues.</p>
+            </div>
           ) : (
-            <div className="divide-y divide-slate-100">
-              {recurringTasks.map((task) => {
-                const loc = ALL_LOCATIONS.find((l) => l.id === task.locationId);
-                const hasOpen = maintenanceIssues.some((i) => i.templateId === task.id && i.status !== 'completed');
-                return (
-                  <div key={task.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-bold tracking-wider">
+                  <tr>
+                    <th className="px-6 py-3">Severity</th>
+                    <th className="px-6 py-3">Location</th>
+                    <th className="px-6 py-3">Status · Age</th>
+                    <th className="px-6 py-3">Assigned</th>
+                    <th className="px-6 py-3">Description</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sortedActiveIssues.map((issue) => {
+                    const location = ALL_LOCATIONS.find((l) => l.id === issue.locationId);
+                    const sev = severityMeta(issue.severity);
+                    return (
+                      <tr key={issue.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => setActiveIssue(issue)}>
+                        <td className="px-6 py-3">
+                          <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${sev.bg} ${sev.color} border-current gap-2`}>
+                            <span className={`w-2 h-2 rounded-full ${sev.dot}`}></span>
+                            {sev.label}
+                          </div>
+                        </td>
+                        <td className="px-6 py-3 text-sm text-slate-700">
+                          <div className="font-semibold">{location?.name || 'Unknown'}</div>
+                          <div className="text-xs text-slate-500">{location?.propertyName}</div>
+                        </td>
+                        <td className="px-6 py-3 text-sm">
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusBadgeClass(issue.status)}`}>{statusLabel(issue.status)}</span>
+                          <div className="text-xs text-slate-500 mt-1">{formatIssueAge(issue.reportedAt || issue.createdAt)}</div>
+                        </td>
+                        <td className="px-6 py-3 text-sm text-slate-700">
+                          {assignedLabel(issue.assignedStaff)}
+                        </td>
+                        <td className="px-6 py-3 text-sm text-slate-600 max-w-xs truncate" title={issue.description}>{issue.description}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Rooms & Areas */}
+        <div className="space-y-4">
+          {PROPERTIES.map((prop) => {
+            const propLocations = roomsForProp(prop);
+            const propIssues = openIssues.filter((i) => i.propertyName === prop.name || ALL_LOCATIONS.find((l) => l.id === i.locationId)?.propertyId === prop.id);
+            const oldestAge = oldestAgeLabel(propIssues);
+            const topSeverity = propIssues.length ? severityMeta(propIssues.sort((a, b) => severityOrder[a.severity || 'normal'] - severityOrder[b.severity || 'normal'])[0].severity).dot : 'bg-green-400';
+            const statusDot = propIssues.length ? (topSeverity.includes('red') ? 'bg-red-500' : 'bg-amber-500') : 'bg-green-500';
+            return (
+              <div key={prop.id} className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
+                <div className="px-6 py-4 flex items-center justify-between" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}>
+                  <div className="flex items-center gap-3">
+                    <span className={`w-2.5 h-2.5 rounded-full ${statusDot} border border-white/40`}></span>
                     <div>
-                      <div className="font-bold text-slate-800">{task.description}</div>
-                      <div className="text-xs text-slate-500">{loc?.name} · {loc?.propertyName}</div>
-                      <div className="text-xs text-slate-500 mt-1">Next due: {task.nextDue}</div>
+                      <div className="font-bold text-lg">{prop.name}</div>
+                      <div className="text-xs text-white/80">{propIssues.length} open · oldest {oldestAge}</div>
                     </div>
-                    <div className="flex items-center space-x-3 text-xs">
-                      <span className={`px-3 py-1 rounded-full border ${hasOpen ? 'bg-yellow-50 text-yellow-700 border-yellow-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
-                        {hasOpen ? 'Open issue' : 'Waiting for next due'}
-                      </span>
-                      <button onClick={() => { setEditingRecurringTask(task); setIsRecurringModalOpen(true); }} className="text-slate-400 hover:text-[#26402E]" title="Edit">
-                        <Edit2 size={16} />
+                  </div>
+                  <button
+                    onClick={() => { setEditingMaintenanceIssue({ locationId: propLocations[0]?.id }); setIsMaintenanceModalOpen(true); }}
+                    className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/20 text-white hover:bg-white/30"
+                  >
+                    + Quick add
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                  {propLocations.map((loc) => {
+                    const locIssues = maintenanceIssues.filter((i) => i.locationId === loc.id && !isResolvedStatus(i.status));
+                    const hasIssue = locIssues.length > 0;
+                    const top = hasIssue ? locIssues.sort((a, b) => severityOrder[a.severity || 'normal'] - severityOrder[b.severity || 'normal'])[0] : null;
+                    const emphasis = hasIssue ? 'bg-red-50 border-red-100' : 'bg-white';
+                    return (
+                      <button
+                        key={loc.id}
+                        onClick={() => {
+                          setEditingMaintenanceIssue({ locationId: loc.id, status: 'open', assignedStaff: 'Needs assignment', severity: top?.severity || 'normal' });
+                          setIsMaintenanceModalOpen(true);
+                        }}
+                        className={`text-left p-4 flex justify-between items-center hover:bg-[#F9F8F2] transition-colors ${emphasis}`}
+                      >
+                        <div>
+                          <div className={`font-bold ${hasIssue ? 'text-red-800' : 'text-slate-700'}`}>{loc.name}</div>
+                          <div className="text-xs text-slate-500">{loc.locationType}</div>
+                          {hasIssue && (
+                            <div className="mt-2 text-xs text-red-700 flex items-center gap-2">
+                              <span className={`w-2 h-2 rounded-full ${severityMeta(top?.severity).dot}`}></span>
+                              {locIssues.length} issue{locIssues.length > 1 ? 's' : ''} · {formatIssueAge(top?.reportedAt || top?.createdAt)} old
+                            </div>
+                          )}
+                          {!hasIssue && <div className="text-[11px] text-slate-400 mt-2">All clear</div>}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {hasIssue && (
+                            <span className="px-3 py-1 rounded-full text-xs font-semibold bg-white border border-red-200 text-red-700">
+                              View / Edit
+                            </span>
+                          )}
+                          <Plus size={16} className="text-slate-400" />
+                        </div>
                       </button>
-                      <button onClick={() => handleDeleteRecurringTask(task.id)} className="text-slate-400 hover:text-red-600" title="Delete">
-                        <Trash2 size={16} />
-                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Recurring tasks (secondary) */}
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
+          <details open={overdueRecurringList.length > 0}>
+            <summary className="px-6 py-4 flex items-center justify-between cursor-pointer select-none">
+              <div className="flex items-center gap-2">
+                <RefreshCcw size={18} className="text-slate-500" />
+                <div>
+                  <div className="font-bold text-slate-800">Recurring Tasks</div>
+                  <div className="text-xs text-slate-500">Secondary · shows next upcoming and overdue</div>
+                </div>
+              </div>
+              {overdueRecurringList.length > 0 && (
+                <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                  {overdueRecurringList.length} overdue
+                </span>
+              )}
+            </summary>
+            <div className="divide-y divide-slate-100">
+              {nextRecurring ? (
+                <div className="p-4 flex items-center justify-between bg-slate-50">
+                  <div>
+                    <div className="font-semibold text-slate-800">Upcoming: {nextRecurring.description}</div>
+                    <div className="text-xs text-slate-500">Due {nextRecurring.nextDue}</div>
+                  </div>
+                  <button onClick={() => { setEditingRecurringTask(nextRecurring); setIsRecurringModalOpen(true); }} className="text-slate-400 hover:text-[#26402E]"><Edit2 size={16} /></button>
+                </div>
+              ) : (
+                <div className="p-4 text-sm text-slate-500">No upcoming recurring tasks.</div>
+              )}
+              {overdueRecurringList.map((task) => {
+                const loc = ALL_LOCATIONS.find((l) => l.id === task.locationId);
+                return (
+                  <div key={task.id} className="p-4 flex items-center justify-between bg-amber-50 border-t border-amber-100">
+                    <div>
+                      <div className="font-semibold text-amber-900">Overdue: {task.description}</div>
+                      <div className="text-xs text-amber-800">{loc?.name} · {loc?.propertyName} · was due {task.nextDue}</div>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">Auto-generated</span>
+                      <button onClick={() => { setEditingRecurringTask(task); setIsRecurringModalOpen(true); }} className="text-amber-700 hover:text-amber-900"><Edit2 size={16} /></button>
                     </div>
                   </div>
                 );
               })}
             </div>
-          )}
+          </details>
         </div>
 
-        {/* NEW OVERVIEW SECTION */}
-        <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-red-50/50">
-                <h3 className="font-bold text-lg text-red-800 flex items-center">
-                    <AlertTriangle size={20} className="mr-2" />
-                    Active Issues Overview ({allOpenIssues.length})
-                </h3>
+        {activeIssue && (
+          <div className="fixed inset-0 z-40 flex">
+            <div className="flex-1 bg-slate-900/30" onClick={() => setActiveIssue(null)}></div>
+            <div className="w-full max-w-md bg-white shadow-2xl border-l border-slate-100 p-6 overflow-y-auto">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <div className="text-xs text-slate-500">Issue · {formatIssueAge(activeIssue.reportedAt || activeIssue.createdAt)} old</div>
+                  <h4 className="font-bold text-xl text-slate-800">{activeIssue.description}</h4>
+                  <div className="text-sm text-slate-500 mt-1">{activeIssue.propertyName} · {activeIssue.locationName}</div>
+                </div>
+                <button onClick={() => setActiveIssue(null)} className="text-slate-400 hover:text-slate-700"><X size={20} /></button>
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <div className={`px-3 py-1 rounded-full text-xs font-semibold border ${severityMeta(activeIssue.severity).bg} ${severityMeta(activeIssue.severity).color} border-current flex items-center gap-2`}>
+                    <span className={`w-2 h-2 rounded-full ${severityMeta(activeIssue.severity).dot}`}></span>
+                    {severityMeta(activeIssue.severity).label}
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${statusBadgeClass(activeIssue.status)}`}>{statusLabel(activeIssue.status)}</span>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Status</label>
+                  <select
+                    className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200"
+                    value={activeIssue.status}
+                    onChange={(e) => updateIssue(activeIssue.id, { status: e.target.value })}
+                  >
+                    <option value="open">Open</option>
+                    <option value="in-progress">In progress</option>
+                    <option value="waiting">Waiting</option>
+                    <option value="resolved">Resolved</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Assigned</label>
+                  <select
+                    className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200"
+                    value={assignedLabel(activeIssue.assignedStaff)}
+                    onChange={(e) => assignIssue(activeIssue, e.target.value)}
+                  >
+                    <option value="Needs assignment">Needs assignment</option>
+                    {STAFF.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Created</label>
+                  <div className="text-sm text-slate-600 mt-1">{new Date(activeIssue.reportedAt || activeIssue.createdAt).toLocaleString()} ({formatIssueAge(activeIssue.reportedAt || activeIssue.createdAt)} old)</div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button onClick={() => resolveIssue(activeIssue)} className="flex-1 px-4 py-3 rounded-xl text-sm font-bold bg-green-50 text-green-700 border border-green-200 hover:bg-green-100">Mark resolved</button>
+                  <button onClick={() => setActiveIssue(null)} className="px-4 py-3 rounded-xl text-sm font-bold bg-slate-100 text-slate-600 border border-slate-200">Close</button>
+                </div>
+              </div>
             </div>
-            
-            {allOpenIssues.length === 0 ? (
-                <div className="p-8 text-center text-slate-500">
-                    <CheckCircle size={48} className="mx-auto mb-3 text-green-500 opacity-50" />
-                    <p>No active maintenance issues. Everything is running smoothly!</p>
-                </div>
-            ) : (
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-bold tracking-wider">
-                            <tr>
-                                <th className="px-6 py-3">Location</th>
-                                <th className="px-6 py-3">Description</th>
-                                <th className="px-6 py-3">Status</th>
-                                <th className="px-6 py-3">Assigned</th>
-                                <th className="px-6 py-3 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {allOpenIssues.map(issue => {
-                                const location = ALL_LOCATIONS.find(l => l.id === issue.locationId);
-                                return (
-                                    <tr key={issue.id} className="hover:bg-slate-50 transition-colors">
-                                        <td className="px-6 py-4">
-                                            <span className="font-bold text-slate-700">{location?.name || 'Unknown'}</span>
-                                            <div className="text-xs text-slate-500">{location?.propertyName}</div>
-                                        </td>
-                                        <td className="px-6 py-4 text-sm text-slate-600 max-w-xs truncate" title={issue.description}>
-                                            {issue.description}
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
-                                                issue.status === 'in-progress' ? 'bg-blue-50 text-blue-700 border-blue-200' : 
-                                                'bg-red-50 text-red-700 border-red-200'
-                                            }`}>
-                                                {issue.status === 'in-progress' ? 'In Progress' : 'Open'}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 text-sm text-slate-600">
-                                            <div className="flex items-center">
-                                                <User size={14} className="mr-1 text-slate-400"/>
-                                                {issue.assignedStaff}
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 text-right">
-                                            <button 
-                                                onClick={() => { setEditingMaintenanceIssue(issue); setIsMaintenanceModalOpen(true); }}
-                                                className="text-slate-400 hover:text-[#26402E] mr-3"
-                                                title="Edit Issue"
-                                            >
-                                                <Edit2 size={18} />
-                                            </button>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
-            )}
-        </div>
+          </div>
+        )}
 
-        {PROPERTIES.map(prop => {
-            const propLocations = ALL_LOCATIONS.filter(loc => loc.propertyId === prop.id);
-            return (
-                <div key={prop.id} className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
-                    <div className="px-6 py-4 font-bold text-lg" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}>{prop.name}</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-y-1 divide-y divide-slate-100">
-                        {propLocations.map(loc => {
-                            const openIssues = maintenanceIssues.filter(i => i.locationId === loc.id && i.status !== 'completed');
-                            return (
-                                <div key={loc.id} className="p-4 flex justify-between items-center border-r border-slate-100 last:border-r-0 hover:bg-[#F9F8F2]">
-                                    <div><div className="font-bold text-slate-700">{loc.name}</div><div className="text-xs text-slate-500">{loc.locationType}</div></div>
-                                    <div className="flex items-center space-x-4">
-                                        {openIssues.length > 0 ? <button onClick={() => { setEditingMaintenanceIssue(openIssues[0]); setIsMaintenanceModalOpen(true); }} className="px-3 py-1 rounded-full text-sm font-bold bg-red-100 text-red-700"><MessageSquare size={16} className="mr-2"/>{openIssues.length} Open</button> : <span className="text-xs text-green-600 font-medium">No Open Issues</span>}
-                                        <button onClick={() => { setEditingMaintenanceIssue({ locationId: loc.id }); setIsMaintenanceModalOpen(true); }} className="p-2 rounded-full text-slate-400 hover:text-[#26402E]"><Plus size={18} /></button>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            );
-        })}
-    </div>
-  );
+        {undoAction && (
+          <div className="fixed bottom-4 left-4 z-50">
+            <div className="flex items-center gap-3 bg-slate-900 text-white px-4 py-3 rounded-full shadow-lg">
+              <span className="text-sm font-semibold">Undo {undoAction.type === 'delete' ? 'delete' : 'resolve'}?</span>
+              <button onClick={handleUndo} className="px-3 py-1 rounded-full bg-white text-slate-900 text-xs font-bold">Undo</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   // --- RENDER STATS VIEW ---
