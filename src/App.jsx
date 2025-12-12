@@ -545,9 +545,9 @@ const StatCard = ({ title, value, icon, subtext, colorClass = 'bg-emerald-500' }
 const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, checkBookingConflict }) => {
   const modalContentRef = useRef(null);
   const deriveStayCategory = useCallback((nights) => {
-    if (nights > 30) return 'long';
-    if (nights > 7) return 'medium';
-    return 'short';
+      if (nights >= 31) return 'long';
+      if (nights >= 7) return 'medium';
+      return 'short';
   }, []);
 
   const [formData, setFormData] = useState({
@@ -940,8 +940,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
             <label className="block text-xs font-bold uppercase tracking-wider mb-2" style={{ color: COLORS.darkGreen }}>Stay Category</label>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[
-                { value: 'short', label: 'Short Term', helper: '1-7 nights' },
-                { value: 'medium', label: 'Medium Term', helper: '8-30 nights' },
+                { value: 'short', label: 'Short Term', helper: '1-6 nights' },
+                { value: 'medium', label: 'Medium Term', helper: '7-30 nights' },
                 { value: 'long', label: 'Long Term', helper: '31+ nights' },
               ].map((opt) => {
                 const active = formData.stayCategory === opt.value;
@@ -1522,8 +1522,8 @@ export default function App() {
   const [bookingTimeFilter, setBookingTimeFilter] = useState('current'); // 'current' | 'future' | 'past'
 
   const deriveStayCategory = useCallback((nights) => {
-    if (nights > 30) return 'long';
-    if (nights > 7) return 'medium';
+    if (nights >= 31) return 'long';
+    if (nights >= 7) return 'medium';
     return 'short';
   }, []);
 
@@ -1531,9 +1531,9 @@ export default function App() {
     const nights = b?.nights || calculateNights(b?.checkIn, b?.checkOut);
     if (b?.stayCategory) return b.stayCategory;
     if (b?.isLongTerm) {
-      // Backward compat: treat legacy long-term flag as long unless nights suggest medium.
-      if (nights > 7 && nights <= 30) return 'medium';
-      return 'long';
+      // Backward compat: legacy long-term flag follows updated thresholds.
+      if (nights >= 31) return 'long';
+      if (nights >= 7) return 'medium';
     }
     return deriveStayCategory(nights);
   }, [deriveStayCategory]);
