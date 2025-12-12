@@ -1269,7 +1269,7 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations }) => {
   );
 };
 
-const RecurringTaskModal = ({ isOpen, onClose, onSave, task, allLocations, defaultMode = 'single' }) => {
+const RecurringTaskModal = ({ isOpen, onClose, onSave, onDelete, task, allLocations, defaultMode = 'single' }) => {
   const [formData, setFormData] = useState({
     locationId: allLocations[0]?.id || '',
     description: '',
@@ -1469,21 +1469,32 @@ const RecurringTaskModal = ({ isOpen, onClose, onSave, task, allLocations, defau
             </div>
           </div>
 
-          <div className="pt-4 flex justify-end space-x-3">
-            <button 
-              type="button"
-              onClick={onClose}
-              className="px-6 py-2.5 text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-full font-medium transition-colors"
-            >
-              Cancel
-            </button>
-            <button 
-              type="submit"
-              className="px-6 py-2.5 rounded-full font-medium shadow-sm transition-all transform hover:-translate-y-0.5 hover:shadow-md"
-              style={{ backgroundColor: COLORS.darkGreen, color: COLORS.white }}
-            >
-              {task ? 'Update Task' : 'Save Task'}
-            </button>
+          <div className="pt-4 flex items-center justify-between gap-3">
+            {task && onDelete ? (
+              <button
+                type="button"
+                onClick={() => onDelete(task.id)}
+                className="px-4 py-2.5 text-red-700 bg-white border border-red-200 hover:bg-red-50 rounded-full font-semibold text-sm flex items-center gap-2"
+              >
+                <Trash2 size={16} /> Delete
+              </button>
+            ) : <div />}
+            <div className="flex items-center gap-3">
+              <button 
+                type="button"
+                onClick={onClose}
+                className="px-6 py-2.5 text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-full font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit"
+                className="px-6 py-2.5 rounded-full font-medium shadow-sm transition-all transform hover:-translate-y-0.5 hover:shadow-md"
+                style={{ backgroundColor: COLORS.darkGreen, color: COLORS.white }}
+              >
+                {task ? 'Update Task' : 'Save Task'}
+              </button>
+            </div>
           </div>
         </form>
       </div>
@@ -3949,7 +3960,7 @@ export default function App() {
       </main>
       <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} />
       <MaintenanceModal isOpen={isMaintenanceModalOpen} onClose={() => setIsMaintenanceModalOpen(false)} onSave={handleSaveMaintenanceIssue} issue={editingMaintenanceIssue} allLocations={ALL_LOCATIONS} />
-      <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} defaultMode={recurringModalMode} />
+      <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} onDelete={handleDeleteRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} defaultMode={recurringModalMode} />
       <InvoiceModal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} bookings={bookings} />
       <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
         {alerts.map((alert) => {
