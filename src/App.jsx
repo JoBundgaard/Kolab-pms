@@ -1779,6 +1779,27 @@ export default function App() {
   const assignedLabel = (val) => (!val || val === 'Unassigned' ? 'Needs assignment' : val);
   const isResolvedStatus = (status) => status === 'resolved' || status === 'completed';
 
+  const openIssuePanel = (issue) => {
+    if (!issue) return;
+    setActiveIssue({ panelType: 'issue', ...issue });
+  };
+
+  const openRoomPanel = (locId, mode = 'room') => {
+    const loc = ALL_LOCATIONS.find((l) => l.id === locId);
+    if (!loc) {
+      pushAlert({ title: 'Could not open room', message: 'Missing location data', tone: 'error' });
+      return;
+    }
+    const locIssues = maintenanceIssues.filter((i) => i.locationId === loc.id && !isResolvedStatus(i.status));
+    setActiveIssue({
+      panelType: mode,
+      locationId: loc.id,
+      locationName: loc.name,
+      propertyName: loc.propertyName,
+      issues: locIssues,
+    });
+  };
+
   const startUndo = (action) => {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     setUndoAction(action);
@@ -3435,7 +3456,7 @@ export default function App() {
                     const location = ALL_LOCATIONS.find((l) => l.id === issue.locationId);
                     const sev = severityMeta(issue.severity);
                     return (
-                      <tr key={issue.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => setActiveIssue(issue)}>
+                      <tr key={issue.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => openIssuePanel(issue)}>
                         <td className="px-6 py-3">
                           <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${sev.bg} ${sev.color} border-current gap-2`}>
                             <span className={`w-2 h-2 rounded-full ${sev.dot}`}></span>
@@ -3497,10 +3518,7 @@ export default function App() {
                     return (
                       <button
                         key={loc.id}
-                        onClick={() => {
-                          setEditingMaintenanceIssue({ locationId: loc.id, status: 'open', assignedStaff: 'Needs assignment', severity: top?.severity || 'normal' });
-                          setIsMaintenanceModalOpen(true);
-                        }}
+                        onClick={() => openRoomPanel(loc.id, 'room')}
                         className={`text-left p-4 flex justify-between items-center hover:bg-[#F9F8F2] transition-colors ${emphasis}`}
                       >
                         <div>
@@ -3520,7 +3538,14 @@ export default function App() {
                               View / Edit
                             </span>
                           )}
-                          <Plus size={16} className="text-slate-400" />
+                          <Plus
+                            size={16}
+                            className="text-slate-400"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openRoomPanel(loc.id, 'room-create');
+                            }}
+                          />
                         </div>
                       </button>
                     );
@@ -3583,61 +3608,119 @@ export default function App() {
           <div className="fixed inset-0 z-40 flex">
             <div className="flex-1 bg-slate-900/30" onClick={() => setActiveIssue(null)}></div>
             <div className="w-full max-w-md bg-white shadow-2xl border-l border-slate-100 p-6 overflow-y-auto">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <div className="text-xs text-slate-500">Issue · {formatIssueAge(activeIssue.reportedAt || activeIssue.createdAt)} old</div>
-                  <h4 className="font-bold text-xl text-slate-800">{activeIssue.description}</h4>
-                  <div className="text-sm text-slate-500 mt-1">{activeIssue.propertyName} · {activeIssue.locationName}</div>
-                </div>
-                <button onClick={() => setActiveIssue(null)} className="text-slate-400 hover:text-slate-700"><X size={20} /></button>
-              </div>
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <div className={`px-3 py-1 rounded-full text-xs font-semibold border ${severityMeta(activeIssue.severity).bg} ${severityMeta(activeIssue.severity).color} border-current flex items-center gap-2`}>
-                    <span className={`w-2 h-2 rounded-full ${severityMeta(activeIssue.severity).dot}`}></span>
-                    {severityMeta(activeIssue.severity).label}
+              {activeIssue.panelType === 'room' || activeIssue.panelType === 'room-create' ? (
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="text-xs text-slate-500">Room</div>
+                      <h4 className="font-bold text-xl text-slate-800">{activeIssue.locationName}</h4>
+                      <div className="text-sm text-slate-500 mt-1">{activeIssue.propertyName}</div>
+                    </div>
+                    <button onClick={() => setActiveIssue(null)} className="text-slate-400 hover:text-slate-700"><X size={20} /></button>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${statusBadgeClass(activeIssue.status)}`}>{statusLabel(activeIssue.status)}</span>
-                </div>
 
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Status</label>
-                  <select
-                    className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200"
-                    value={activeIssue.status}
-                    onChange={(e) => updateIssue(activeIssue.id, { status: e.target.value })}
-                  >
-                    <option value="open">Open</option>
-                    <option value="in-progress">In progress</option>
-                    <option value="waiting">Waiting</option>
-                    <option value="resolved">Resolved</option>
-                  </select>
-                </div>
+                  {activeIssue.issues && activeIssue.issues.length > 0 ? (
+                    <div className="space-y-2">
+                      <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Issues for this room</div>
+                      <div className="space-y-2">
+                        {activeIssue.issues.map((iss) => (
+                          <button
+                            key={iss.id}
+                            onClick={() => openIssuePanel(iss)}
+                            className="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="font-semibold text-slate-800">{iss.description}</div>
+                              <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${statusBadgeClass(iss.status)}`}>{statusLabel(iss.status)}</span>
+                            </div>
+                            <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                              <span className={`w-2 h-2 rounded-full ${severityMeta(iss.severity).dot}`}></span>
+                              {formatIssueAge(iss.reportedAt || iss.createdAt)} old
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-slate-500">No issues for this room.</div>
+                  )}
 
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Assigned</label>
-                  <select
-                    className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200"
-                    value={assignedLabel(activeIssue.assignedStaff)}
-                    onChange={(e) => assignIssue(activeIssue, e.target.value)}
-                  >
-                    <option value="Needs assignment">Needs assignment</option>
-                    {STAFF.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Actions</div>
+                    <button
+                      onClick={() => {
+                        setEditingMaintenanceIssue({ locationId: activeIssue.locationId, status: 'open', assignedStaff: 'Needs assignment', severity: 'normal' });
+                        setIsMaintenanceModalOpen(true);
+                        setActiveIssue(null);
+                      }}
+                      className="w-full px-4 py-3 rounded-xl text-sm font-bold bg-[#E2F05D] text-[#26402E] hover:bg-[#d6e34f] border border-[#d6e34f]"
+                    >
+                      Report new issue
+                    </button>
+                    {activeIssue.issues && activeIssue.issues.length > 0 && (
+                      <div className="text-xs text-slate-500">Tap any issue above to view/edit.</div>
+                    )}
+                  </div>
                 </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <div className="text-xs text-slate-500">Issue · {formatIssueAge(activeIssue.reportedAt || activeIssue.createdAt)} old</div>
+                      <h4 className="font-bold text-xl text-slate-800">{activeIssue.description}</h4>
+                      <div className="text-sm text-slate-500 mt-1">{activeIssue.propertyName} · {activeIssue.locationName}</div>
+                    </div>
+                    <button onClick={() => setActiveIssue(null)} className="text-slate-400 hover:text-slate-700"><X size={20} /></button>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <div className={`px-3 py-1 rounded-full text-xs font-semibold border ${severityMeta(activeIssue.severity).bg} ${severityMeta(activeIssue.severity).color} border-current flex items-center gap-2`}>
+                        <span className={`w-2 h-2 rounded-full ${severityMeta(activeIssue.severity).dot}`}></span>
+                        {severityMeta(activeIssue.severity).label}
+                      </div>
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${statusBadgeClass(activeIssue.status)}`}>{statusLabel(activeIssue.status)}</span>
+                    </div>
 
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Created</label>
-                  <div className="text-sm text-slate-600 mt-1">{new Date(activeIssue.reportedAt || activeIssue.createdAt).toLocaleString()} ({formatIssueAge(activeIssue.reportedAt || activeIssue.createdAt)} old)</div>
-                </div>
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Status</label>
+                      <select
+                        className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200"
+                        value={activeIssue.status}
+                        onChange={(e) => updateIssue(activeIssue.id, { status: e.target.value })}
+                      >
+                        <option value="open">Open</option>
+                        <option value="in-progress">In progress</option>
+                        <option value="waiting">Waiting</option>
+                        <option value="resolved">Resolved</option>
+                      </select>
+                    </div>
 
-                <div className="flex gap-2">
-                  <button onClick={() => resolveIssue(activeIssue)} className="flex-1 px-4 py-3 rounded-xl text-sm font-bold bg-green-50 text-green-700 border border-green-200 hover:bg-green-100">Mark resolved</button>
-                  <button onClick={() => setActiveIssue(null)} className="px-4 py-3 rounded-xl text-sm font-bold bg-slate-100 text-slate-600 border border-slate-200">Close</button>
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Assigned</label>
+                      <select
+                        className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200"
+                        value={assignedLabel(activeIssue.assignedStaff)}
+                        onChange={(e) => assignIssue(activeIssue, e.target.value)}
+                      >
+                        <option value="Needs assignment">Needs assignment</option>
+                        {STAFF.map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Created</label>
+                      <div className="text-sm text-slate-600 mt-1">{new Date(activeIssue.reportedAt || activeIssue.createdAt).toLocaleString()} ({formatIssueAge(activeIssue.reportedAt || activeIssue.createdAt)} old)</div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button onClick={() => resolveIssue(activeIssue)} className="flex-1 px-4 py-3 rounded-xl text-sm font-bold bg-green-50 text-green-700 border border-green-200 hover:bg-green-100">Mark resolved</button>
+                      <button onClick={() => setActiveIssue(null)} className="px-4 py-3 rounded-xl text-sm font-bold bg-slate-100 text-slate-600 border border-slate-200">Close</button>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         )}
