@@ -64,6 +64,7 @@ const COLORS = {
 
 const DATE_HEADER_HEIGHT = 56; // Keeps sticky offsets aligned for headers
 const DUE_SOON_DAYS = 3; // threshold for recurring task "due soon" badge
+const CALENDAR_ERROR_CODE = 'CAL-RENDER-01';
 
 const PROPERTIES = [
   {
@@ -2088,6 +2089,14 @@ export default function App() {
   const TOMORROW_STR = formatDate(new Date(new Date().setDate(new Date().getDate() + 1)));
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(TODAY_STR);
   const [hoveredCalendarDate, setHoveredCalendarDate] = useState(null);
+  const [calendarDebug] = useState(() => {
+    const stored = localStorage.getItem('calendarDebug');
+    if (stored === 'false') return false;
+    return true; // default on for now to capture crash context
+  });
+  const calendarLastActionRef = useRef({ event: 'init', ts: new Date().toISOString() });
+  const calendarLastErrorRef = useRef(null);
+  const lastScrollLogRef = useRef(0);
   const [visibleStartDate, setVisibleStartDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
@@ -2105,6 +2114,14 @@ export default function App() {
   const extendLockRef = useRef(false);
   const calendarInitRef = useRef(false);
   const dates = useMemo(() => getDaysArray(new Date(visibleStartDate), new Date(visibleEndDate)), [visibleStartDate, visibleEndDate]);
+
+  const logCalendar = useCallback((event, payload = {}) => {
+    const entry = { event, payload, ts: new Date().toISOString() };
+    calendarLastActionRef.current = entry;
+    if (calendarDebug) {
+      console.debug('[calendar]', event, payload);
+    }
+  }, [calendarDebug]);
 
   useEffect(() => {
     if (!timelineRef.current) return;
@@ -2148,6 +2165,12 @@ export default function App() {
     const { scrollLeft, scrollWidth, clientWidth } = el;
     const threshold = Math.max(dayWidthRef.current * 2, 80);
     setTimelineScrollLeft(scrollLeft);
+
+    const now = Date.now();
+    if (now - lastScrollLogRef.current > 1000) {
+      logCalendar('horizontal scroll', { scrollLeft, clientWidth, scrollWidth });
+      lastScrollLogRef.current = now;
+    }
 
     if (!extendLockRef.current && scrollLeft < threshold) {
       extendLockRef.current = true;
@@ -2220,6 +2243,8 @@ export default function App() {
     setSelectedCalendarDate(TODAY_STR);
     setPendingCenterDate(TODAY_STR); // center once per activation
 
+    logCalendar('calendar mounted', { visibleStartDate: formatDate(new Date(todayStart.getTime() - 30 * 86400000)), visibleEndDate: formatDate(new Date(todayStart.getTime() + 60 * 86400000)) });
+
     calendarInitRef.current = true;
   }, [activeTab, TODAY_STR]);
 
@@ -2255,6 +2280,7 @@ export default function App() {
       el.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
       setSelectedCalendarDate(pendingCenterDate);
       setPendingCenterDate(null); // clear after first center to avoid repeated snapping while scrolling
+      logCalendar('centered date', { date: pendingCenterDate, index: idx, target });
     });
   }, [activeTab, pendingCenterDate, dates, visibleStartDate, visibleEndDate]);
 
@@ -2267,6 +2293,10 @@ export default function App() {
           return { ...b, checkIn: normalizedCheckIn, checkOut: normalizedCheckOut };
         })
         .filter((b) => {
+          if (!b.roomId) {
+            console.warn('[calendar] skipping booking without roomId', { id: b.id });
+            return false;
+          }
           if (!b.checkIn || !b.checkOut) return false;
           const checkInDate = new Date(b.checkIn);
           const checkOutDate = new Date(b.checkOut);
@@ -2285,6 +2315,11 @@ export default function App() {
       return [];
     }
   }, [bookings]);
+
+  useEffect(() => {
+    if (activeTab !== 'calendar') return;
+    logCalendar('data loaded', { bookings: calendarBookings.length, dates: dates.length, visibleRange: { start: formatDate(visibleStartDate), end: formatDate(visibleEndDate) } });
+  }, [calendarBookings.length, dates.length, activeTab, logCalendar, visibleStartDate, visibleEndDate]);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
@@ -3432,9 +3467,14 @@ export default function App() {
     );
     } catch (err) {
       console.error('[calendar] render failed', err);
+      calendarLastErrorRef.current = { message: err?.message || 'Unknown error', stack: err?.stack };
       return (
-        <div className="bg-white rounded-2xl shadow-sm border border-red-200 p-6 text-red-700">
-          Calendar failed to render. Please reload. Details in console.
+        <div className="bg-white rounded-2xl shadow-sm border border-red-200 p-6 text-red-700 space-y-2">
+          <div className="font-semibold">Calendar failed to render.</div>
+          <div className="text-sm">Code: {CALENDAR_ERROR_CODE}</div>
+          <div className="text-sm break-words">{calendarLastErrorRef.current?.message}</div>
+          <div className="text-xs text-slate-600">Last action: {calendarLastActionRef.current?.event} @ {calendarLastActionRef.current?.ts}</div>
+          <div className="text-xs text-slate-500">See console for stack trace.</div>
         </div>
       );
     }
