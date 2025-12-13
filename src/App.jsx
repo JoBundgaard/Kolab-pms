@@ -154,7 +154,8 @@ const severityMeta = (sev) => {
 
 // --- Helper Functions ---
 const formatDate = (date) => {
-  const d = date instanceof Date ? date : new Date(date);
+  const input = date?.toDate ? date.toDate() : date;
+  const d = input instanceof Date ? input : new Date(input);
   if (isNaN(d.getTime())) return '';
 
   const year = d.getFullYear();
@@ -196,8 +197,10 @@ function getWeekdayKey(dateStr) {
 }
 
 const calculateNights = (checkInDateStr, checkOutDateStr) => {
-  const checkIn = new Date(checkInDateStr);
-  const checkOut = new Date(checkOutDateStr);
+  const checkInInput = checkInDateStr?.toDate ? checkInDateStr.toDate() : checkInDateStr;
+  const checkOutInput = checkOutDateStr?.toDate ? checkOutDateStr.toDate() : checkOutDateStr;
+  const checkIn = new Date(checkInInput);
+  const checkOut = new Date(checkOutInput);
   
   if (isNaN(checkIn.getTime()) || isNaN(checkOut.getTime()) || checkOut <= checkIn) {
     return 0; 
@@ -2256,26 +2259,31 @@ export default function App() {
   }, [activeTab, pendingCenterDate, dates, visibleStartDate, visibleEndDate]);
 
   const calendarBookings = useMemo(() => {
-    return bookings
-      .map((b) => {
-        const normalizedCheckIn = formatDate(b.checkIn);
-        const normalizedCheckOut = formatDate(b.checkOut);
-        return { ...b, checkIn: normalizedCheckIn, checkOut: normalizedCheckOut };
-      })
-      .filter((b) => {
-        if (!b.checkIn || !b.checkOut) return false;
-        const checkInDate = new Date(b.checkIn);
-        const checkOutDate = new Date(b.checkOut);
-        const valid = !isNaN(checkInDate) && !isNaN(checkOutDate) && checkOutDate > checkInDate;
-        if (!valid) {
-          console.warn('[calendar] skipping booking with invalid dates', {
-            id: b.id,
-            checkIn: b.checkIn,
-            checkOut: b.checkOut,
-          });
-        }
-        return valid;
-      });
+    try {
+      return bookings
+        .map((b) => {
+          const normalizedCheckIn = formatDate(b.checkIn);
+          const normalizedCheckOut = formatDate(b.checkOut);
+          return { ...b, checkIn: normalizedCheckIn, checkOut: normalizedCheckOut };
+        })
+        .filter((b) => {
+          if (!b.checkIn || !b.checkOut) return false;
+          const checkInDate = new Date(b.checkIn);
+          const checkOutDate = new Date(b.checkOut);
+          const valid = !isNaN(checkInDate) && !isNaN(checkOutDate) && checkOutDate > checkInDate;
+          if (!valid) {
+            console.warn('[calendar] skipping booking with invalid dates', {
+              id: b.id,
+              checkIn: b.checkIn,
+              checkOut: b.checkOut,
+            });
+          }
+          return valid;
+        });
+    } catch (err) {
+      console.error('[calendar] failed to normalize bookings', err);
+      return [];
+    }
   }, [bookings]);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
@@ -3193,6 +3201,14 @@ export default function App() {
   };
 
   const renderCalendar = () => {
+    if (!dates.length) {
+      return (
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] p-6 text-slate-600">
+          Calendar is initializing…
+        </div>
+      );
+    }
+
     const getBookingForCell = (roomId, date) => {
       const dateStr = formatDate(date);
       return calendarBookings.find(b => b.roomId === roomId && b.checkIn <= dateStr && b.checkOut > dateStr && b.status !== 'cancelled');
