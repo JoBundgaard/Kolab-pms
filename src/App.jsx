@@ -3201,6 +3201,7 @@ export default function App() {
   };
 
   const renderCalendar = () => {
+    try {
     if (!dates.length) {
       return (
         <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] p-6 text-slate-600">
@@ -3429,6 +3430,14 @@ export default function App() {
         </div>
       </div>
     );
+    } catch (err) {
+      console.error('[calendar] render failed', err);
+      return (
+        <div className="bg-white rounded-2xl shadow-sm border border-red-200 p-6 text-red-700">
+          Calendar failed to render. Please reload. Details in console.
+        </div>
+      );
+    }
   };
 
   const renderLogin = () => (
