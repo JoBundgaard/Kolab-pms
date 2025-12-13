@@ -2246,6 +2246,29 @@ export default function App() {
     });
   }, [activeTab, pendingCenterDate, dates, visibleStartDate, visibleEndDate]);
 
+  const calendarBookings = useMemo(() => {
+    return bookings
+      .map((b) => {
+        const normalizedCheckIn = formatDate(b.checkIn);
+        const normalizedCheckOut = formatDate(b.checkOut);
+        return { ...b, checkIn: normalizedCheckIn, checkOut: normalizedCheckOut };
+      })
+      .filter((b) => {
+        if (!b.checkIn || !b.checkOut) return false;
+        const checkInDate = new Date(b.checkIn);
+        const checkOutDate = new Date(b.checkOut);
+        const valid = !isNaN(checkInDate) && !isNaN(checkOutDate) && checkOutDate > checkInDate;
+        if (!valid) {
+          console.warn('[calendar] skipping booking with invalid dates', {
+            id: b.id,
+            checkIn: b.checkIn,
+            checkOut: b.checkOut,
+          });
+        }
+        return valid;
+      });
+  }, [bookings]);
+
   // --- Memoized Data for Dashboard and Housekeeping ---
 
   const cleaningTasks = useMemo(
@@ -3163,7 +3186,7 @@ export default function App() {
   const renderCalendar = () => {
     const getBookingForCell = (roomId, date) => {
       const dateStr = formatDate(date);
-      return bookings.find(b => b.roomId === roomId && b.checkIn <= dateStr && b.checkOut > dateStr && b.status !== 'cancelled');
+      return calendarBookings.find(b => b.roomId === roomId && b.checkIn <= dateStr && b.checkOut > dateStr && b.status !== 'cancelled');
     };
       const dateIndexMap = new Map(dates.map((d, i) => [formatDate(d), i]));
     return (
@@ -3221,7 +3244,7 @@ export default function App() {
                     const isToday = date.toDateString() === new Date().toDateString();
                     const isSelected = dateStr === selectedCalendarDate;
                     const isHovered = dateStr === hoveredCalendarDate;
-                    const summary = getDaySummaryForDate(dateStr, bookings);
+                    const summary = getDaySummaryForDate(dateStr, calendarBookings);
                     return (
                       <div
                         key={dateStr}
@@ -3310,7 +3333,7 @@ export default function App() {
                           const isStart = booking && booking.checkIn === dateStr;
                           const isTruncatedAtStart = booking && booking.checkIn < formatDate(dates[0]);
                           const lastDateStr = formatDate(dates[dates.length - 1]);
-                          const hasLongTermCleaningToday = bookings.some((b) => {
+                          const hasLongTermCleaningToday = calendarBookings.some((b) => {
                             if (!b.isLongTerm) return false;
                             if (b.status === 'cancelled') return false;
                             if (b.roomId !== room.id) return false;
