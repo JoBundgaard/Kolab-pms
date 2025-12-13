@@ -145,6 +145,13 @@ class ErrorBoundary extends React.Component {
 
 const STAFF = ['Unassigned', 'Mai', 'Tuan', 'Linh', 'Dat', 'Thanh', 'Ngoc'];
 
+const severityMeta = (sev) => {
+  const key = sev || 'normal';
+  if (key === 'critical') return { label: 'Critical', color: 'text-red-700', bg: 'bg-red-50', dot: 'bg-red-500' };
+  if (key === 'low') return { label: 'Low', color: 'text-slate-600', bg: 'bg-slate-50', dot: 'bg-slate-400' };
+  return { label: 'Normal', color: 'text-amber-700', bg: 'bg-amber-50', dot: 'bg-amber-500' };
+};
+
 // --- Helper Functions ---
 const formatDate = (date) => {
   const d = date instanceof Date ? date : new Date(date);
@@ -1828,13 +1835,6 @@ export default function App() {
     if (hours < 48) return `${hours}h`;
     const days = Math.floor(hours / 24);
     return `${days}d`;
-  };
-
-  const severityMeta = (sev) => {
-    const severity = sev || 'normal';
-    if (severity === 'critical') return { label: 'Critical', color: 'text-red-700', bg: 'bg-red-50', dot: 'bg-red-500' };
-    if (severity === 'low') return { label: 'Low', color: 'text-slate-600', bg: 'bg-slate-50', dot: 'bg-slate-400' };
-    return { label: 'Normal', color: 'text-amber-700', bg: 'bg-amber-50', dot: 'bg-amber-500' };
   };
 
   const assignedLabel = (val) => (!val || val === 'Unassigned' ? 'Needs assignment' : val);
