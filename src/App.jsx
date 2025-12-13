@@ -1107,6 +1107,7 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations, isSavi
     severity: 'normal',
   });
   const [localError, setLocalError] = useState('');
+  const [lastError, setLastError] = useState(null);
 
   useEffect(() => {
     if (issue) {
@@ -1122,24 +1123,31 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations, isSavi
       }));
     }
     setLocalError('');
+    setLastError(null);
   }, [issue, isOpen, allLocations]);
 
   if (!isOpen) return null;
   
   const handleSubmit = (e) => {
     e.preventDefault();
-    const locationInfo = allLocations?.find((loc) => loc.id === formData.locationId);
-    if (!locationInfo) {
-      setLocalError('Could not open report issue form: missing room/area data. Please select a location.');
-      console.error('[maintenance-modal] missing location', { formData, allLocations });
-      return;
-    }
+    try {
+      const locationInfo = allLocations?.find((loc) => loc.id === formData.locationId);
+      if (!locationInfo) {
+        setLocalError('Could not open report issue form: missing room/area data. Please select a location.');
+        console.error('[maintenance-modal] missing location', { formData, allLocations });
+        return;
+      }
 
-    onSave({
-      ...formData,
-      locationName: locationInfo.name,
-      propertyName: locationInfo.propertyName,
-    });
+      onSave({
+        ...formData,
+        locationName: locationInfo.name,
+        propertyName: locationInfo.propertyName,
+      });
+    } catch (err) {
+      console.error('[maintenance-modal] submit error', err);
+      setLastError(err);
+      setLocalError('Could not open report issue form');
+    }
   };
 
   const handleChange = (e) => {
@@ -1296,6 +1304,9 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations, isSavi
               {isSaving ? 'Saving…' : issue ? 'Update Issue' : 'Report Issue'}
             </button>
           </div>
+          {lastError && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">Could not open report issue form. Check console for details.</div>
+          )}
         </form>
       </div>
     </div>
@@ -2015,6 +2026,7 @@ export default function App() {
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [editingMaintenanceIssue, setEditingMaintenanceIssue] = useState(null);
   const [isSavingMaintenanceIssue, setIsSavingMaintenanceIssue] = useState(false);
+  const [pendingMaintenancePrefill, setPendingMaintenancePrefill] = useState(null);
   const [isRecurringModalOpen, setIsRecurringModalOpen] = useState(false);
   const [editingRecurringTask, setEditingRecurringTask] = useState(null);
   
@@ -2586,9 +2598,10 @@ export default function App() {
       }
       setIsMaintenanceModalOpen(false);
       setEditingMaintenanceIssue(null);
+      setPendingMaintenancePrefill(null);
       pushAlert({ title: 'Issue reported', message: issueData.locationName ? `Issue logged for ${issueData.locationName}` : 'Maintenance issue saved', tone: 'success' });
     } catch (error) {
-      console.error('Error saving maintenance issue:', error);
+      console.error('Error saving maintenance issue:', { error, issueData, user: actingUser?.uid || actingUser?.email || 'unknown' });
       pushAlert({ title: 'Save failed', message: error?.message || 'Unable to save issue', code: error?.code, raw: error });
     } finally {
       setIsSavingMaintenanceIssue(false);
@@ -4165,6 +4178,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         setEditingMaintenanceIssue({ locationId: activeIssue.locationId, status: 'open', assignedStaff: 'Needs assignment', severity: 'normal' });
+                        setPendingMaintenancePrefill({ locationId: activeIssue.locationId });
                         setIsMaintenanceModalOpen(true);
                         setActiveIssue(null);
                       }}
@@ -4448,7 +4462,14 @@ export default function App() {
           </div>
         </main>
         <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} />
-        <MaintenanceModal isOpen={isMaintenanceModalOpen} onClose={() => setIsMaintenanceModalOpen(false)} onSave={handleSaveMaintenanceIssue} issue={editingMaintenanceIssue} allLocations={ALL_LOCATIONS} isSaving={isSavingMaintenanceIssue} />
+        <MaintenanceModal
+          isOpen={isMaintenanceModalOpen}
+          onClose={() => { setIsMaintenanceModalOpen(false); setPendingMaintenancePrefill(null); }}
+          onSave={handleSaveMaintenanceIssue}
+          issue={editingMaintenanceIssue || pendingMaintenancePrefill}
+          allLocations={ALL_LOCATIONS}
+          isSaving={isSavingMaintenanceIssue}
+        />
         <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} onDelete={handleDeleteRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} defaultMode={recurringModalMode} />
         <InvoiceModal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} bookings={bookings} />
         <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
