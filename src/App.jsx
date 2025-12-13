@@ -3340,26 +3340,6 @@ export default function App() {
                             </div>
                             <div className="flex justify-between">
                               <span className="text-slate-500">Early check-ins</span>
-
-        <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-6">
-            <div>
-              <h3 className="font-serif font-bold text-xl mb-2" style={{ color: COLORS.darkGreen }}>Tomorrow's Cleaning Plan</h3>
-              <p className="text-slate-500 text-sm">Prioritized by check-in type and long-stay weekly cleans.</p>
-            </div>
-            <div className="text-xs text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 leading-snug max-w-md">
-              <div>High = early check-in tomorrow (ready before 13:30).</div>
-              <div>Normal = standard turnovers (before 15:00).</div>
-              <div>Low = weekly long-stay cleans (flexible).</div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {renderTomorrowGroup('High Priority', 'Clean before 13:30', tomorrowHighPriorityRooms, 'bg-orange-500')}
-            {renderTomorrowGroup('Normal Priority', 'Clean before 15:00', tomorrowNormalPriorityRooms, 'bg-slate-400')}
-            {renderTomorrowGroup('Low Priority', 'Weekly long-stay cleans', tomorrowLowPriorityRooms, 'bg-blue-600')}
-          </div>
-        </div>
                               <span className="font-semibold text-orange-600">{summary.earlyCheckIns}</span>
                             </div>
                             <div className="flex justify-between">
