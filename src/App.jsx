@@ -708,7 +708,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   }, [formData.checkIn, formData.checkOut, categoryManual, deriveStayCategory]);
 
   const blockedDatesForRoom = useMemo(() => {
-    const blocked = new Set();
+    const checkInBlocked = new Set();
+    const checkOutBlocked = new Set();
+
     allBookings.forEach((b) => {
       if (b.roomId !== formData.roomId) return;
       if (b.status === 'cancelled') return;
@@ -716,11 +718,18 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
       const startTs = new Date(b.checkIn).getTime();
       const endTs = new Date(b.checkOut).getTime();
-      for (let ts = startTs; ts < endTs; ts += 86_400_000) {
-        blocked.add(formatDate(new Date(ts)));
+
+      for (let ts = startTs, day = 0; ts < endTs; ts += 86_400_000, day += 1) {
+        const dateStr = formatDate(new Date(ts));
+        checkInBlocked.add(dateStr);
+        if (day > 0) {
+          // For check-out selection, allow the boundary that matches another booking's check-in.
+          checkOutBlocked.add(dateStr);
+        }
       }
     });
-    return blocked;
+
+    return { checkInBlocked, checkOutBlocked };
   }, [allBookings, formData.roomId, booking]);
 
   const availableRoomOptions = useMemo(() => {
@@ -976,7 +985,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 label="Check In"
                 value={formData.checkIn}
                 onChange={(e) => handleDateChange('checkIn', e.target.value)}
-                blockedDates={blockedDatesForRoom}
+                blockedDates={blockedDatesForRoom.checkInBlocked}
                 boundaryRef={modalContentRef}
               />
             </div>
@@ -985,7 +994,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 label="Check Out"
                 value={formData.checkOut}
                 onChange={(e) => handleDateChange('checkOut', e.target.value)}
-                blockedDates={blockedDatesForRoom} 
+                blockedDates={blockedDatesForRoom.checkOutBlocked} 
                 minDate={formData.checkIn}
                 boundaryRef={modalContentRef}
               />
