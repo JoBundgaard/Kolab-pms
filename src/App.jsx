@@ -109,6 +109,40 @@ const ALL_LOCATIONS = PROPERTIES.flatMap(p => [
   ...p.commonAreas.map(c => ({ ...c, propertyId: p.id, propertyName: p.name, locationType: c.type })),
 ]);
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('[ErrorBoundary] Uncaught error', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6" style={{ backgroundColor: COLORS.cream }}>
+          <div className="bg-white border border-red-200 rounded-2xl shadow-lg p-6 max-w-md w-full space-y-3">
+            <div className="text-lg font-semibold text-red-700">Could not render the app</div>
+            <div className="text-sm text-slate-700">An unexpected error occurred. Please reload. The error has been logged to the console.</div>
+            <div className="text-xs text-slate-500 break-words">{String(this.state.error)}</div>
+            <div className="pt-2 flex justify-end">
+              <button onClick={() => window.location.reload()} className="px-4 py-2 rounded-full bg-red-600 text-white text-sm font-semibold">Reload</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 const STAFF = ['Unassigned', 'Mai', 'Tuan', 'Linh', 'Dat', 'Thanh', 'Ngoc'];
 
 // --- Helper Functions ---
@@ -4360,76 +4394,78 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-screen font-sans" style={{ backgroundColor: COLORS.cream }}>
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <header className="md:hidden border-b px-6 py-4 flex items-center justify-between" style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}>
-          <span className="font-serif font-bold text-xl text-white">Kolab Living</span>
-          <button onClick={() => setSidebarOpen(true)} className="text-white"><Menu size={24} /></button>
-        </header>
-        <div className="flex-1 overflow-auto p-6 md:p-10">
-          <div className="max-w-7xl mx-auto">
-             {isOffline && (
-               <div className="mb-3 px-4 py-2 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-sm">
-                 Offline. Some actions are disabled until connection returns.
+    <ErrorBoundary>
+      <div className="flex min-h-screen font-sans" style={{ backgroundColor: COLORS.cream }}>
+        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <header className="md:hidden border-b px-6 py-4 flex items-center justify-between" style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}>
+            <span className="font-serif font-bold text-xl text-white">Kolab Living</span>
+            <button onClick={() => setSidebarOpen(true)} className="text-white"><Menu size={24} /></button>
+          </header>
+          <div className="flex-1 overflow-auto p-6 md:p-10">
+            <div className="max-w-7xl mx-auto">
+               {isOffline && (
+                 <div className="mb-3 px-4 py-2 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-sm">
+                   Offline. Some actions are disabled until connection returns.
+                 </div>
+               )}
+               {loading && (
+                 <div className="mb-4 flex items-center gap-2 text-sm text-slate-600 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm">
+                   <RefreshCcw size={16} className="animate-spin" /> Loading latest data…
+                 </div>
+               )}
+               {dataError && (
+                 <div className="mb-6 p-4 rounded-xl border border-red-200 bg-red-50 text-red-800 text-sm">
+                   Firestore read error: {dataError}. Check Firestore rules/connection and reload.
+                 </div>
+               )}
+               <div className="flex flex-col gap-3 mb-8 md:flex-row md:items-center md:justify-between">
+                 <div className="flex items-center gap-3 text-xs text-slate-500">
+                   <span>{sessionLabel}</span>
+                   <button
+                     onClick={handleSignOut}
+                     className="px-3 py-1.5 rounded-full border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 text-[11px] font-semibold"
+                   >
+                     Sign out
+                   </button>
+                 </div>
+                 <div className="flex justify-end">
+                    {activeTab !== 'maintenance' && activeTab !== 'stats' && activeTab !== 'invoices' && (
+                        <button onClick={() => { setEditingBooking(null); setIsModalOpen(true); }} className="px-6 py-3 rounded-full flex items-center shadow-lg transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
+                            <Plus size={20} className="mr-2" /> New Booking
+                        </button>
+                    )}
+                 </div>
                </div>
-             )}
-             {loading && (
-               <div className="mb-4 flex items-center gap-2 text-sm text-slate-600 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm">
-                 <RefreshCcw size={16} className="animate-spin" /> Loading latest data…
-               </div>
-             )}
-             {dataError && (
-               <div className="mb-6 p-4 rounded-xl border border-red-200 bg-red-50 text-red-800 text-sm">
-                 Firestore read error: {dataError}. Check Firestore rules/connection and reload.
-               </div>
-             )}
-             <div className="flex flex-col gap-3 mb-8 md:flex-row md:items-center md:justify-between">
-               <div className="flex items-center gap-3 text-xs text-slate-500">
-                 <span>{sessionLabel}</span>
-                 <button
-                   onClick={handleSignOut}
-                   className="px-3 py-1.5 rounded-full border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 text-[11px] font-semibold"
-                 >
-                   Sign out
-                 </button>
-               </div>
-               <div className="flex justify-end">
-                  {activeTab !== 'maintenance' && activeTab !== 'stats' && activeTab !== 'invoices' && (
-                      <button onClick={() => { setEditingBooking(null); setIsModalOpen(true); }} className="px-6 py-3 rounded-full flex items-center shadow-lg transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
-                          <Plus size={20} className="mr-2" /> New Booking
-                      </button>
-                  )}
-               </div>
-             </div>
-             {activeTab === 'dashboard' && renderDashboard()}
-             {activeTab === 'calendar' && renderCalendar()}
-             {activeTab === 'bookings' && renderBookingsList()}
-             {activeTab === 'stats' && renderStats()} 
-             {activeTab === 'invoices' && renderInvoices()}
-             {activeTab === 'housekeeping' && renderHousekeeping()}
-             {activeTab === 'maintenance' && renderMaintenance()}
-          </div>
-        </div>
-      </main>
-      <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} />
-      <MaintenanceModal isOpen={isMaintenanceModalOpen} onClose={() => setIsMaintenanceModalOpen(false)} onSave={handleSaveMaintenanceIssue} issue={editingMaintenanceIssue} allLocations={ALL_LOCATIONS} isSaving={isSavingMaintenanceIssue} />
-      <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} onDelete={handleDeleteRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} defaultMode={recurringModalMode} />
-      <InvoiceModal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} bookings={bookings} />
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
-        {alerts.map((alert) => {
-          const isSuccess = alert.tone === 'success';
-          const isInfo = alert.tone === 'info';
-          const bg = isSuccess ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : isInfo ? 'bg-blue-50 border-blue-200 text-blue-800' : 'bg-red-50 border-red-200 text-red-800';
-          return (
-            <div key={alert.id} className={`rounded-xl border shadow-sm px-4 py-3 text-sm ${bg}`}>
-              <div className="font-semibold">{alert.title || 'Notice'}</div>
-              {alert.message && <div className="mt-1 leading-relaxed text-[13px]">{alert.message}</div>}
-              {alert.code && <div className="mt-1 text-[11px] uppercase tracking-wide opacity-70">{alert.code}</div>}
+               {activeTab === 'dashboard' && renderDashboard()}
+               {activeTab === 'calendar' && renderCalendar()}
+               {activeTab === 'bookings' && renderBookingsList()}
+               {activeTab === 'stats' && renderStats()} 
+               {activeTab === 'invoices' && renderInvoices()}
+               {activeTab === 'housekeeping' && renderHousekeeping()}
+               {activeTab === 'maintenance' && renderMaintenance()}
             </div>
-          );
-        })}
+          </div>
+        </main>
+        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} />
+        <MaintenanceModal isOpen={isMaintenanceModalOpen} onClose={() => setIsMaintenanceModalOpen(false)} onSave={handleSaveMaintenanceIssue} issue={editingMaintenanceIssue} allLocations={ALL_LOCATIONS} isSaving={isSavingMaintenanceIssue} />
+        <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} onDelete={handleDeleteRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} defaultMode={recurringModalMode} />
+        <InvoiceModal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} bookings={bookings} />
+        <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
+          {alerts.map((alert) => {
+            const isSuccess = alert.tone === 'success';
+            const isInfo = alert.tone === 'info';
+            const bg = isSuccess ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : isInfo ? 'bg-blue-50 border-blue-200 text-blue-800' : 'bg-red-50 border-red-200 text-red-800';
+            return (
+              <div key={alert.id} className={`rounded-xl border shadow-sm px-4 py-3 text-sm ${bg}`}>
+                <div className="font-semibold">{alert.title || 'Notice'}</div>
+                {alert.message && <div className="mt-1 leading-relaxed text-[13px]">{alert.message}</div>}
+                {alert.code && <div className="mt-1 text-[11px] uppercase tracking-wide opacity-70">{alert.code}</div>}
+              </div>
+            );
+          })}
+        </div>
       </div>
-    </div>
+    </ErrorBoundary>
   );
 }
