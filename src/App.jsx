@@ -9,27 +9,28 @@ import {
   collection, 
   doc, 
   onSnapshot, 
-  query, 
-  getDoc,
-  setDoc,
-  deleteDoc,
-} from 'firebase/firestore';
-import app, { auth, db } from './firebase';
-import { upsertBooking, removeBooking } from './services/bookingsService';
-import { 
-  Calendar, 
-  Home, 
-  Users, 
-  CheckCircle, 
-  Plus, 
-  Search, 
-  Menu, 
-  X, 
-  LogOut, 
-  Bed, 
-  DollarSign, 
-  Clock,
-  ChevronLeft,
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-xl flex flex-col"
+        data-modal-root
+        ref={modalContentRef}
+        style={{ maxHeight: '90vh', overflow: 'hidden', position: 'relative' }}
+      >
+        <div 
+            className="px-6 py-5 border-b flex justify-between items-center sticky top-0 z-10"
+            style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}
+        >
+          <h3 className="font-serif font-bold text-xl text-white">
+            {booking ? 'Edit Booking' : 'New Reservation'}
+          </h3>
+          <button onClick={onClose} className="text-white/70 hover:text-white transition-colors">
+            <X size={24} />
+          </button>
+        </div>
+        
+        <div className="p-6 space-y-5 overflow-y-auto overflow-x-hidden" style={{ backgroundColor: COLORS.cream, maxHeight: 'calc(90vh - 80px)' }}>
+        <form onSubmit={handleSubmit} className="space-y-5">
   ChevronRight,
   ChevronDown,
   User, 
@@ -1219,24 +1220,24 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
+            <div className="flex flex-wrap items-start gap-3 min-w-0">
+              <div className="min-w-0">
                 <h4 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Services</h4>
                 <p className="text-xs text-slate-500">Add paid services used during the stay. Prices in VND.</p>
               </div>
-              <div className="text-right text-xs text-slate-600">
+              <div className="text-right text-xs text-slate-600 ml-auto min-w-[160px] break-words">
                 <div className="font-semibold">Services total: {formatCurrencyVND(servicesTotal)}</div>
                 <div className="text-[11px]">Booking total (base + services): {formatCurrencyVND(bookingTotalWithServices)}</div>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 items-start min-w-0">
               {SERVICE_PRESETS.map((preset) => (
                 <button
                   key={preset.key}
                   type="button"
                   onClick={() => addServiceFromPreset(preset)}
-                  className="px-3 py-2 text-xs font-semibold rounded-full border border-slate-200 bg-[#E2F05D]/40 text-slate-800 hover:shadow-sm"
+                  className="px-3 py-2 text-xs font-semibold rounded-full border border-slate-200 bg-[#E2F05D]/40 text-slate-800 hover:shadow-sm max-w-full whitespace-normal break-words text-left"
                 >
                   {preset.name} ({formatCurrencyVND(preset.price)})
                 </button>
@@ -1350,6 +1351,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
             </button>
           </div>
         </form>
+      </div>
       </div>
     </div>
   );
