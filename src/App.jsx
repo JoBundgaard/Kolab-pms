@@ -51,6 +51,8 @@ import {
   FileText,
   Download,
 } from 'lucide-react';
+import HousekeepingTaskManager from './components/HousekeepingTaskManager';
+import { normalizeHousekeepingTasks } from './lib/housekeeping';
 
 // Firebase is initialized once in src/firebase.js and re-used here
 
@@ -70,6 +72,7 @@ const DATE_HEADER_HEIGHT = 56; // Keeps sticky offsets aligned for headers
 const DUE_SOON_DAYS = 3; // threshold for recurring task "due soon" badge
 const CALENDAR_ERROR_CODE = 'CAL-RENDER-01';
 const randomId = () => Math.random().toString(36).substr(2, 9);
+const ENABLE_HOUSEKEEPING_V2 = true;
 
 const SERVICE_PRESETS = [
   { key: 'laundry', name: 'Laundry service', price: 90000 },
@@ -151,6 +154,33 @@ class ErrorBoundary extends React.Component {
       );
     }
 
+    return this.props.children;
+  }
+}
+
+class HousekeepingErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('[Housekeeping] render error', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-4 rounded-xl border border-red-200 bg-red-50 text-red-800 text-sm">
+          <div className="font-semibold">Housekeeping panel failed to load.</div>
+          <div className="text-xs text-red-700 break-words">{String(this.state.error)}</div>
+        </div>
+      );
+    }
     return this.props.children;
   }
 }
@@ -2139,6 +2169,8 @@ export default function App() {
   const [guestSaving, setGuestSaving] = useState(false);
   const [guestNotesDraft, setGuestNotesDraft] = useState('');
   const [guestTagsDraft, setGuestTagsDraft] = useState('');
+  const [housekeepingDate, setHousekeepingDate] = useState(() => formatDate(new Date()));
+  const [housekeepingOverrides, setHousekeepingOverrides] = useState({});
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -2781,6 +2813,43 @@ export default function App() {
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
+  const bookingsForDate = useMemo(() => {
+    const dateStr = housekeepingDate || '';
+    if (!dateStr) return [];
+    return (bookings || []).filter((b) => {
+      if (!b || b.status === 'cancelled') return false;
+      const checkIn = formatDate(b.checkIn);
+      const checkOut = formatDate(b.checkOut);
+      return checkIn && checkOut && checkIn <= dateStr && checkOut >= dateStr;
+    });
+  }, [bookings, housekeepingDate]);
+
+  const checkoutsForDate = useMemo(
+    () => (bookings || []).filter((b) => b && b.status !== 'cancelled' && formatDate(b.checkOut) === housekeepingDate),
+    [bookings, housekeepingDate]
+  );
+
+  const checkinsForDate = useMemo(
+    () => (bookings || []).filter((b) => b && b.status !== 'cancelled' && formatDate(b.checkIn) === housekeepingDate),
+    [bookings, housekeepingDate]
+  );
+
+  const roomsNeedingCleaning = useMemo(() => {
+    const checkoutRoomIds = new Set(checkoutsForDate.map((b) => b.roomId));
+    return ALL_ROOMS.filter((room) => checkoutRoomIds.has(room.id));
+  }, [checkoutsForDate]);
+
+  const housekeepingTasks = useMemo(
+    () =>
+      normalizeHousekeepingTasks({
+        bookings: bookings || [],
+        rooms: ALL_ROOMS,
+        targetDate: housekeepingDate,
+        overrides: housekeepingOverrides,
+      }),
+    [bookings, housekeepingDate, housekeepingOverrides]
+  );
+
   const cleaningTasks = useMemo(
     () => buildCleaningTasksForDate(TODAY_STR, bookings, roomStatuses),
     [bookings, roomStatuses, TODAY_STR]
@@ -3049,6 +3118,17 @@ export default function App() {
       console.error('Error marking room clean:', error);
     }
   };
+
+  const handleHousekeepingTaskUpdate = useCallback((taskId, patch) => {
+    if (!taskId || !patch) return;
+    setHousekeepingOverrides((prev) => ({
+      ...prev,
+      [taskId]: {
+        ...(prev?.[taskId] || {}),
+        ...patch,
+      },
+    }));
+  }, []);
 
   const handleSaveBooking = async (bookingData, actingUser = user) => {
     const targetId = editingBooking?.id || Math.random().toString(36).substr(2, 9);
@@ -4303,27 +4383,41 @@ export default function App() {
 
   const renderHousekeeping = () => (
     <div className="space-y-6">
-        <div><h2 className="text-3xl font-serif font-bold mb-2" style={{ color: COLORS.darkGreen }}>Cleaning Task Manager</h2></div>
+      <div><h2 className="text-3xl font-serif font-bold mb-2" style={{ color: COLORS.darkGreen }}>Cleaning Task Manager</h2></div>
+      {ENABLE_HOUSEKEEPING_V2 ? (
+        <HousekeepingErrorBoundary>
+          <HousekeepingTaskManager
+            tasks={housekeepingTasks}
+            onUpdateTask={handleHousekeepingTaskUpdate}
+            staffOptions={STAFF}
+            selectedDate={housekeepingDate}
+            setSelectedDate={setHousekeepingDate}
+            checkins={checkinsForDate}
+            checkouts={checkoutsForDate}
+          />
+        </HousekeepingErrorBoundary>
+      ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-[#26402E] text-white text-xs uppercase font-bold tracking-wider">
-                  <tr><th className="px-6 py-4 w-12">Prio</th><th className="px-6 py-4">Room</th><th className="px-6 py-4">Status</th><th className="px-6 py-4">Staff</th><th className="px-6 py-4">Action</th></tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                    {(!cleaningTasks || cleaningTasks.length === 0) ? <tr><td colSpan="5" className="px-6 py-12 text-center text-green-600 bg-green-50/50">All rooms are clean!</td></tr> : cleaningTasks.map((task) => (
-                      <tr key={task.roomId} className={`hover:bg-[#F9F8F2] ${task.isEarlyCheckinPrep ? 'bg-orange-50/50' : task.status === 'checkout_dirty' ? 'bg-yellow-50/50' : ''}`}>
-                        <td className="px-6 py-4 text-center"><input type="number" min="1" max="99" value={task.priority} onChange={(e) => updateHousekeepingField(task.roomId, 'priority', Number(e.target.value))} className="w-12 text-center border rounded"/></td>
-                        <td className="px-6 py-4 font-bold text-slate-700">{task.roomName}<div className="text-xs font-normal opacity-60">{task.propertyName}</div>{task.isEarlyCheckinPrep && <div className="text-xs font-bold text-orange-600 flex items-center mt-1"><Sunrise size={14} className="mr-1"/> EARLY CHECK-IN</div>}{task.isLongTermCleaning && <div className="text-[11px] font-bold text-blue-700 flex items-center mt-1">Weekly service clean</div>}</td>
-                        <td className="px-6 py-4"><span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-100">{task.status}</span></td>
-                        <td className="px-6 py-4"><select value={task.assignedStaff} onChange={(e) => updateHousekeepingField(task.roomId, 'assignedStaff', e.target.value)} className="border rounded px-2 py-1">{STAFF.map(s => <option key={s} value={s}>{s}</option>)}</select></td>
-                        <td className="px-6 py-4"><button onClick={() => markRoomClean(task.roomId)} className="px-4 py-2 rounded-full text-sm font-bold flex items-center shadow-md" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}><CheckCircle size={16} className="mr-2"/> Mark Clean</button></td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-[#26402E] text-white text-xs uppercase font-bold tracking-wider">
+                <tr><th className="px-6 py-4 w-12">Prio</th><th className="px-6 py-4">Room</th><th className="px-6 py-4">Status</th><th className="px-6 py-4">Staff</th><th className="px-6 py-4">Action</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {(!cleaningTasks || cleaningTasks.length === 0) ? <tr><td colSpan="5" className="px-6 py-12 text-center text-green-600 bg-green-50/50">All rooms are clean!</td></tr> : cleaningTasks.map((task) => (
+                  <tr key={task.roomId} className={`hover:bg-[#F9F8F2] ${task.isEarlyCheckinPrep ? 'bg-orange-50/50' : task.status === 'checkout_dirty' ? 'bg-yellow-50/50' : ''}`}>
+                    <td className="px-6 py-4 text-center"><input type="number" min="1" max="99" value={task.priority} onChange={(e) => updateHousekeepingField(task.roomId, 'priority', Number(e.target.value))} className="w-12 text-center border rounded"/></td>
+                    <td className="px-6 py-4 font-bold text-slate-700">{task.roomName}<div className="text-xs font-normal opacity-60">{task.propertyName}</div>{task.isEarlyCheckinPrep && <div className="text-xs font-bold text-orange-600 flex items-center mt-1"><Sunrise size={14} className="mr-1"/> EARLY CHECK-IN</div>}{task.isLongTermCleaning && <div className="text-[11px] font-bold text-blue-700 flex items-center mt-1">Weekly service clean</div>}</td>
+                    <td className="px-6 py-4"><span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-100">{task.status}</span></td>
+                    <td className="px-6 py-4"><select value={task.assignedStaff} onChange={(e) => updateHousekeepingField(task.roomId, 'assignedStaff', e.target.value)} className="border rounded px-2 py-1">{STAFF.map(s => <option key={s} value={s}>{s}</option>)}</select></td>
+                    <td className="px-6 py-4"><button onClick={() => markRoomClean(task.roomId)} className="px-4 py-2 rounded-full text-sm font-bold flex items-center shadow-md" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}><CheckCircle size={16} className="mr-2"/> Mark Clean</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
+      )}
     </div>
   );
 
