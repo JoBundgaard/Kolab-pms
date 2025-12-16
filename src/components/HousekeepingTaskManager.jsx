@@ -1,4 +1,51 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
+
+export function buildHousekeepingWhatsappMessage({ tasks = [], selectedDate }) {
+  const safeTasks = Array.isArray(tasks) ? tasks.filter(Boolean) : [];
+  const dateLabel = (() => {
+    if (!selectedDate) return 'Unknown date';
+    const d = new Date(selectedDate);
+    if (isNaN(d.getTime())) return selectedDate;
+    const day = `${d.getDate()}`.padStart(2, '0');
+    const month = `${d.getMonth() + 1}`.padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  })();
+
+  const relevant = safeTasks.filter((t) => (t?.status || 'dirty') !== 'clean');
+  if (relevant.length === 0) {
+    return `Housekeeping plan (${dateLabel})\n\nAll clear.`;
+  }
+
+  const typeLabel = (type) => {
+    if (type === 'checkout') return 'Checkout clean';
+    if (type === 'weekly') return 'Weekly clean';
+    if (type === 'touchup') return 'Touch-up';
+    return type || 'Task';
+  };
+
+  const grouped = relevant.reduce((acc, task) => {
+    const prop = task.propertyName || 'Property';
+    if (!acc[prop]) acc[prop] = [];
+    acc[prop].push(task);
+    return acc;
+  }, {});
+
+  const propertyNames = Object.keys(grouped).sort();
+  const lines = [`Housekeeping plan (${dateLabel})`, ''];
+
+  propertyNames.forEach((prop) => {
+    lines.push(`${prop}:`);
+    grouped[prop].forEach((task) => {
+      const prio = task.priority ?? '-';
+      const staff = task.assignedTo || 'Unassigned';
+      lines.push(`• ${task.roomLabel || 'Room'} – ${typeLabel(task.type)} – Prio ${prio} – ${staff}`);
+    });
+    lines.push('');
+  });
+
+  return lines.join('\n').trim();
+}
 
 const statusLabel = {
   dirty: 'Dirty',
@@ -22,6 +69,14 @@ export default function HousekeepingTaskManager({
   checkouts = [],
 }) {
   const safeTasks = Array.isArray(tasks) ? tasks : [];
+  const [copyStatus, setCopyStatus] = useState('idle');
+  const [showPreview, setShowPreview] = useState(false);
+
+  const message = useMemo(
+    () => buildHousekeepingWhatsappMessage({ tasks: safeTasks, selectedDate }),
+    [safeTasks, selectedDate]
+  );
+
   const handleStatus = (id, status) => {
     if (!onUpdateTask) return;
     onUpdateTask(id, { status });
@@ -30,6 +85,30 @@ export default function HousekeepingTaskManager({
   const handleAssign = (id, staff) => {
     if (!onUpdateTask) return;
     onUpdateTask(id, { assignedTo: staff || null });
+  };
+
+  const copyToClipboard = async () => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(message);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = message;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopyStatus('copied');
+      setTimeout(() => setCopyStatus('idle'), 2000);
+    } catch (err) {
+      console.error('[housekeeping] copy failed', err);
+      setCopyStatus('failed');
+      setTimeout(() => setCopyStatus('idle'), 2000);
+    }
   };
 
   return (
@@ -50,7 +129,35 @@ export default function HousekeepingTaskManager({
           <span className="px-2 py-1 rounded-full border border-slate-200 bg-white">Check-outs: {checkouts.length}</span>
           <span className="px-2 py-1 rounded-full border border-slate-200 bg-white">Tasks: {safeTasks.length}</span>
         </div>
+        <div className="flex items-center gap-2 text-sm ml-auto">
+          <button
+            onClick={copyToClipboard}
+            className="px-4 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700 shadow-sm"
+          >
+            Copy WhatsApp message
+          </button>
+          <button
+            onClick={() => setShowPreview((v) => !v)}
+            className="px-3 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700"
+          >
+            {showPreview ? 'Hide preview' : 'Preview message'}
+          </button>
+          {copyStatus === 'copied' && <span className="text-xs text-emerald-700">Copied ✅</span>}
+          {copyStatus === 'failed' && <span className="text-xs text-red-600">Copy failed</span>}
+        </div>
       </div>
+
+      {showPreview && (
+        <div className="border border-slate-200 rounded-xl bg-slate-50 p-3">
+          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Preview</div>
+          <textarea
+            readOnly
+            value={message}
+            className="w-full text-sm border border-slate-200 rounded-lg p-2 bg-white"
+            rows={Math.min(10, Math.max(4, message.split('\n').length + 1))}
+          />
+        </div>
+      )}
 
       {safeTasks.length === 0 ? (
         <div className="p-6 rounded-xl border border-green-200 bg-green-50 text-green-700 text-sm">All clear for this date.</div>
