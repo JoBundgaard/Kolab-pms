@@ -4553,8 +4553,10 @@ export default function App() {
     const bulkAssign = (staff) => bulkUpdateCleaningTasks(selectedCleaningTaskIds, { staff }, 'bulk-assign');
 
     const renderTaskCard = (task) => {
-      const dueDate = task.dueAt ? formatDate(task.dueAt) : '—';
-      const dueTime = task.dueAt ? new Date(task.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const dueObjRaw = task.dueAt ? (task.dueAt.toDate ? task.dueAt.toDate() : new Date(task.dueAt)) : null;
+      const dueObj = dueObjRaw && !isNaN(dueObjRaw) ? dueObjRaw : null;
+      const dueDate = dueObj ? formatDate(dueObj) : '—';
+      const dueTime = dueObj ? dueObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
       const prio = priorityDisplay(task);
       const meta = statusMeta(task.status);
       const selected = selectedCleaningTaskIds.includes(task.id);
