@@ -1,39 +1,37 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
-import { 
+import {
   GoogleAuthProvider,
   signInWithPopup,
   onAuthStateChanged,
-  signOut
+  signOut,
 } from 'firebase/auth';
-import { 
-  collection, 
-  doc, 
-  onSnapshot, 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-xl flex flex-col"
-        data-modal-root
-        ref={modalContentRef}
-        style={{ maxHeight: '90vh', overflow: 'hidden', position: 'relative' }}
-      >
-        <div 
-            className="px-6 py-5 border-b flex justify-between items-center sticky top-0 z-10"
-            style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}
-        >
-          <h3 className="font-serif font-bold text-xl text-white">
-            {booking ? 'Edit Booking' : 'New Reservation'}
-          </h3>
-          <button onClick={onClose} className="text-white/70 hover:text-white transition-colors">
-            <X size={24} />
-          </button>
-        </div>
-        
-        <div className="p-6 space-y-5 overflow-y-auto overflow-x-hidden" style={{ backgroundColor: COLORS.cream, maxHeight: 'calc(90vh - 80px)' }}>
-        <form onSubmit={handleSubmit} className="space-y-5">
+import {
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  setDoc,
+  deleteDoc,
+} from 'firebase/firestore';
+import app, { auth, db } from './firebase';
+import { upsertBooking, removeBooking } from './services/bookingsService';
+import {
+  Calendar,
+  Home,
+  Users,
+  CheckCircle,
+  Plus,
+  Search,
+  Menu,
+  X,
+  LogOut,
+  Bed,
+  DollarSign,
+  Clock,
+  ChevronLeft,
   ChevronRight,
   ChevronDown,
-  User, 
+  User,
   RefreshCcw,
   AlertTriangle,
   Edit2,
@@ -42,11 +40,11 @@ import {
   Wrench,
   ListChecks,
   MessageSquare,
-  BarChart2, 
+  BarChart2,
   TrendingUp,
   PieChart,
-  FileText, 
-  Download
+  FileText,
+  Download,
 } from 'lucide-react';
 
 // Firebase is initialized once in src/firebase.js and re-used here
@@ -971,13 +969,13 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-xl"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-xl flex flex-col"
         data-modal-root
         ref={modalContentRef}
-        style={{ overflow: 'visible', maxHeight: '95vh', position: 'relative' }}
+        style={{ maxHeight: '90vh', overflow: 'hidden', position: 'relative' }}
       >
         <div 
-            className="px-6 py-5 border-b flex justify-between items-center"
+            className="px-6 py-5 border-b flex justify-between items-center sticky top-0 z-10"
             style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}
         >
           <h3 className="font-serif font-bold text-xl text-white">
@@ -988,7 +986,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
           </button>
         </div>
         
-        <form onSubmit={handleSubmit} className="p-6 space-y-5" style={{ backgroundColor: COLORS.cream, maxHeight: '85vh', overflow: 'visible', position: 'relative' }}>
+        <div className="p-6 space-y-5 overflow-y-auto overflow-x-hidden" style={{ backgroundColor: COLORS.cream, maxHeight: 'calc(90vh - 80px)' }}>
+        <form onSubmit={handleSubmit} className="space-y-5">
           
           {conflictError && (
             <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl relative flex items-start space-x-3">
@@ -1351,7 +1350,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
             </button>
           </div>
         </form>
-      </div>
+        </div>
       </div>
     </div>
   );
