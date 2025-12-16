@@ -13,11 +13,8 @@ import {
   setDoc,
   deleteDoc,
   getDocs,
-  getDoc,
   where,
   limit,
-  updateDoc,
-  arrayUnion,
 } from 'firebase/firestore';
 import app, { auth, db } from './firebase';
 import { upsertBooking, removeBooking } from './services/bookingsService';
@@ -2114,7 +2111,6 @@ export default function App() {
   
   // Data initialized as empty - will be populated by Firestore real-time listeners
   const [bookings, setBookings] = useState([]);
-  const [cleaningTaskDocs, setCleaningTaskDocs] = useState([]);
   const [guests, setGuests] = useState([]);
   const [roomStatuses, setRoomStatuses] = useState({});
   const [maintenanceIssues, setMaintenanceIssues] = useState([]);
@@ -2143,10 +2139,6 @@ export default function App() {
   const [guestSaving, setGuestSaving] = useState(false);
   const [guestNotesDraft, setGuestNotesDraft] = useState('');
   const [guestTagsDraft, setGuestTagsDraft] = useState('');
-  const [housekeepingFilters, setHousekeepingFilters] = useState({ property: 'all', status: 'all', assignee: 'all', type: 'all', dueRange: 'today', checkInToday: false, search: '' });
-  const [selectedCleaningTaskIds, setSelectedCleaningTaskIds] = useState([]);
-  const [activeCleaningTask, setActiveCleaningTask] = useState(null);
-  const [housekeepingBulkUpdating, setHousekeepingBulkUpdating] = useState(false);
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -2346,10 +2338,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    ensureCleaningTasksFromBookings();
-  }, [ensureCleaningTasksFromBookings]);
-
-  useEffect(() => {
     const guest = guests.find((g) => g.id === selectedGuestId);
     if (guest) {
       setGuestNotesDraft(guest.notes || '');
@@ -2368,7 +2356,6 @@ export default function App() {
   // Firestore is the single source of truth, accessed via real-time listeners
   useEffect(() => {
     let unsubBookings = () => {};
-    let unsubCleaningTasks = () => {};
     let unsubGuests = () => {};
     let unsubMaintenance = () => {};
     let unsubRecurring = () => {};
@@ -2392,19 +2379,6 @@ export default function App() {
           setDataError(error.message || 'Unable to read bookings from Firestore');
           setLoading(false);
           pushAlert({ title: 'Sync error: bookings', message: error.message, code: error.code || 'firestore-error', raw: error });
-        }
-      );
-
-      const cleaningTasksQuery = query(collection(db, 'cleaningTasks'));
-      unsubCleaningTasks = onSnapshot(
-        cleaningTasksQuery,
-        (snapshot) => {
-          console.log('[Firestore] cleaning tasks snapshot size:', snapshot.size);
-          setCleaningTaskDocs(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
-        },
-        (error) => {
-          console.error('Error listening to cleaning tasks:', error);
-          pushAlert({ title: 'Sync error: cleaning tasks', message: error.message, code: error.code || 'firestore-error', raw: error });
         }
       );
 
@@ -2483,7 +2457,6 @@ export default function App() {
           setUser(null);
           if (listenersStarted) {
             unsubBookings();
-            unsubCleaningTasks();
             unsubGuests();
             unsubMaintenance();
             unsubRecurring();
@@ -2510,7 +2483,6 @@ export default function App() {
     return () => {
       authUnsub();
       unsubBookings();
-      unsubCleaningTasks();
       unsubGuests();
       unsubMaintenance();
       unsubRecurring();
@@ -3078,157 +3050,6 @@ export default function App() {
     }
   };
 
-  const priorityDisplay = (task) => (task.priorityManual ?? task.priorityAuto ?? 99);
-
-  const upsertCleaningTask = useCallback(async (task) => {
-    const ref = doc(db, 'cleaningTasks', task.id);
-    const snap = await getDoc(ref);
-    const baseHistoryEntry = {
-      at: new Date().toISOString(),
-      by: user?.email || 'system',
-      action: snap.exists() ? 'auto-sync' : 'created',
-      after: { status: task.status, priorityAuto: task.priorityAuto },
-    };
-
-    if (snap.exists()) {
-      const existing = snap.data();
-      const merged = {
-        priorityAuto: task.priorityAuto,
-        priorityManual: existing.priorityManual ?? null,
-        dueAt: task.dueAt,
-        checkInAt: task.checkInAt || existing.checkInAt,
-        checkOutAt: task.checkOutAt || existing.checkOutAt,
-        roomName: task.roomName || existing.roomName,
-        propertyName: task.propertyName || existing.propertyName,
-        guestName: task.guestName || existing.guestName,
-        bookingId: task.bookingId || existing.bookingId,
-        tightTurnover: task.tightTurnover || existing.tightTurnover,
-        updatedAt: new Date().toISOString(),
-      };
-      await setDoc(ref, merged, { merge: true });
-      await updateDoc(ref, { history: arrayUnion(baseHistoryEntry) });
-    } else {
-      await setDoc(ref, { ...task, history: task.history || [baseHistoryEntry] });
-    }
-  }, [db, user]);
-
-  const ensureCleaningTasksFromBookings = useCallback(async () => {
-    const today = TODAY_STR;
-    const tomorrow = TOMORROW_STR;
-    const horizon = new Set([today, tomorrow]);
-
-    for (const booking of bookings) {
-      if (!booking || booking.status === 'cancelled') continue;
-      const room = ALL_ROOMS.find((r) => r.id === booking.roomId);
-      const propertyId = room?.propertyId || 'unknown';
-      const propertyName = room?.propertyName || 'Unknown property';
-
-      // Turnover task on checkout day within horizon
-      if (horizon.has(booking.checkOut)) {
-        const tightTurnover = bookings.some(
-          (b) => b.roomId === booking.roomId && b.id !== booking.id && b.checkIn === booking.checkOut && b.status !== 'cancelled'
-        );
-
-        const turnoverTask = {
-          id: `clean_${booking.id}_${booking.checkOut}_turnover`,
-          bookingId: booking.id,
-          guestName: booking.guestName || 'Guest',
-          roomId: booking.roomId,
-          roomName: room?.name || booking.roomId,
-          propertyId,
-          propertyName,
-          type: 'turnover',
-          dueAt: `${booking.checkOut}T12:00:00.000Z`,
-          etaMinutes: booking.isLongTerm ? 90 : 60,
-          priorityAuto: tightTurnover ? 1 : 2,
-          priorityManual: null,
-          status: 'to_do',
-          notes: booking.notes || '',
-          checkInAt: booking.checkIn,
-          checkOutAt: booking.checkOut,
-          requiresQC: true,
-          tightTurnover,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          completedAt: null,
-          history: [
-            {
-              at: new Date().toISOString(),
-              by: user?.email || 'system',
-              action: 'generated',
-              after: { status: 'to_do', priorityAuto: tightTurnover ? 1 : 2 },
-            },
-          ],
-          staff: 'Unassigned',
-        };
-
-        await upsertCleaningTask(turnoverTask);
-      }
-
-      // Stayover weekly tasks for medium/long
-      const isLong = booking.isLongTerm || booking.stayCategory === 'medium' || booking.stayCategory === 'long';
-      if (isLong && booking.weeklyCleaningDay) {
-        const weekdayKey = getWeekdayKey(today);
-        if (weekdayKey === booking.weeklyCleaningDay && booking.checkIn < today && booking.checkOut > today) {
-          const stayTask = {
-            id: `clean_${booking.id}_${today}_stayover`,
-            bookingId: booking.id,
-            guestName: booking.guestName || 'Guest',
-            roomId: booking.roomId,
-            roomName: room?.name || booking.roomId,
-            propertyId,
-            propertyName,
-            type: 'stayover',
-            dueAt: `${today}T10:00:00.000Z`,
-            etaMinutes: 45,
-            priorityAuto: 3,
-            priorityManual: null,
-            status: 'to_do',
-            notes: booking.notes || '',
-            checkInAt: booking.checkIn,
-            checkOutAt: booking.checkOut,
-            requiresQC: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            completedAt: null,
-            history: [
-              { at: new Date().toISOString(), by: user?.email || 'system', action: 'generated', after: { status: 'to_do', priorityAuto: 3 } },
-            ],
-            staff: 'Unassigned',
-          };
-          await upsertCleaningTask(stayTask);
-        }
-      }
-    }
-  }, [TODAY_STR, TOMORROW_STR, bookings, upsertCleaningTask, user]);
-
-  const updateCleaningTask = useCallback(async (taskId, updates, action = 'updated') => {
-    if (!taskId) return;
-    const ref = doc(db, 'cleaningTasks', taskId);
-    const entry = {
-      at: new Date().toISOString(),
-      by: user?.email || 'system',
-      action,
-      after: updates,
-    };
-    await setDoc(ref, { ...updates, updatedAt: new Date().toISOString() }, { merge: true });
-    await updateDoc(ref, { history: arrayUnion(entry) });
-  }, [db, user]);
-
-  const bulkUpdateCleaningTasks = useCallback(async (ids, updates, action = 'bulk-update') => {
-    if (!ids || !ids.length) return;
-    setHousekeepingBulkUpdating(true);
-    try {
-      await Promise.all(ids.map((id) => updateCleaningTask(id, updates, action)));
-      setSelectedCleaningTaskIds([]);
-    } catch (err) {
-      console.error('[cleaning] bulk update failed', err);
-      pushAlert({ title: 'Bulk update failed', message: err?.message || 'Could not update tasks', tone: 'error' });
-    } finally {
-      setHousekeepingBulkUpdating(false);
-    }
-  }, [updateCleaningTask, pushAlert]);
-
   const handleSaveBooking = async (bookingData, actingUser = user) => {
     const targetId = editingBooking?.id || Math.random().toString(36).substr(2, 9);
     setSavingBookingId(targetId);
@@ -3642,54 +3463,6 @@ export default function App() {
   };
 
   const statsData = useMemo(() => calculateStats(), [bookings]);
-
-  const cleaningTasksFiltered = useMemo(() => {
-    const filters = housekeepingFilters;
-    const search = (filters.search || '').toLowerCase();
-    return cleaningTaskDocs
-      .filter((t) => {
-        const dueDate = t.dueAt ? formatDate(t.dueAt) : null;
-        const matchesProperty = filters.property === 'all' || t.propertyId === filters.property;
-        const matchesStatus = filters.status === 'all' || t.status === filters.status;
-        const matchesAssignee = filters.assignee === 'all' || t.staff === filters.assignee;
-        const matchesType = filters.type === 'all' || t.type === filters.type;
-
-        let matchesDue = true;
-        if (filters.dueRange === 'today') matchesDue = dueDate === TODAY_STR;
-        if (filters.dueRange === 'next7') {
-          const diff = (new Date(dueDate) - new Date(TODAY_STR)) / 86_400_000;
-          matchesDue = !isNaN(diff) && diff >= 0 && diff <= 7;
-        }
-
-        const matchesCheckin = !filters.checkInToday || (t.checkInAt === TODAY_STR || t.tightTurnover);
-        const matchesSearch = !search || `${t.roomName || ''} ${t.propertyName || ''} ${t.guestName || ''} ${t.notes || ''}`.toLowerCase().includes(search);
-
-        return matchesProperty && matchesStatus && matchesAssignee && matchesType && matchesDue && matchesCheckin && matchesSearch;
-      })
-      .sort((a, b) => priorityDisplay(a) - priorityDisplay(b));
-  }, [cleaningTaskDocs, housekeepingFilters, TODAY_STR]);
-
-  const cleaningSections = useMemo(() => {
-    const today = TODAY_STR;
-    const now = new Date();
-    const urgent = [];
-    const dueToday = [];
-    const upcoming = [];
-
-    cleaningTasksFiltered.forEach((t) => {
-      const dueDate = t.dueAt ? formatDate(t.dueAt) : null;
-      const isToday = dueDate === today;
-      if (t.tightTurnover || t.checkInAt === today) {
-        urgent.push(t);
-      } else if (isToday) {
-        dueToday.push(t);
-      } else {
-        upcoming.push(t);
-      }
-    });
-
-    return { urgent, dueToday, upcoming };
-  }, [cleaningTasksFiltered, TODAY_STR]);
 
 
   // --- View Renderers ---
@@ -4528,257 +4301,31 @@ export default function App() {
     );
   };
 
-  const renderHousekeeping = () => {
-    const statusMeta = (status) => {
-      if (status === 'completed') return { label: 'Completed', classes: 'bg-green-50 text-green-700 border-green-200' };
-      if (status === 'in_progress') return { label: 'In Progress', classes: 'bg-blue-50 text-blue-700 border-blue-200' };
-      return { label: 'To Do', classes: 'bg-amber-50 text-amber-800 border-amber-200' };
-    };
-
-    const allSelected = cleaningTasksFiltered.length > 0 && cleaningTasksFiltered.every((t) => selectedCleaningTaskIds.includes(t.id));
-
-    const toggleTaskSelection = (taskId) => {
-      setSelectedCleaningTaskIds((prev) => (prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]));
-    };
-
-    const toggleSelectAll = () => {
-      if (allSelected) {
-        setSelectedCleaningTaskIds((prev) => prev.filter((id) => !cleaningTasksFiltered.some((t) => t.id === id)));
-      } else {
-        setSelectedCleaningTaskIds((prev) => Array.from(new Set([...prev, ...cleaningTasksFiltered.map((t) => t.id)])));
-      }
-    };
-
-    const bulkSetStatus = (status) => bulkUpdateCleaningTasks(selectedCleaningTaskIds, { status }, `bulk-${status}`);
-    const bulkAssign = (staff) => bulkUpdateCleaningTasks(selectedCleaningTaskIds, { staff }, 'bulk-assign');
-
-    const renderTaskCard = (task) => {
-      const dueObjRaw = task.dueAt ? (task.dueAt.toDate ? task.dueAt.toDate() : new Date(task.dueAt)) : null;
-      const dueObj = dueObjRaw && !isNaN(dueObjRaw) ? dueObjRaw : null;
-      const dueDate = dueObj ? formatDate(dueObj) : '—';
-      const dueTime = dueObj ? dueObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
-      const prio = priorityDisplay(task);
-      const meta = statusMeta(task.status);
-      const selected = selectedCleaningTaskIds.includes(task.id);
-
-      return (
-        <div key={task.id} className={`p-4 rounded-xl border shadow-sm bg-white hover:border-slate-300 transition-colors ${task.tightTurnover ? 'border-red-200 bg-red-50/50' : ''}`}>
-          <div className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              className="mt-1 accent-[#26402E]"
-              checked={selected}
-              onChange={() => toggleTaskSelection(task.id)}
-            />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-800 truncate">{task.roomName || 'Room'} · {task.propertyName || 'Property'}</div>
-                  <div className="text-xs text-slate-500 truncate">{task.guestName || 'Guest'} · {task.type}</div>
-                  <div className="text-[11px] text-slate-500 mt-1">Due {dueDate} at {dueTime}</div>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap justify-end">
-                  {task.tightTurnover && (
-                    <span className="px-2 py-1 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200">Tight turnover</span>
-                  )}
-                  <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${meta.classes}`}>{meta.label}</span>
-                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold border bg-white text-slate-700 border-slate-200">Prio {prio}</span>
-                </div>
-              </div>
-
-              <div className="mt-3 flex flex-wrap gap-2 items-center text-xs text-slate-600">
-                <span className="px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50">Staff: {task.staff || 'Unassigned'}</span>
-                {task.requiresQC && <span className="px-2.5 py-1 rounded-full border border-blue-200 bg-blue-50 text-blue-700">QC required</span>}
-                {task.notes && <span className="px-2.5 py-1 rounded-full border border-slate-200 bg-white truncate max-w-[200px]">{task.notes}</span>}
-              </div>
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                {task.status !== 'completed' && (
-                  <button
-                    onClick={() => updateCleaningTask(task.id, { status: task.status === 'in_progress' ? 'completed' : 'in_progress' }, 'status-toggle')}
-                    className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 text-slate-800 bg-white hover:bg-slate-100"
-                  >
-                    {task.status === 'in_progress' ? 'Mark done' : 'Start'}
-                  </button>
-                )}
-                {task.status === 'completed' && (
-                  <button
-                    onClick={() => updateCleaningTask(task.id, { status: 'to_do' }, 'reopen')}
-                    className="px-3 py-2 rounded-full text-xs font-semibold border border-amber-200 text-amber-800 bg-white hover:bg-amber-50"
-                  >
-                    Reopen
-                  </button>
-                )}
-                <select
-                  value={task.staff || 'Unassigned'}
-                  onChange={(e) => updateCleaningTask(task.id, { staff: e.target.value }, 'assign')}
-                  className="px-2 py-2 text-xs rounded-full border border-slate-200 bg-white"
-                >
-                  <option value="Unassigned">Unassigned</option>
-                  {STAFF.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => setActiveCleaningTask(task)}
-                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 text-slate-800 bg-white hover:bg-slate-100"
-                >
-                  Details
-                </button>
-              </div>
+  const renderHousekeeping = () => (
+    <div className="space-y-6">
+        <div><h2 className="text-3xl font-serif font-bold mb-2" style={{ color: COLORS.darkGreen }}>Cleaning Task Manager</h2></div>
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-[#26402E] text-white text-xs uppercase font-bold tracking-wider">
+                  <tr><th className="px-6 py-4 w-12">Prio</th><th className="px-6 py-4">Room</th><th className="px-6 py-4">Status</th><th className="px-6 py-4">Staff</th><th className="px-6 py-4">Action</th></tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                    {(!cleaningTasks || cleaningTasks.length === 0) ? <tr><td colSpan="5" className="px-6 py-12 text-center text-green-600 bg-green-50/50">All rooms are clean!</td></tr> : cleaningTasks.map((task) => (
+                      <tr key={task.roomId} className={`hover:bg-[#F9F8F2] ${task.isEarlyCheckinPrep ? 'bg-orange-50/50' : task.status === 'checkout_dirty' ? 'bg-yellow-50/50' : ''}`}>
+                        <td className="px-6 py-4 text-center"><input type="number" min="1" max="99" value={task.priority} onChange={(e) => updateHousekeepingField(task.roomId, 'priority', Number(e.target.value))} className="w-12 text-center border rounded"/></td>
+                        <td className="px-6 py-4 font-bold text-slate-700">{task.roomName}<div className="text-xs font-normal opacity-60">{task.propertyName}</div>{task.isEarlyCheckinPrep && <div className="text-xs font-bold text-orange-600 flex items-center mt-1"><Sunrise size={14} className="mr-1"/> EARLY CHECK-IN</div>}{task.isLongTermCleaning && <div className="text-[11px] font-bold text-blue-700 flex items-center mt-1">Weekly service clean</div>}</td>
+                        <td className="px-6 py-4"><span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-100">{task.status}</span></td>
+                        <td className="px-6 py-4"><select value={task.assignedStaff} onChange={(e) => updateHousekeepingField(task.roomId, 'assignedStaff', e.target.value)} className="border rounded px-2 py-1">{STAFF.map(s => <option key={s} value={s}>{s}</option>)}</select></td>
+                        <td className="px-6 py-4"><button onClick={() => markRoomClean(task.roomId)} className="px-4 py-2 rounded-full text-sm font-bold flex items-center shadow-md" style={{ backgroundColor: COLORS.darkGreen, color: COLORS.lime }}><CheckCircle size={16} className="mr-2"/> Mark Clean</button></td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
             </div>
-          </div>
         </div>
-      );
-    };
-
-    const renderSection = (label, tasks) => (
-      <div className="bg-white rounded-2xl border border-[#E5E7EB] p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-serif font-bold" style={{ color: COLORS.darkGreen }}>{label} ({tasks.length})</h3>
-          {tasks.length > 0 && <span className="text-xs text-slate-500">Showing {tasks.length} task{tasks.length === 1 ? '' : 's'}</span>}
-        </div>
-        {tasks.length === 0 ? (
-          <div className="text-sm text-slate-500 px-3 py-4 rounded-xl bg-slate-50 border border-slate-100">No tasks in this section.</div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {tasks.map(renderTaskCard)}
-          </div>
-        )}
-      </div>
-    );
-
-    return (
-      <div className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Cleaning Task Manager</h2>
-            <p className="text-slate-500 text-sm">Live tasks with priority, filters, and bulk actions.</p>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            <span className="px-3 py-1 rounded-full border border-slate-200 bg-white">{cleaningTasksFiltered.length} shown</span>
-            <span className="px-3 py-1 rounded-full border border-slate-200 bg-white">{selectedCleaningTaskIds.length} selected</span>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-[#E5E7EB] p-4 shadow-sm space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 text-sm">
-            <select
-              value={housekeepingFilters.property}
-              onChange={(e) => setHousekeepingFilters((prev) => ({ ...prev, property: e.target.value }))}
-              className="px-3 py-2 rounded-lg border border-slate-200 bg-white"
-            >
-              <option value="all">All properties</option>
-              {PROPERTIES.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-            <select
-              value={housekeepingFilters.status}
-              onChange={(e) => setHousekeepingFilters((prev) => ({ ...prev, status: e.target.value }))}
-              className="px-3 py-2 rounded-lg border border-slate-200 bg-white"
-            >
-              <option value="all">Status: Any</option>
-              <option value="to_do">To do</option>
-              <option value="in_progress">In progress</option>
-              <option value="completed">Completed</option>
-            </select>
-            <select
-              value={housekeepingFilters.type}
-              onChange={(e) => setHousekeepingFilters((prev) => ({ ...prev, type: e.target.value }))}
-              className="px-3 py-2 rounded-lg border border-slate-200 bg-white"
-            >
-              <option value="all">All types</option>
-              <option value="turnover">Turnover</option>
-              <option value="stayover">Stayover</option>
-            </select>
-            <select
-              value={housekeepingFilters.assignee}
-              onChange={(e) => setHousekeepingFilters((prev) => ({ ...prev, assignee: e.target.value }))}
-              className="px-3 py-2 rounded-lg border border-slate-200 bg-white"
-            >
-              <option value="all">Any staff</option>
-              <option value="Unassigned">Unassigned</option>
-              {STAFF.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select
-              value={housekeepingFilters.dueRange}
-              onChange={(e) => setHousekeepingFilters((prev) => ({ ...prev, dueRange: e.target.value }))}
-              className="px-3 py-2 rounded-lg border border-slate-200 bg-white"
-            >
-              <option value="today">Due today</option>
-              <option value="next7">Next 7 days</option>
-              <option value="all">Any date</option>
-            </select>
-          </div>
-
-          <div className="flex flex-wrap gap-2 items-center text-sm">
-            <label className="inline-flex items-center gap-2 text-slate-600">
-              <input
-                type="checkbox"
-                className="accent-[#26402E]"
-                checked={housekeepingFilters.checkInToday}
-                onChange={(e) => setHousekeepingFilters((prev) => ({ ...prev, checkInToday: e.target.checked }))}
-              />
-              Highlight today's check-ins
-            </label>
-            <div className="relative flex-1 min-w-[200px] max-w-md">
-              <input
-                type="text"
-                value={housekeepingFilters.search}
-                onChange={(e) => setHousekeepingFilters((prev) => ({ ...prev, search: e.target.value }))}
-                placeholder="Search room, guest, notes"
-                className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 bg-white"
-              />
-              <Search size={16} className="text-slate-400 absolute left-3 top-2.5" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-[#E5E7EB] p-4 shadow-sm flex flex-wrap gap-2 items-center text-sm">
-          <input
-            type="checkbox"
-            className="accent-[#26402E]"
-            checked={allSelected}
-            onChange={toggleSelectAll}
-          />
-          <span className="text-slate-700">Select shown ({cleaningTasksFiltered.length})</span>
-          <button
-            onClick={() => bulkSetStatus('in_progress')}
-            disabled={!selectedCleaningTaskIds.length || housekeepingBulkUpdating}
-            className={`px-3 py-1.5 rounded-full border text-xs font-semibold ${selectedCleaningTaskIds.length ? 'border-blue-200 text-blue-800 bg-white hover:bg-blue-50' : 'border-slate-200 text-slate-400 bg-white cursor-not-allowed'}`}
-          >
-            Set In Progress
-          </button>
-          <button
-            onClick={() => bulkSetStatus('completed')}
-            disabled={!selectedCleaningTaskIds.length || housekeepingBulkUpdating}
-            className={`px-3 py-1.5 rounded-full border text-xs font-semibold ${selectedCleaningTaskIds.length ? 'border-green-200 text-green-800 bg-white hover:bg-green-50' : 'border-slate-200 text-slate-400 bg-white cursor-not-allowed'}`}
-          >
-            Mark Completed
-          </button>
-          <div className="flex items-center gap-1 text-xs">
-            <span className="text-slate-600">Assign to</span>
-            <select
-              onChange={(e) => { if (e.target.value) { bulkAssign(e.target.value); }}}
-              className="px-2 py-1.5 rounded-full border border-slate-200 bg-white"
-              value=""
-              disabled={!selectedCleaningTaskIds.length || housekeepingBulkUpdating}
-            >
-              <option value="" disabled>Select staff</option>
-              <option value="Unassigned">Unassigned</option>
-              {STAFF.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-          {housekeepingBulkUpdating && <span className="text-xs text-slate-500">Updating…</span>}
-        </div>
-
-        <div className="space-y-4">
-          {renderSection('Urgent (tight turnovers)', cleaningSections.urgent)}
-          {renderSection("Due Today", cleaningSections.dueToday)}
-          {renderSection('Upcoming', cleaningSections.upcoming)}
-        </div>
-      </div>
-    );
-  };
+    </div>
+  );
 
   const renderMaintenance = () => {
     const openIssues = maintenanceIssues.filter((i) => !isResolvedStatus(i.status));
