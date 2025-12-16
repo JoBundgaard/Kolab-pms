@@ -65,6 +65,13 @@ const COLORS = {
 const DATE_HEADER_HEIGHT = 56; // Keeps sticky offsets aligned for headers
 const DUE_SOON_DAYS = 3; // threshold for recurring task "due soon" badge
 const CALENDAR_ERROR_CODE = 'CAL-RENDER-01';
+const randomId = () => Math.random().toString(36).substr(2, 9);
+
+const SERVICE_PRESETS = [
+  { key: 'laundry', name: 'Laundry service', price: 90000 },
+  { key: 'extra_cleaning', name: 'Extra cleaning', price: 100000 },
+  { key: 'extra_linen', name: 'Extra linen change', price: 60000 },
+];
 
 const PROPERTIES = [
   {
@@ -152,6 +159,8 @@ const severityMeta = (sev) => {
   if (key === 'low') return { label: 'Low', color: 'text-slate-600', bg: 'bg-slate-50', dot: 'bg-slate-400' };
   return { label: 'Normal', color: 'text-amber-700', bg: 'bg-amber-50', dot: 'bg-amber-500' };
 };
+
+const formatCurrencyVND = (value = 0) => `${(Number(value) || 0).toLocaleString('vi-VN')} ₫`;
 
 // --- Helper Functions ---
 const formatDate = (date) => {
@@ -617,7 +626,7 @@ const StatCard = ({ title, value, icon, subtext, colorClass = 'bg-emerald-500' }
   </div>
 );
 
-const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, checkBookingConflict, isSaving }) => {
+const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, checkBookingConflict, isSaving, currentUser }) => {
   const modalContentRef = useRef(null);
   const deriveStayCategory = useCallback((nights) => {
       if (nights >= 31) return 'long';
@@ -647,6 +656,37 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   const [conflictError, setConflictError] = useState(null);
   const [categoryManual, setCategoryManual] = useState(false);
   const [paymentStatusError, setPaymentStatusError] = useState(null);
+  const [services, setServices] = useState([]);
+  const [customService, setCustomService] = useState({ name: '', price: '', qty: 1, notes: '' });
+
+  const normalizeServiceEntry = useCallback(
+    (s) => {
+      const price = Math.max(0, Math.round(Number(s?.price) || 0));
+      const qty = Math.max(1, parseInt(s?.qty, 10) || 1);
+      return {
+        id: s?.id || randomId(),
+        name: (s?.name || '').trim() || 'Unnamed service',
+        price,
+        qty,
+        createdAt: s?.createdAt || new Date().toISOString(),
+        createdBy: s?.createdBy || currentUser?.uid || currentUser?.email || 'system',
+        presetKey: s?.presetKey || null,
+        notes: s?.notes || '',
+      };
+    },
+    [currentUser]
+  );
+
+  const servicesTotal = useMemo(
+    () =>
+      services.reduce(
+        (sum, s) => sum + (Math.max(0, Math.round(Number(s.price) || 0)) * Math.max(1, parseInt(s.qty, 10) || 1)),
+        0
+      ),
+    [services]
+  );
+
+  const bookingTotalWithServices = useMemo(() => (Number(formData.price) || 0) + servicesTotal, [formData.price, servicesTotal]);
 
   useEffect(() => {
     if (booking) {
@@ -662,6 +702,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         paymentStatus: booking.channel === 'direct' ? (booking.paymentStatus || '') : '',
       });
       setCategoryManual(!!booking.stayCategory);
+      const normalizedServices = Array.isArray(booking.services) ? booking.services.map(normalizeServiceEntry) : [];
+      setServices(normalizedServices);
     } else {
       const defaultCheckIn = formatDate(new Date());
       const defaultCheckOut = formatDate(new Date(Date.now() + 86400000));
@@ -685,9 +727,11 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         paymentStatus: '',
       });
       setCategoryManual(false);
+      setServices([]);
     }
     setConflictError(null);
     setPaymentStatusError(null);
+    setCustomService({ name: '', price: '', qty: 1, notes: '' });
   }, [booking, isOpen, rooms, deriveStayCategory]);
   
   useEffect(() => {
@@ -785,6 +829,11 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         setConflictError(conflictResult.reason);
         return; 
     }
+
+    const sanitizedServices = services
+      .map((s) => normalizeServiceEntry(s))
+      .filter((s) => s.name && !Number.isNaN(s.price) && s.qty >= 1);
+
     const inferredCategory = formData.stayCategory || deriveStayCategory(formData.nights);
     const isLongTermCategory = ['medium', 'long'].includes(inferredCategory);
     const finalWeeklyDay = isLongTermCategory ? formData.weeklyCleaningDay || 'monday' : '';
@@ -796,6 +845,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       weeklyCleaningDay: finalWeeklyDay,
       channel: formData.channel || 'airbnb',
       paymentStatus: formData.channel === 'direct' ? formData.paymentStatus : null,
+      services: sanitizedServices,
     });
   };
 
@@ -838,6 +888,79 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
           [name]: type === 'checkbox' ? checked : value
       }));
     }
+  };
+
+  const addServiceFromPreset = (preset) => {
+    const price = Math.max(0, Math.round(Number(preset.price) || 0));
+    setServices((prev) => {
+      const existingIdx = prev.findIndex((s) => s.name === preset.name);
+      if (existingIdx !== -1) {
+        const updated = [...prev];
+        const existing = updated[existingIdx];
+        updated[existingIdx] = {
+          ...existing,
+          qty: Math.max(1, (parseInt(existing.qty, 10) || 1) + 1),
+        };
+        return updated;
+      }
+      return [
+        ...prev,
+        normalizeServiceEntry({
+          id: randomId(),
+          name: preset.name,
+          price,
+          qty: 1,
+          presetKey: preset.key,
+          createdAt: new Date().toISOString(),
+        }),
+      ];
+    });
+  };
+
+  const handleCustomServiceChange = (e) => {
+    const { name, value } = e.target;
+    setCustomService((prev) => ({ ...prev, [name]: name === 'qty' || name === 'price' ? value : value }));
+  };
+
+  const addCustomService = () => {
+    const name = (customService.name || '').trim();
+    const price = Math.max(0, Math.round(Number(customService.price) || 0));
+    const qty = Math.max(1, parseInt(customService.qty, 10) || 1);
+
+    if (!name) {
+      setConflictError('Service name is required for custom services.');
+      return;
+    }
+    if (!price) {
+      setConflictError('Service price must be greater than 0.');
+      return;
+    }
+
+    setConflictError(null);
+
+    setServices((prev) => {
+      const existingIdx = prev.findIndex((s) => s.name.toLowerCase() === name.toLowerCase() && Number(s.price) === price);
+      if (existingIdx !== -1) {
+        const updated = [...prev];
+        const existing = updated[existingIdx];
+        updated[existingIdx] = {
+          ...existing,
+          qty: Math.max(1, (parseInt(existing.qty, 10) || 1) + qty),
+        };
+        return updated;
+      }
+      return [
+        ...prev,
+        normalizeServiceEntry({ id: randomId(), name, price, qty, createdAt: new Date().toISOString(), notes: customService.notes || '' }),
+      ];
+    });
+
+    setCustomService({ name: '', price: '', qty: 1, notes: '' });
+  };
+
+  const removeService = (id) => {
+    if (!confirm('Remove service?')) return;
+    setServices((prev) => prev.filter((s) => s.id !== id));
   };
 
   const handleDateChange = (field, dateStr) => {
@@ -1093,6 +1216,120 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 value={formData.price}
                 onChange={handleChange}
               />
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h4 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Services</h4>
+                <p className="text-xs text-slate-500">Add paid services used during the stay. Prices in VND.</p>
+              </div>
+              <div className="text-right text-xs text-slate-600">
+                <div className="font-semibold">Services total: {formatCurrencyVND(servicesTotal)}</div>
+                <div className="text-[11px]">Booking total (base + services): {formatCurrencyVND(bookingTotalWithServices)}</div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {SERVICE_PRESETS.map((preset) => (
+                <button
+                  key={preset.key}
+                  type="button"
+                  onClick={() => addServiceFromPreset(preset)}
+                  className="px-3 py-2 text-xs font-semibold rounded-full border border-slate-200 bg-[#E2F05D]/40 text-slate-800 hover:shadow-sm"
+                >
+                  {preset.name} ({formatCurrencyVND(preset.price)})
+                </button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
+              <div className="md:col-span-2">
+                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Other / Custom</label>
+                <input
+                  type="text"
+                  name="name"
+                  placeholder="Service name"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  value={customService.name}
+                  onChange={handleCustomServiceChange}
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Price (₫)</label>
+                <input
+                  type="number"
+                  name="price"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  value={customService.price}
+                  onChange={handleCustomServiceChange}
+                  min="0"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Qty</label>
+                <input
+                  type="number"
+                  name="qty"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  value={customService.qty}
+                  onChange={handleCustomServiceChange}
+                  min="1"
+                />
+              </div>
+              <div className="flex md:justify-end">
+                <button
+                  type="button"
+                  onClick={addCustomService}
+                  className="w-full md:w-auto px-4 py-2 rounded-full text-sm font-semibold border border-[#26402E] text-[#26402E] bg-[#E2F05D]/50 hover:bg-[#E2F05D] transition-colors"
+                >
+                  Add service
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-hidden border border-slate-200 rounded-xl">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Service</th>
+                    <th className="px-3 py-2 text-right">Price</th>
+                    <th className="px-3 py-2 text-right">Qty</th>
+                    <th className="px-3 py-2 text-right">Line total</th>
+                    <th className="px-3 py-2 text-right">Added</th>
+                    <th className="px-3 py-2 text-right">Remove</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {services.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="px-4 py-4 text-center text-slate-500">No services added.</td>
+                    </tr>
+                  ) : (
+                    services.map((s) => {
+                      const lineTotal = (Math.max(0, Math.round(Number(s.price) || 0)) * Math.max(1, parseInt(s.qty, 10) || 1));
+                      return (
+                        <tr key={s.id} className="border-t border-slate-100">
+                          <td className="px-3 py-2">
+                            <div className="font-semibold text-slate-800">{s.name}</div>
+                            {s.notes && <div className="text-xs text-slate-500">{s.notes}</div>}
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-700">{formatCurrencyVND(s.price)}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{s.qty}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatCurrencyVND(lineTotal)}</td>
+                          <td className="px-3 py-2 text-right text-[11px] text-slate-500">{s.createdAt ? new Date(s.createdAt).toLocaleString() : ''}</td>
+                          <td className="px-3 py-2 text-right">
+                            <button type="button" onClick={() => removeService(s.id)} className="p-2 rounded-full text-slate-500 hover:text-red-600 hover:bg-red-50">
+                              <Trash2 size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className="pt-4 flex justify-end space-x-3">
@@ -4538,7 +4775,7 @@ export default function App() {
             </div>
           </div>
         </main>
-        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} />
+        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} currentUser={user} />
         <MaintenanceModal
           isOpen={isMaintenanceModalOpen}
           onClose={() => { setIsMaintenanceModalOpen(false); setPendingMaintenancePrefill(null); }}
