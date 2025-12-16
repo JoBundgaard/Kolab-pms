@@ -12,9 +12,14 @@ import {
   query,
   setDoc,
   deleteDoc,
+  getDocs,
+  where,
+  limit,
 } from 'firebase/firestore';
 import app, { auth, db } from './firebase';
 import { upsertBooking, removeBooking } from './services/bookingsService';
+import { resolveGuestForBooking, previewReturningGuest, updateGuestStatsFromBooking } from './services/guestResolver';
+import { normalizeEmail, normalizePhone, normalizeName } from './utils/normalizeGuest';
 import {
   Calendar,
   Home,
@@ -394,7 +399,7 @@ const CustomDatePicker = ({ label, value, onChange, blockedDates = new Set(), mi
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [db]);
 
   const repositionDropdown = useCallback(() => {
     if (!isOpen || !containerRef.current || !dropdownRef.current) return;
@@ -549,6 +554,7 @@ const Sidebar = ({ activeTab, setActiveTab, isOpen, setIsOpen }) => {
     { id: 'dashboard', label: 'Dashboard', icon: <Home size={20} /> },
     { id: 'calendar', label: 'Calendar', icon: <Calendar size={20} /> },
     { id: 'bookings', label: 'Bookings List', icon: <Users size={20} /> },
+    { id: 'crm', label: 'CRM', icon: <User size={20} /> },
     { id: 'stats', label: 'Statistics', icon: <BarChart2 size={20} /> },
     { id: 'invoices', label: 'Invoices', icon: <FileText size={20} /> }, 
     { id: 'housekeeping', label: 'Housekeeping', icon: <Bed size={20} /> },
@@ -625,7 +631,7 @@ const StatCard = ({ title, value, icon, subtext, colorClass = 'bg-emerald-500' }
   </div>
 );
 
-const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, checkBookingConflict, isSaving, currentUser }) => {
+const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, checkBookingConflict, isSaving, currentUser, onLookupGuest }) => {
   const modalContentRef = useRef(null);
   const deriveStayCategory = useCallback((nights) => {
       if (nights >= 31) return 'long';
@@ -635,7 +641,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
   const [formData, setFormData] = useState({
     guestName: '',
-    email: '',
+    guestEmail: '',
+    guestPhone: '',
     roomId: '',
     checkIn: '',
     checkOut: '',
@@ -657,6 +664,12 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   const [paymentStatusError, setPaymentStatusError] = useState(null);
   const [services, setServices] = useState([]);
   const [customService, setCustomService] = useState({ name: '', price: '', qty: 1, notes: '' });
+  const [returningInfo, setReturningInfo] = useState(null);
+  const [checkingReturning, setCheckingReturning] = useState(false);
+  const [returningError, setReturningError] = useState(null);
+  const [returningInfo, setReturningInfo] = useState(null);
+  const [checkingReturning, setCheckingReturning] = useState(false);
+  const [returningError, setReturningError] = useState(null);
 
   const normalizeServiceEntry = useCallback(
     (s) => {
@@ -693,6 +706,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       const inferredCategory = booking.stayCategory || deriveStayCategory(bookingNights);
       setFormData({
         ...booking,
+        guestEmail: booking.guestEmail || booking.email || '',
+        guestPhone: booking.guestPhone || booking.phone || '',
         earlyCheckIn: !!booking.earlyCheckIn,
         stayCategory: inferredCategory,
         isLongTerm: ['medium', 'long'].includes(inferredCategory) || !!booking.isLongTerm,
@@ -710,7 +725,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       const inferredCategory = deriveStayCategory(defaultNights);
       setFormData({
         guestName: '',
-        email: '',
+        guestEmail: '',
+        guestPhone: '',
         roomId: rooms[0]?.id || '',
         checkIn: defaultCheckIn,
         checkOut: defaultCheckOut,
@@ -731,6 +747,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     setConflictError(null);
     setPaymentStatusError(null);
     setCustomService({ name: '', price: '', qty: 1, notes: '' });
+    setReturningInfo(booking?.isReturningGuest ? { isReturningGuest: true, returningReason: booking.returningReason || 'existingBooking', guest: { stayCount: booking.stayCount } } : null);
+    setReturningError(null);
+    setCheckingReturning(false);
   }, [booking, isOpen, rooms, deriveStayCategory]);
   
   useEffect(() => {
@@ -753,6 +772,39 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       setFormData(prev => ({ ...prev, nights: 0 }));
     }
   }, [formData.checkIn, formData.checkOut, categoryManual, deriveStayCategory]);
+
+  useEffect(() => {
+    if (!onLookupGuest) return;
+    const email = formData.guestEmail;
+    const phone = formData.guestPhone;
+    if (!email && !phone) {
+      setReturningInfo(null);
+      setReturningError(null);
+      return;
+    }
+
+    setCheckingReturning(true);
+    const handle = setTimeout(async () => {
+      try {
+        const result = await onLookupGuest({
+          guestEmail: email,
+          guestPhone: phone,
+          guestName: formData.guestName,
+          checkIn: formData.checkIn,
+        });
+        setReturningInfo(result);
+        setReturningError(null);
+      } catch (err) {
+        console.error('[booking-modal] returning lookup failed', err);
+        setReturningError('Could not check returning guest.');
+        setReturningInfo(null);
+      } finally {
+        setCheckingReturning(false);
+      }
+    }, 450);
+
+    return () => clearTimeout(handle);
+  }, [formData.guestEmail, formData.guestPhone, formData.guestName, formData.checkIn, onLookupGuest]);
 
   const blockedDatesForRoom = useMemo(() => {
     const checkInBlocked = new Set();
@@ -1010,6 +1062,53 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
               onChange={handleChange}
             />
           </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Email</label>
+              <input
+                type="email"
+                name="guestEmail"
+                placeholder="guest@email.com"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none bg-white shadow-sm transition-all"
+                value={formData.guestEmail}
+                onChange={handleChange}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Phone</label>
+              <input
+                type="tel"
+                name="guestPhone"
+                placeholder="Digits only"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none bg-white shadow-sm transition-all"
+                value={formData.guestPhone}
+                onChange={handleChange}
+              />
+            </div>
+          </div>
+
+          {(returningInfo?.isReturningGuest || returningError) && (
+            <div className={`rounded-xl border px-4 py-3 flex items-start gap-3 ${returningError ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
+              <AlertTriangle size={18} className="mt-0.5" />
+              <div>
+                <div className="font-semibold text-sm">
+                  {returningError ? 'Lookup issue' : 'Returning guest detected'}
+                </div>
+                <div className="text-xs mt-1 text-slate-700">
+                  {returningError && returningError}
+                  {!returningError && (
+                    <>
+                      Stayed {returningInfo?.guest?.stayCount ?? 1} time{(returningInfo?.guest?.stayCount || 1) !== 1 ? 's' : ''}.{returningInfo?.guest?.lastStayEnd ? ` Last stay ended ${formatDate(returningInfo.guest.lastStayEnd)}.` : ''}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          {checkingReturning && !returningError && (
+            <div className="text-xs text-slate-500">Checking returning guest…</div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -2015,6 +2114,7 @@ export default function App() {
   
   // Data initialized as empty - will be populated by Firestore real-time listeners
   const [bookings, setBookings] = useState([]);
+  const [guests, setGuests] = useState([]);
   const [roomStatuses, setRoomStatuses] = useState({});
   const [maintenanceIssues, setMaintenanceIssues] = useState([]);
   const [recurringTasks, setRecurringTasks] = useState([]);
@@ -2035,6 +2135,13 @@ export default function App() {
   const [selectedIssues, setSelectedIssues] = useState([]);
   const [bulkAssignValue, setBulkAssignValue] = useState('Needs assignment');
   const processedRecurringRef = useRef(new Set());
+  const [guestSearchTerm, setGuestSearchTerm] = useState('');
+  const [guestSearchResults, setGuestSearchResults] = useState([]);
+  const [selectedGuestId, setSelectedGuestId] = useState(null);
+  const [guestSaveMessage, setGuestSaveMessage] = useState('');
+  const [guestSaving, setGuestSaving] = useState(false);
+  const [guestNotesDraft, setGuestNotesDraft] = useState('');
+  const [guestTagsDraft, setGuestTagsDraft] = useState('');
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -2138,6 +2245,90 @@ export default function App() {
     }
   };
 
+  const handleGuestSearch = useCallback(async () => {
+    const raw = (guestSearchTerm || '').trim();
+    if (!raw) {
+      setGuestSearchResults([]);
+      return;
+    }
+
+    try {
+      const emailNorm = normalizeEmail(raw);
+      const phoneNorm = normalizePhone(raw);
+      let results = [];
+      if (emailNorm && raw.includes('@')) {
+        const snap = await getDocs(query(collection(db, 'guests'), where('emailNorm', '==', emailNorm), limit(5)));
+        results = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      } else if (phoneNorm && /\d+/.test(phoneNorm)) {
+        const snap = await getDocs(query(collection(db, 'guests'), where('phoneNorm', '==', phoneNorm), limit(5)));
+        results = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      } else {
+        const nameNorm = normalizeName(raw);
+        results = guests.filter((g) => (g.nameNorm || '').includes(nameNorm || '') || (g.fullName || '').toLowerCase().includes(raw.toLowerCase()));
+      }
+      setGuestSearchResults(results);
+      if (results[0]?.id) {
+        setSelectedGuestId(results[0].id);
+      }
+    } catch (err) {
+      console.error('[crm] guest search failed', err);
+      pushAlert({ title: 'Search failed', message: err?.message || 'Could not search guests', tone: 'error' });
+    }
+  }, [guestSearchTerm, guests, db, pushAlert]);
+
+  const handleSelectGuest = useCallback((guest) => {
+    if (!guest) return;
+    setSelectedGuestId(guest.id);
+    setGuestNotesDraft(guest.notes || '');
+    setGuestTagsDraft((guest.tags || []).join(', '));
+  }, []);
+
+  const handleSaveGuestProfile = useCallback(async (guestId) => {
+    if (!guestId) return;
+    setGuestSaving(true);
+    setGuestSaveMessage('');
+    try {
+      const tags = (guestTagsDraft || '')
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+
+      await setDoc(doc(db, 'guests', guestId), {
+        notes: guestNotesDraft || '',
+        tags,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+
+      setGuestSaveMessage('Saved');
+      setTimeout(() => setGuestSaveMessage(''), 2500);
+    } catch (err) {
+      console.error('[crm] save guest profile failed', err);
+      pushAlert({ title: 'Save failed', message: err?.message || 'Could not save guest', tone: 'error' });
+    } finally {
+      setGuestSaving(false);
+    }
+  }, [guestNotesDraft, guestTagsDraft, db, pushAlert]);
+
+  const openBookingForGuest = useCallback((guest) => {
+    if (!guest) return;
+    const today = formatDate(new Date());
+    const tomorrow = formatDate(new Date(Date.now() + 86400000));
+    setEditingBooking({
+      guestName: guest.fullName || '',
+      guestEmail: guest.email || '',
+      guestPhone: guest.phone || '',
+      checkIn: today,
+      checkOut: tomorrow,
+      roomId: ALL_ROOMS?.[0]?.id || '',
+      status: 'confirmed',
+      price: 0,
+      services: [],
+      channel: (guest.sourceChannels && guest.sourceChannels[0]) || 'airbnb',
+    });
+    setIsModalOpen(true);
+    setActiveTab('bookings');
+  }, [setActiveTab]);
+
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
@@ -2149,9 +2340,26 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const guest = guests.find((g) => g.id === selectedGuestId);
+    if (guest) {
+      setGuestNotesDraft(guest.notes || '');
+      setGuestTagsDraft((guest.tags || []).join(', '));
+    }
+  }, [selectedGuestId, guests]);
+
+  useEffect(() => {
+    if (!selectedGuestId && guests.length > 0) {
+      setSelectedGuestId(guests[0].id);
+      setGuestNotesDraft(guests[0].notes || '');
+      setGuestTagsDraft((guests[0].tags || []).join(', '));
+    }
+  }, [guests, selectedGuestId]);
+
   // Firestore is the single source of truth, accessed via real-time listeners
   useEffect(() => {
     let unsubBookings = () => {};
+    let unsubGuests = () => {};
     let unsubMaintenance = () => {};
     let unsubRecurring = () => {};
     let unsubRoomStatuses = () => {};
@@ -2174,6 +2382,19 @@ export default function App() {
           setDataError(error.message || 'Unable to read bookings from Firestore');
           setLoading(false);
           pushAlert({ title: 'Sync error: bookings', message: error.message, code: error.code || 'firestore-error', raw: error });
+        }
+      );
+
+      const guestsQuery = query(collection(db, 'guests'), limit(100));
+      unsubGuests = onSnapshot(
+        guestsQuery,
+        (snapshot) => {
+          console.log('[Firestore] guests snapshot size:', snapshot.size);
+          setGuests(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        },
+        (error) => {
+          console.error('Error listening to guests:', error);
+          pushAlert({ title: 'Sync error: guests', message: error.message, code: error.code || 'firestore-error', raw: error });
         }
       );
 
@@ -2239,6 +2460,7 @@ export default function App() {
           setUser(null);
           if (listenersStarted) {
             unsubBookings();
+            unsubGuests();
             unsubMaintenance();
             unsubRecurring();
             unsubRoomStatuses();
@@ -2264,6 +2486,7 @@ export default function App() {
     return () => {
       authUnsub();
       unsubBookings();
+      unsubGuests();
       unsubMaintenance();
       unsubRecurring();
       unsubRoomStatuses();
@@ -2704,6 +2927,23 @@ export default function App() {
     return { conflict: false };
   }, [bookings]);
 
+  const lookupReturningGuest = useCallback(async ({ guestEmail, guestPhone, guestName, checkIn }) => {
+    try {
+      const result = await previewReturningGuest({
+        db,
+        guestEmail,
+        guestPhone,
+        guestName,
+        checkIn,
+        allowNameMatch: false,
+      });
+      return result;
+    } catch (err) {
+      console.error('[returning-guest] lookup failed', err);
+      throw err;
+    }
+  }, []);
+
   // Auto-create recurring maintenance tasks when due
   useEffect(() => {
     const today = formatDate(new Date());
@@ -2817,18 +3057,39 @@ export default function App() {
     const targetId = editingBooking?.id || Math.random().toString(36).substr(2, 9);
     setSavingBookingId(targetId);
     try {
+      const guestEmailValue = bookingData.guestEmail?.trim?.() || '';
+      const guestPhoneValue = bookingData.guestPhone?.trim?.() || '';
       const normalizedPrice = Number(bookingData.price) || 0;
       const normalizedNights = calculateNights(bookingData.checkIn, bookingData.checkOut);
       const normalizedChannel = bookingData.channel || 'airbnb';
       const normalizedPaymentStatus = normalizedChannel === 'direct' ? (bookingData.paymentStatus || null) : null;
       const nowIso = new Date().toISOString();
 
+      const guestResolution = await resolveGuestForBooking({
+        db,
+        bookingDraft: {
+          ...bookingData,
+          guestEmail: guestEmailValue || null,
+          guestPhone: guestPhoneValue || null,
+          startDate: bookingData.checkIn,
+          endDate: bookingData.checkOut,
+          channel: normalizedChannel,
+        },
+      });
+
       const normalizedData = {
         ...bookingData,
+        guestEmail: guestEmailValue || null,
+        guestPhone: guestPhoneValue || null,
+        guestEmailNorm: guestResolution?.normalized?.emailNorm || null,
+        guestPhoneNorm: guestResolution?.normalized?.phoneNorm || null,
         price: normalizedPrice,
         nights: normalizedNights,
         channel: normalizedChannel,
         paymentStatus: normalizedPaymentStatus,
+        guestId: guestResolution?.guestId || null,
+        isReturningGuest: !!guestResolution?.isReturningGuest,
+        returningReason: guestResolution?.returningReason || null,
       };
 
       const payload = editingBooking
@@ -2857,6 +3118,15 @@ export default function App() {
         if (existing) return prev.map((b) => (b.id === upserted.id ? { ...existing, ...upserted } : b));
         return [...prev, upserted];
       });
+
+      const statusCompleted = ['checked-out', 'completed'].includes(upserted.status);
+      const wasCompleted = editingBooking ? ['checked-out', 'completed'].includes(editingBooking.status) : false;
+      if (statusCompleted && !wasCompleted && upserted.guestId) {
+        const statsResult = await updateGuestStatsFromBooking({ db, booking: upserted });
+        if (!statsResult.ok) {
+          console.warn('[guest-stats]', statsResult.message || 'Failed to update guest stats');
+        }
+      }
 
       setIsModalOpen(false);
       setEditingBooking(null);
@@ -3821,6 +4091,9 @@ export default function App() {
                   <td className="px-6 py-4 font-bold flex items-center gap-2">
                     <span className={`${isPastContext ? 'text-slate-600' : 'text-slate-800'}`}>{booking.guestName}</span>
                     {booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500"/>}
+                    {booking.isReturningGuest && (
+                      <span className="text-[11px] px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200">Returning</span>
+                    )}
                     <span className={`text-[11px] px-2 py-0.5 rounded-full border ${stayCat === 'long' ? 'bg-blue-50 text-blue-700 border-blue-200' : stayCat === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                       {formatStayCategoryLabel(stayCat)}
                     </span>
@@ -3861,6 +4134,171 @@ export default function App() {
               )})}
             </tbody>
           </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderCRM = () => {
+    const displayedGuests = (guestSearchResults.length ? guestSearchResults : guests).slice(0, 100);
+    const selectedGuest = displayedGuests.find((g) => g.id === selectedGuestId) || guests.find((g) => g.id === selectedGuestId) || displayedGuests[0];
+    const stayHistory = selectedGuest ? bookings.filter((b) => b.guestId === selectedGuest.id).sort((a, b) => new Date(b.checkIn) - new Date(a.checkIn)) : [];
+
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-1 space-y-4">
+          <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Search size={18} className="text-slate-500" />
+              <div>
+                <div className="font-semibold text-slate-800">Find guest</div>
+                <div className="text-xs text-slate-500">Search by email, phone, or name</div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={guestSearchTerm}
+                onChange={(e) => setGuestSearchTerm(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleGuestSearch(); } }}
+                placeholder="guest@email.com or +84..."
+                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none"
+              />
+              <button
+                onClick={handleGuestSearch}
+                className="px-3 py-2 rounded-xl bg-[#26402E] text-white text-sm font-semibold shadow-sm"
+              >
+                Search
+              </button>
+            </div>
+            <div className="text-xs text-slate-500">Showing {displayedGuests.length} guest(s)</div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] divide-y divide-slate-100 overflow-hidden">
+            {displayedGuests.length === 0 ? (
+              <div className="p-4 text-sm text-slate-500">No guests yet.</div>
+            ) : (
+              displayedGuests.map((g) => {
+                const isSelected = selectedGuest && g.id === selectedGuest.id;
+                return (
+                  <button
+                    key={g.id}
+                    onClick={() => handleSelectGuest(g)}
+                    className={`w-full text-left p-4 flex items-center justify-between gap-3 hover:bg-[#F9F8F2] ${isSelected ? 'bg-[#E2F05D]/30' : ''}`}
+                  >
+                    <div>
+                      <div className="font-semibold text-slate-800">{g.fullName || 'Unknown Guest'}</div>
+                      <div className="text-xs text-slate-500">{g.email || g.phone || 'No contact'}</div>
+                      <div className="text-[11px] text-slate-500 mt-1">Stays: {g.stayCount || 0}</div>
+                    </div>
+                    {g.isReturningGuest || (g.stayCount || 0) > 0 ? (
+                      <span className="px-2 py-1 rounded-full text-[11px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">Returning</span>
+                    ) : null}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-[#E5E7EB] p-6 space-y-5">
+          {!selectedGuest ? (
+            <div className="text-sm text-slate-500">Select a guest to view details.</div>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-slate-500 font-bold">Guest Profile</div>
+                  <h2 className="text-2xl font-serif font-bold text-slate-900">{selectedGuest.fullName || 'Unknown Guest'}</h2>
+                  <div className="text-sm text-slate-500 mt-1">
+                    Last stay end: {selectedGuest.lastStayEnd ? formatDate(selectedGuest.lastStayEnd) : '—'} · Stays: {selectedGuest.stayCount || 0}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => openBookingForGuest(selectedGuest)}
+                    className="px-4 py-2 rounded-full bg-[#26402E] text-white text-sm font-semibold shadow-sm"
+                  >
+                    Create booking
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('bookings')}
+                    className="px-4 py-2 rounded-full border border-slate-200 text-sm font-semibold"
+                  >
+                    Go to bookings
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Tags</div>
+                  <input
+                    type="text"
+                    value={guestTagsDraft}
+                    onChange={(e) => setGuestTagsDraft(e.target.value)}
+                    placeholder="VIP, Problematic, Loves late checkout"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    {(selectedGuest.tags || []).map((tag) => (
+                      <span key={tag} className="px-2 py-1 rounded-full text-[11px] bg-slate-100 text-slate-700 border border-slate-200">{tag}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Notes</div>
+                  <textarea
+                    rows="4"
+                    value={guestNotesDraft}
+                    onChange={(e) => setGuestNotesDraft(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm"
+                    placeholder="Preferences, issues, payment notes..."
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => handleSaveGuestProfile(selectedGuest.id)}
+                  disabled={guestSaving}
+                  className={`px-5 py-2 rounded-full text-sm font-semibold shadow-sm ${guestSaving ? 'bg-slate-200 text-slate-500' : 'bg-[#26402E] text-white'}`}
+                >
+                  {guestSaving ? 'Saving…' : 'Save profile'}
+                </button>
+                {guestSaveMessage && <span className="text-sm text-emerald-700">{guestSaveMessage}</span>}
+              </div>
+
+              <div className="space-y-3">
+                <div className="text-xs uppercase tracking-wide font-bold text-slate-500">Stay history</div>
+                <div className="overflow-x-auto border border-slate-100 rounded-xl">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
+                      <tr><th className="px-4 py-2">Dates</th><th className="px-4 py-2">Room</th><th className="px-4 py-2">Channel</th><th className="px-4 py-2">Status</th><th className="px-4 py-2">Total</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {stayHistory.length === 0 ? (
+                        <tr><td colSpan="5" className="px-4 py-4 text-slate-500 text-center">No stays recorded.</td></tr>
+                      ) : (
+                        stayHistory.map((b) => {
+                          const room = ALL_ROOMS.find((r) => r.id === b.roomId);
+                          return (
+                            <tr key={b.id} className="hover:bg-slate-50">
+                              <td className="px-4 py-2">{b.checkIn} → {b.checkOut}</td>
+                              <td className="px-4 py-2">{room?.name || b.roomId} <span className="text-xs text-slate-500">{room?.propertyName}</span></td>
+                              <td className="px-4 py-2">{formatChannelLabel(b.channel)}</td>
+                              <td className="px-4 py-2 text-xs"><span className="px-2 py-1 rounded-full border bg-slate-100 text-slate-700">{b.status}</span></td>
+                              <td className="px-4 py-2">{Number(b.price || 0).toLocaleString('vi-VN')} ₫</td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -4769,6 +5207,7 @@ export default function App() {
                {activeTab === 'dashboard' && renderDashboard()}
                {activeTab === 'calendar' && renderCalendar()}
                {activeTab === 'bookings' && renderBookingsList()}
+               {activeTab === 'crm' && renderCRM()}
                {activeTab === 'stats' && renderStats()} 
                {activeTab === 'invoices' && renderInvoices()}
                {activeTab === 'housekeeping' && renderHousekeeping()}
@@ -4776,7 +5215,7 @@ export default function App() {
             </div>
           </div>
         </main>
-        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} currentUser={user} />
+        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} currentUser={user} onLookupGuest={lookupReturningGuest} />
         <MaintenanceModal
           isOpen={isMaintenanceModalOpen}
           onClose={() => { setIsMaintenanceModalOpen(false); setPendingMaintenancePrefill(null); }}
