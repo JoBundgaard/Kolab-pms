@@ -667,9 +667,6 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   const [returningInfo, setReturningInfo] = useState(null);
   const [checkingReturning, setCheckingReturning] = useState(false);
   const [returningError, setReturningError] = useState(null);
-  const [returningInfo, setReturningInfo] = useState(null);
-  const [checkingReturning, setCheckingReturning] = useState(false);
-  const [returningError, setReturningError] = useState(null);
 
   const normalizeServiceEntry = useCallback(
     (s) => {
