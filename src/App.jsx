@@ -681,6 +681,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     status: 'confirmed',
     notes: '',
     earlyCheckIn: false,
+    bikeParkingNeeded: false,
+    bikeCount: 1,
     stayCategory: 'short',
     isLongTerm: false,
     weeklyCleaningDay: 'monday',
@@ -736,6 +738,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         guestEmail: booking.guestEmail || booking.email || '',
         guestPhone: booking.guestPhone || booking.phone || '',
         earlyCheckIn: !!booking.earlyCheckIn,
+        bikeParkingNeeded: !!booking.bikeParkingNeeded,
+        bikeCount: booking.bikeCount || 1,
         stayCategory: inferredCategory,
         isLongTerm: ['medium', 'long'].includes(inferredCategory) || !!booking.isLongTerm,
         weeklyCleaningDay: booking.weeklyCleaningDay || 'monday',
@@ -762,6 +766,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         status: 'confirmed',
         notes: '',
         earlyCheckIn: false,
+        bikeParkingNeeded: false,
+        bikeCount: 1,
         stayCategory: inferredCategory,
         isLongTerm: ['medium', 'long'].includes(inferredCategory),
         weeklyCleaningDay: 'monday',
@@ -915,6 +921,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     const inferredCategory = formData.stayCategory || deriveStayCategory(formData.nights);
     const isLongTermCategory = ['medium', 'long'].includes(inferredCategory);
     const finalWeeklyDay = isLongTermCategory ? formData.weeklyCleaningDay || 'monday' : '';
+    const normalizedBikeCount = formData.bikeParkingNeeded
+      ? Math.max(1, Math.min(5, Number(formData.bikeCount) || 1))
+      : null;
 
     onSave({
       ...formData,
@@ -923,6 +932,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       weeklyCleaningDay: finalWeeklyDay,
       channel: formData.channel || 'airbnb',
       paymentStatus: formData.channel === 'direct' ? formData.paymentStatus : null,
+      bikeParkingNeeded: !!formData.bikeParkingNeeded,
+      bikeCount: normalizedBikeCount,
       services: sanitizedServices,
     });
   };
@@ -960,6 +971,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         ...prev,
         paymentStatus: value,
       }));
+    } else if (name === 'bikeCount') {
+      const numeric = Math.max(1, Math.min(5, Number(value) || 1));
+      setFormData((prev) => ({ ...prev, bikeCount: numeric }));
     } else {
       setFormData(prev => ({ 
           ...prev, 
@@ -1268,6 +1282,36 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
               Request Early Check-in <span className="text-xs text-slate-500">(Requires room priority)</span>
             </label>
           </div>
+
+          <div className="flex items-center pt-2 gap-3 flex-wrap">
+            <label className="inline-flex items-center gap-2 text-sm font-medium" style={{ color: COLORS.darkGreen }}>
+              <input
+                type="checkbox"
+                name="bikeParkingNeeded"
+                checked={!!formData.bikeParkingNeeded}
+                onChange={handleChange}
+                className="h-5 w-5 rounded border-gray-300 text-lime focus:ring-lime"
+                style={{ color: COLORS.darkGreen, accentColor: COLORS.darkGreen }}
+              />
+              Bike parking needed
+            </label>
+            <span className="text-xs text-slate-500">Tick if guest will park a bike at the house.</span>
+          </div>
+
+          {formData.bikeParkingNeeded && (
+            <div className="pt-2 w-full sm:w-1/2">
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>How many bikes?</label>
+              <input
+                type="number"
+                name="bikeCount"
+                min="1"
+                max="5"
+                value={formData.bikeCount || 1}
+                onChange={handleChange}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm"
+              />
+            </div>
+          )}
 
           <div className="pt-2">
             <label className="block text-xs font-bold uppercase tracking-wider mb-2" style={{ color: COLORS.darkGreen }}>Stay Category</label>
@@ -3595,6 +3639,7 @@ export default function App() {
             const incoming = findIncomingForDate(task.roomId, targetDate);
             const inHouse = findInHouseForDate(task.roomId, targetDate);
             const isEarly = !!(incoming && incoming.earlyCheckIn);
+            const bikeBooking = incoming?.bikeParkingNeeded ? incoming : inHouse?.bikeParkingNeeded ? inHouse : null;
             return (
               <div key={task.roomId} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white shadow-sm">
                 <div className="space-y-1">
@@ -3605,6 +3650,7 @@ export default function App() {
                   <div className="text-[11px] uppercase tracking-wide text-slate-400">{task.propertyName}</div>
                   {incoming && <div className="text-xs text-slate-600">Incoming: {incoming.guestName}</div>}
                   {inHouse && !incoming && <div className="text-xs text-slate-600">In-house: {inHouse.guestName}</div>}
+                  {bikeBooking && <div className="text-xs text-slate-600">Bike parking: {bikeBooking.bikeCount || 1}</div>}
                 </div>
                 <div className="flex flex-col items-end gap-1 text-xs">
                   {task.isWeeklyServiceClean && <span className="text-blue-700 font-semibold">Weekly</span>}
@@ -3678,6 +3724,9 @@ export default function App() {
                              </div>
                              <div className="flex items-center gap-2">
                                {booking.earlyCheckIn && <span className="text-[11px] font-bold text-orange-600 flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
+                                {booking.bikeParkingNeeded && (
+                                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full border border-slate-200 bg-white text-slate-700">Bike {booking.bikeCount || 1}</span>
+                                )}
                                <span className={getRoomTagClasses(booking.roomId, { highlightPriority: booking.earlyCheckIn })}>
                                  {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
                                </span>
@@ -3747,6 +3796,9 @@ export default function App() {
                             <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('👤')}<span>{booking.guestName}</span></div>
                             <div className="flex items-center gap-2">
                               {booking.earlyCheckIn && <span className="text-[11px] font-bold text-orange-600 flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
+                              {booking.bikeParkingNeeded && (
+                                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full border border-slate-200 bg-white text-slate-700">Bike {booking.bikeCount || 1}</span>
+                              )}
                               <span className={getRoomTagClasses(booking.roomId, { highlightPriority: booking.earlyCheckIn })}>
                                 {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
                               </span>
@@ -4013,6 +4065,11 @@ export default function App() {
                                       )}
                                       <span className="font-semibold truncate mr-1.5">{booking.guestName}</span>
                                       {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
+                                      {booking.bikeParkingNeeded && (
+                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-white/80 text-[#26402E] ml-1 border border-white/60">
+                                          Bike {booking.bikeCount || 1}
+                                        </span>
+                                      )}
                                     </div>
                                   );
                                 })()
@@ -4170,6 +4227,9 @@ export default function App() {
                     {booking.earlyCheckIn && <Sunrise size={16} className="text-orange-500"/>}
                     {booking.isReturningGuest && (
                       <span className="text-[11px] px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200">Returning</span>
+                    )}
+                    {booking.bikeParkingNeeded && (
+                      <span className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-slate-700 border-slate-200">Bike {booking.bikeCount || 1}</span>
                     )}
                     <span className={`text-[11px] px-2 py-0.5 rounded-full border ${stayCat === 'long' ? 'bg-blue-50 text-blue-700 border-blue-200' : stayCat === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                       {formatStayCategoryLabel(stayCat)}
