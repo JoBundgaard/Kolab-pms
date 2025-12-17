@@ -2850,6 +2850,44 @@ export default function App() {
     }
   }, [bookings]);
 
+  const propertyRoomsMap = useMemo(() => {
+    const map = {};
+    PROPERTIES.forEach((prop) => {
+      map[prop.name] = new Set((prop.rooms || []).map((r) => r.id));
+    });
+    return map;
+  }, []);
+
+  const getBikesCountForDate = useCallback(
+    (propertyName, dateStr) => {
+      const roomsForProperty = propertyRoomsMap[propertyName];
+      if (!roomsForProperty || roomsForProperty.size === 0) return 0;
+
+      return calendarBookings.reduce((sum, booking) => {
+        if (!booking || booking.status === 'cancelled') return sum;
+        if (!roomsForProperty.has(booking.roomId)) return sum;
+        if (!(booking.checkIn <= dateStr && booking.checkOut > dateStr)) return sum;
+
+        if (!booking.bikeParkingNeeded) return sum;
+        const bikes = Number(booking.bikeCount);
+        const count = Number.isFinite(bikes) && bikes > 0 ? bikes : 1;
+        return sum + count;
+      }, 0);
+    },
+    [calendarBookings, propertyRoomsMap]
+  );
+
+  const neighboursBikeCountMap = useMemo(() => {
+    const targetProp = 'Neighbours';
+    if (!dates.length || !propertyRoomsMap[targetProp]) return {};
+    const map = {};
+    dates.forEach((date) => {
+      const dateStr = formatDate(date);
+      map[dateStr] = getBikesCountForDate(targetProp, dateStr);
+    });
+    return map;
+  }, [dates, getBikesCountForDate, propertyRoomsMap]);
+
   useEffect(() => {
     if (activeTab !== 'calendar') return;
     logCalendar('data loaded', { bookings: calendarBookings.length, dates: dates.length, visibleRange: { start: formatDate(visibleStartDate), end: formatDate(visibleEndDate) } });
@@ -3920,6 +3958,12 @@ export default function App() {
                   >
                     {prop.name}
                   </div>
+                  {prop.name === 'Neighbours' && (
+                    <div className="h-16 border-b border-slate-100 flex flex-col justify-center px-4 bg-white hover:bg-[#F9F8F2] transition-colors">
+                      <span className="font-bold text-sm" style={{ color: COLORS.darkGreen }}>🚲 Bikes</span>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-400">Capacity: 2</span>
+                    </div>
+                  )}
                   {prop.rooms.map((room) => (
                     <div
                       key={room.id}
@@ -4001,6 +4045,36 @@ export default function App() {
                 {PROPERTIES.map(prop => (
                   <React.Fragment key={prop.id}>
                     <div className="h-[46px] border-b border-slate-200 bg-white" />
+                    {prop.name === 'Neighbours' && (
+                      <div className={`flex border-b border-slate-200 h-16 relative transition-colors group bg-white hover:bg-[#F9F8F2]`}>
+                        {dates.map(date => {
+                          const dateStr = formatDate(date);
+                          const count = neighboursBikeCountMap[dateStr] || 0;
+                          const overCapacity = count > 2;
+                          const iconCount = Math.min(count, 4);
+                          const remaining = Math.max(0, count - iconCount);
+                          const icons = iconCount > 0 ? '🚲'.repeat(iconCount) : '';
+                          const showZero = count === 0;
+                          const tooltip = overCapacity ? `Over capacity: ${count} bikes (max 2)` : undefined;
+                          return (
+                            <div
+                              key={dateStr}
+                              className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''} ${overCapacity ? 'bg-red-50' : ''}`}
+                              title={tooltip}
+                            >
+                              <div className="absolute inset-0 flex flex-col items-center justify-center text-xs">
+                                {overCapacity && <span className="text-red-600 font-bold mb-0.5">⚠️</span>}
+                                <div className={`flex items-center justify-center gap-1 ${overCapacity ? 'text-red-700 font-semibold' : 'text-slate-700 font-semibold'}`}>
+                                  {icons && <span className="leading-none">{icons}</span>}
+                                  {remaining > 0 && <span className="text-[11px] text-slate-600">+{remaining}</span>}
+                                  <span className="text-sm">{showZero ? '0' : count}</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     {prop.rooms.map((room, roomIndex) => (
                       <div key={room.id} className={`flex border-b border-slate-200 h-16 relative transition-colors group ${roomIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'} hover:bg-[#F9F8F2]`}>
                         {dates.map(date => {
