@@ -4007,7 +4007,7 @@ export default function App() {
                         </button>
 
                         {isToday && (
-                          <div className="absolute inset-y-1 left-0 w-[3px] bg-[#26402E]/60 rounded-full pointer-events-none" />
+                          <div className="absolute inset-y-1 left-0 w-[3px] bg-[#d9a25c] rounded-full pointer-events-none" />
                         )}
 
                         {isHovered && (
@@ -4056,12 +4056,21 @@ export default function App() {
                           const icons = iconCount > 0 ? '🚲'.repeat(iconCount) : '';
                           const showZero = count === 0;
                           const tooltip = overCapacity ? `Over capacity: ${count} bikes (max 2)` : undefined;
+                          const isTodayCol = dateStr === TODAY_STR;
+                          const todayCellHighlight = isTodayCol
+                            ? {
+                                backgroundImage: 'linear-gradient(180deg, #fff8ed 0%, #fff3e2 100%)',
+                                boxShadow: 'inset 0 0 0 1px rgba(226, 190, 140, 0.25)',
+                              }
+                            : undefined;
                           return (
                             <div
                               key={dateStr}
                               className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''} ${overCapacity ? 'bg-red-50' : ''}`}
                               title={tooltip}
+                              style={todayCellHighlight}
                             >
+                              {isTodayCol && <div className="absolute inset-y-1 left-0 w-[3px] bg-[#d9a25c] rounded-full pointer-events-none" />}
                               <div className="absolute inset-0 flex flex-col items-center justify-center text-xs">
                                 {overCapacity && <span className="text-red-600 font-bold mb-0.5">⚠️</span>}
                                 <div className={`flex items-center justify-center gap-1 ${overCapacity ? 'text-red-700 font-semibold' : 'text-slate-700 font-semibold'}`}>
@@ -4113,9 +4122,15 @@ export default function App() {
                           const widthCalc = `calc(${colSpan * 100}% - ${gapPx}px)`;
                           const leftOffset = '0%';
                           const isTodayCol = dateStr === TODAY_STR;
+                          const todayCellHighlight = isTodayCol
+                            ? {
+                                backgroundImage: 'linear-gradient(180deg, #fff8ed 0%, #fff3e2 100%)',
+                                boxShadow: 'inset 0 0 0 1px rgba(226, 190, 140, 0.25)',
+                              }
+                            : undefined;
                           return (
-                            <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''}`} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
-                              {isTodayCol && <div className="absolute inset-y-1 left-0 w-[3px] bg-[#26402E]/60 rounded-full pointer-events-none" />}
+                            <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''}`} style={todayCellHighlight} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
+                              {isTodayCol && <div className="absolute inset-y-1 left-0 w-[3px] bg-[#d9a25c] rounded-full pointer-events-none" />}
                               {booking && shouldRenderBlock && (
                                 (() => {
                                   const stayCat = getBookingStayCategory(booking);
