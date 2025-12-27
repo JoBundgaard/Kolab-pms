@@ -71,6 +71,10 @@ const COLORS = {
 const DATE_HEADER_HEIGHT = 56; // Keeps sticky offsets aligned for headers
 const DUE_SOON_DAYS = 3; // threshold for recurring task "due soon" badge
 const CALENDAR_ERROR_CODE = 'CAL-RENDER-01';
+const HOUSEKEEPING_START_TIME = '10:00';
+const HOUSEKEEPING_END_TIME = '18:00';
+const DEFAULT_CHECKOUT_TIME = '12:00';
+const DEFAULT_CHECKIN_TIME = '15:00';
 const randomId = () => Math.random().toString(36).substr(2, 9);
 const ENABLE_HOUSEKEEPING_V2 = true;
 
@@ -261,6 +265,21 @@ const addMonths = (dateStr, months = 1) => {
   return formatDate(d);
 };
 
+const timeToMinutes = (timeStr, fallbackMinutes = 0) => {
+  if (typeof timeStr !== 'string') return fallbackMinutes;
+  const [h, m] = timeStr.split(':').map((v) => Number(v));
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return fallbackMinutes;
+  return h * 60 + m;
+};
+
+const minutesToTime = (mins) => {
+  if (!Number.isFinite(mins)) return '';
+  const clamped = Math.max(0, Math.round(mins));
+  const hours = Math.floor(clamped / 60);
+  const minutes = clamped % 60;
+  return `${`${hours}`.padStart(2, '0')}:${`${minutes}`.padStart(2, '0')}`;
+};
+
 const getDaysArray = (start, end) => {
   const arr = [];
   for(let dt = new Date(start); dt <= end; dt.setDate(dt.getDate()+1)){
@@ -334,6 +353,13 @@ function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
       .map((b) => b.roomId)
   );
 
+  const housekeepingStart = timeToMinutes(HOUSEKEEPING_START_TIME, 600);
+  const housekeepingEnd = timeToMinutes(HOUSEKEEPING_END_TIME, 1080);
+  const defaultCheckout = timeToMinutes(DEFAULT_CHECKOUT_TIME, 720);
+  const defaultCheckin = timeToMinutes(DEFAULT_CHECKIN_TIME, 900);
+
+  const priorityRank = { high: 1, normal: 2, low: 3 };
+
   const allRoomsData = ALL_ROOMS.map((room) => {
     const statusData = roomStatuses[room.id] || {};
     const storedStatus = statusData.status || 'clean';
@@ -349,17 +375,42 @@ function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
     const hasEarlyCheckIn = !!(incomingToday && incomingToday.earlyCheckIn);
     const isWeeklyServiceClean = isLongTermClean;
 
-    const needsEarlyCheckinPrep = hasEarlyCheckIn;
-
-    let calculatedPriority = 3;
+    let earliestStartMinutes = null;
+    let latestEndMinutes = null;
+    let priorityLabel = 'normal';
+    let needsCleaning = false;
 
     if (isWeeklyServiceClean) {
-      calculatedPriority = 3;
-    } else if (isArrivalOnThisDay && hasEarlyCheckIn) {
-      calculatedPriority = 1;
-    } else if (isArrivalOnThisDay) {
-      calculatedPriority = 2;
+      needsCleaning = true;
+      earliestStartMinutes = housekeepingStart;
+      latestEndMinutes = housekeepingEnd;
+      priorityLabel = 'low';
+    } else if (isCheckout) {
+      needsCleaning = true;
+      const checkoutTime = timeToMinutes(checkoutBooking?.checkOutTime, defaultCheckout);
+      earliestStartMinutes = Math.max(housekeepingStart, checkoutTime);
+      if (incomingToday) {
+        const nextCheckinTime = timeToMinutes(incomingToday.checkInTime, defaultCheckin);
+        latestEndMinutes = nextCheckinTime;
+      } else {
+        latestEndMinutes = housekeepingEnd;
+      }
+
+      if (incomingToday && hasEarlyCheckIn) {
+        priorityLabel = 'high';
+      } else {
+        priorityLabel = 'normal';
+      }
+    } else if (storedStatus === 'dirty') {
+      needsCleaning = true;
+      earliestStartMinutes = housekeepingStart;
+      latestEndMinutes = housekeepingEnd;
+      priorityLabel = 'normal';
     }
+
+    const hasScheduleConflict = Number.isFinite(earliestStartMinutes) && Number.isFinite(latestEndMinutes)
+      ? earliestStartMinutes > latestEndMinutes
+      : false;
 
     return {
       roomId: room.id,
@@ -368,48 +419,46 @@ function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
       roomType: room.type,
       status: isCheckout ? 'checkout_dirty' : storedStatus,
       assignedStaff: statusData.assignedStaff || 'Unassigned',
-      priority: statusData.priority !== undefined ? Number(statusData.priority) : calculatedPriority,
-      needsCleaning: isCheckout || storedStatus === 'dirty' || isLongTermClean,
-      isEarlyCheckinPrep: needsEarlyCheckinPrep,
+      priority: priorityRank[priorityLabel] || 2,
+      priorityLabel,
+      needsCleaning,
+      isEarlyCheckinPrep: hasEarlyCheckIn,
       isLongTermCleaning: isLongTermClean,
       isArrivalOnThisDay,
       hasEarlyCheckIn,
       isWeeklyServiceClean,
       checkoutBooking,
+      guestName: checkoutBooking?.guestName || incomingToday?.guestName || '',
+      earliestStartMinutes,
+      latestEndMinutes,
+      earliestLabel: minutesToTime(earliestStartMinutes),
+      latestLabel: minutesToTime(latestEndMinutes),
+      hasScheduleConflict,
     };
   });
 
   return allRoomsData
     .filter((r) => r.needsCleaning)
-    .sort((a, b) => a.priority - b.priority || a.roomName.localeCompare(b.roomName));
+    .sort((a, b) => (a.priority - b.priority) || (a.earliestStartMinutes ?? Infinity) - (b.earliestStartMinutes ?? Infinity) || a.roomName.localeCompare(b.roomName));
 }
 
 // Splits cleaning tasks into priority buckets for planning (arrival vs weekly with early check-in high).
-function splitTomorrowCleaningByPriority(cleaningTasksTomorrow) {
-  const high = [];
-  const normal = [];
-  const low = [];
-
-  cleaningTasksTomorrow.forEach((task) => {
-    if (task.isWeeklyServiceClean) {
-      low.push(task);
-      return;
-    }
-
-    if (task.isArrivalOnThisDay && task.hasEarlyCheckIn) {
-      high.push(task);
-      return;
-    }
-
-    if (task.isArrivalOnThisDay && !task.hasEarlyCheckIn) {
-      normal.push(task);
-      return;
-    }
-
-    normal.push(task);
+function splitCleaningByPriority(cleaningTasksList = []) {
+  const groups = { high: [], normal: [], low: [] };
+  cleaningTasksList.forEach((task) => {
+    const bucket = task.priorityLabel || 'normal';
+    if (!groups[bucket]) groups[bucket] = [];
+    groups[bucket].push(task);
   });
 
-  return { high, normal, low };
+  const sorter = (a, b) =>
+    (a.priority - b.priority) || (a.earliestStartMinutes ?? Infinity) - (b.earliestStartMinutes ?? Infinity) || a.roomName.localeCompare(b.roomName);
+
+  return {
+    high: (groups.high || []).sort(sorter),
+    normal: (groups.normal || []).sort(sorter),
+    low: (groups.low || []).sort(sorter),
+  };
 }
 
 // --- Custom Date Picker Component ---
@@ -3015,7 +3064,7 @@ export default function App() {
     normal: tomorrowNormalPriorityRooms,
     low: tomorrowLowPriorityRooms,
   } = useMemo(
-    () => splitTomorrowCleaningByPriority(cleaningTasksTomorrow),
+    () => splitCleaningByPriority(cleaningTasksTomorrow),
     [cleaningTasksTomorrow]
   );
 
@@ -3644,7 +3693,7 @@ export default function App() {
       high: todayHighPriorityRooms,
       normal: todayNormalPriorityRooms,
       low: todayLowPriorityRooms,
-    } = splitTomorrowCleaningByPriority(cleaningTasks);
+    } = splitCleaningByPriority(cleaningTasks);
 
     const findIncomingForDate = (roomId, targetDate) => bookings.find(
       (b) => b.roomId === roomId && b.checkIn === targetDate && b.status !== 'cancelled'
@@ -3678,6 +3727,9 @@ export default function App() {
             const inHouse = findInHouseForDate(task.roomId, targetDate);
             const isEarly = !!(incoming && incoming.earlyCheckIn);
             const bikeBooking = incoming?.bikeParkingNeeded ? incoming : inHouse?.bikeParkingNeeded ? inHouse : null;
+            const startLabel = task.earliestLabel || '—';
+            const endLabel = task.latestLabel || '—';
+            const conflict = task.hasScheduleConflict;
             return (
               <div key={task.roomId} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white shadow-sm">
                 <div className="space-y-1">
@@ -3689,8 +3741,10 @@ export default function App() {
                   {incoming && <div className="text-xs text-slate-600">Incoming: {incoming.guestName}</div>}
                   {inHouse && !incoming && <div className="text-xs text-slate-600">In-house: {inHouse.guestName}</div>}
                   {bikeBooking && <div className="text-xs text-slate-600">Bike parking: {bikeBooking.bikeCount || 1}</div>}
+                  <div className="text-xs text-slate-600 flex items-center gap-1"><Clock size={14} className="text-slate-500"/>Clean between {startLabel} and {endLabel}{conflict && <span className="ml-2 text-red-600 font-semibold flex items-center gap-1"><AlertTriangle size={12}/>Conflict</span>}</div>
                 </div>
                 <div className="flex flex-col items-end gap-1 text-xs">
+                  <span className={`px-2 py-1 rounded-full text-[11px] font-semibold border ${task.priorityLabel === 'high' ? 'bg-orange-50 text-orange-700 border-orange-200' : task.priorityLabel === 'low' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>{task.priorityLabel ? task.priorityLabel.toUpperCase() : 'NORMAL'}</span>
                   {task.isWeeklyServiceClean && <span className="text-blue-700 font-semibold">Weekly</span>}
                   {isEarly && <span className="text-orange-600 font-semibold flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
                   <span className={getRoomTagClasses(task.roomId, { highlightPriority: isEarly || task.hasEarlyCheckIn, highlightWeekly: task.isWeeklyServiceClean })}>
