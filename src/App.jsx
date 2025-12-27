@@ -975,6 +975,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
     const sanitizedCheckInTime = (formData.checkInTime || '').trim();
     const sanitizedCheckOutTime = (formData.checkOutTime || '').trim();
+    const finalCheckInTime = sanitizedCheckInTime || DEFAULT_CHECKIN_TIME;
+    const finalCheckOutTime = sanitizedCheckOutTime || DEFAULT_CHECKOUT_TIME;
 
     const inferredCategory = formData.stayCategory || deriveStayCategory(formData.nights);
     const isLongTermCategory = ['medium', 'long'].includes(inferredCategory);
@@ -992,8 +994,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       paymentStatus: formData.channel === 'direct' ? formData.paymentStatus : null,
       bikeParkingNeeded: !!formData.bikeParkingNeeded,
       bikeCount: normalizedBikeCount,
-      checkInTime: sanitizedCheckInTime,
-      checkOutTime: sanitizedCheckOutTime,
+      checkInTime: finalCheckInTime,
+      checkOutTime: finalCheckOutTime,
       services: sanitizedServices,
     });
   };
@@ -1336,6 +1338,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 name="checkOutTime"
                 value={formData.checkOutTime || ''}
                 onChange={handleChange}
+                placeholder={DEFAULT_CHECKOUT_TIME}
                 className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm bg-white shadow-sm"
               />
               <p className="text-xs text-slate-500 mt-1">Blank defaults to 12:00. Used for scheduling/housekeeping.</p>
@@ -1347,6 +1350,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 name="checkInTime"
                 value={formData.checkInTime || ''}
                 onChange={handleChange}
+                placeholder={DEFAULT_CHECKIN_TIME}
                 className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm bg-white shadow-sm"
               />
               <p className="text-xs text-slate-500 mt-1">Blank defaults to 15:00. Helpful for housekeeping timing.</p>
