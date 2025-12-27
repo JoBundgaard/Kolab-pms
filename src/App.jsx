@@ -725,6 +725,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     roomId: '',
     checkIn: '',
     checkOut: '',
+    checkInTime: '',
+    checkOutTime: '',
     price: '',
     nights: 0, 
     status: 'confirmed',
@@ -786,6 +788,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         ...booking,
         guestEmail: booking.guestEmail || booking.email || '',
         guestPhone: booking.guestPhone || booking.phone || '',
+        checkInTime: booking.checkInTime || '',
+        checkOutTime: booking.checkOutTime || '',
         earlyCheckIn: !!booking.earlyCheckIn,
         bikeParkingNeeded: !!booking.bikeParkingNeeded,
         bikeCount: booking.bikeCount || 1,
@@ -810,6 +814,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         roomId: rooms[0]?.id || '',
         checkIn: defaultCheckIn,
         checkOut: defaultCheckOut,
+        checkInTime: '',
+        checkOutTime: '',
         price: 500000,
         nights: defaultNights, 
         status: 'confirmed',
@@ -967,6 +973,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       .map((s) => normalizeServiceEntry(s))
       .filter((s) => s.name && !Number.isNaN(s.price) && s.qty >= 1);
 
+    const sanitizedCheckInTime = (formData.checkInTime || '').trim();
+    const sanitizedCheckOutTime = (formData.checkOutTime || '').trim();
+
     const inferredCategory = formData.stayCategory || deriveStayCategory(formData.nights);
     const isLongTermCategory = ['medium', 'long'].includes(inferredCategory);
     const finalWeeklyDay = isLongTermCategory ? formData.weeklyCleaningDay || 'monday' : '';
@@ -983,6 +992,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       paymentStatus: formData.channel === 'direct' ? formData.paymentStatus : null,
       bikeParkingNeeded: !!formData.bikeParkingNeeded,
       bikeCount: normalizedBikeCount,
+      checkInTime: sanitizedCheckInTime,
+      checkOutTime: sanitizedCheckOutTime,
       services: sanitizedServices,
     });
   };
@@ -1314,6 +1325,31 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 minDate={formData.checkIn}
                 boundaryRef={modalContentRef}
               />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Expected Check-out Time <span className="text-[11px] font-normal text-slate-500">(optional)</span></label>
+              <input
+                type="time"
+                name="checkOutTime"
+                value={formData.checkOutTime || ''}
+                onChange={handleChange}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm bg-white shadow-sm"
+              />
+              <p className="text-xs text-slate-500 mt-1">Blank defaults to 12:00. Used for scheduling/housekeeping.</p>
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Expected Check-in Time <span className="text-[11px] font-normal text-slate-500">(optional)</span></label>
+              <input
+                type="time"
+                name="checkInTime"
+                value={formData.checkInTime || ''}
+                onChange={handleChange}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm bg-white shadow-sm"
+              />
+              <p className="text-xs text-slate-500 mt-1">Blank defaults to 15:00. Helpful for housekeeping timing.</p>
             </div>
           </div>
           
