@@ -906,7 +906,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
     allBookings.forEach((b) => {
       if (b.roomId !== formData.roomId) return;
-      if (b.status === 'cancelled') return;
+      if (isCancelledStatus(b.status)) return;
       if (booking && b.id === booking.id) return;
 
       const startTs = new Date(b.checkIn).getTime();
@@ -3003,12 +3003,12 @@ export default function App() {
   }, [bookings, housekeepingDate]);
 
   const checkoutsForDate = useMemo(
-    () => (bookings || []).filter((b) => b && b.status !== 'cancelled' && formatDate(b.checkOut) === housekeepingDate),
+    () => (bookings || []).filter((b) => b && !isCancelledStatus(b.status) && formatDate(b.checkOut) === housekeepingDate),
     [bookings, housekeepingDate]
   );
 
   const checkinsForDate = useMemo(
-    () => (bookings || []).filter((b) => b && b.status !== 'cancelled' && formatDate(b.checkIn) === housekeepingDate),
+    () => (bookings || []).filter((b) => b && !isCancelledStatus(b.status) && formatDate(b.checkIn) === housekeepingDate),
     [bookings, housekeepingDate]
   );
 
@@ -3020,7 +3020,7 @@ export default function App() {
   const housekeepingTasks = useMemo(
     () =>
       normalizeHousekeepingTasks({
-        bookings: bookings || [],
+        bookings: (bookings || []).filter((b) => !isCancelledStatus(b?.status)),
         rooms: ALL_ROOMS,
         targetDate: housekeepingDate,
         overrides: housekeepingOverrides,
@@ -3128,7 +3128,7 @@ export default function App() {
     const conflictingBooking = bookings.find(existingBooking => {
       if (existingBooking.roomId !== newRoomId) return false;
       if (existingBooking.id === excludeBookingId) return false;
-      if (existingBooking.status === 'cancelled') return false;
+      if (isCancelledStatus(existingBooking.status)) return false;
 
       const existingCheckIn = new Date(existingBooking.checkIn).getTime();
       const existingCheckOut = new Date(existingBooking.checkOut).getTime(); 
