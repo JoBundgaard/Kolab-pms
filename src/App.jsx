@@ -200,6 +200,12 @@ const severityMeta = (sev) => {
 
 const formatCurrencyVND = (value = 0) => `${(Number(value) || 0).toLocaleString('vi-VN')} ₫`;
 
+const isCancelledStatus = (status) => {
+  if (!status) return false;
+  const s = String(status).toLowerCase();
+  return s === 'cancelled' || s === 'canceled' || s.startsWith('cancel');
+};
+
 // --- Helper Functions ---
 const formatDate = (date) => {
   const input = date?.toDate ? date.toDate() : date;
@@ -304,10 +310,10 @@ const getOccupiedDates = (bookings, roomId, excludeBookingId) => {
 
 const getDaySummaryForDate = (dateStr, bookings) => {
   const dayCheckIns = bookings.filter(
-    (b) => b.status !== 'cancelled' && b.checkIn === dateStr
+    (b) => !isCancelledStatus(b.status) && b.checkIn === dateStr
   );
   const dayCheckOuts = bookings.filter(
-    (b) => b.status !== 'cancelled' && b.checkOut === dateStr
+    (b) => !isCancelledStatus(b.status) && b.checkOut === dateStr
   );
 
   const earlyCheckIns = dayCheckIns.filter((b) => !!b.earlyCheckIn);
@@ -2916,6 +2922,7 @@ export default function App() {
           return { ...b, checkIn: normalizedCheckIn, checkOut: normalizedCheckOut };
         })
         .filter((b) => {
+          if (isCancelledStatus(b.status)) return false;
           if (!b.roomId) {
             console.warn('[calendar] skipping booking without roomId', { id: b.id });
             return false;
