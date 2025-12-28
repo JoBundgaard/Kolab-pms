@@ -3401,19 +3401,21 @@ export default function App() {
   };
 
   const handleDeleteBooking = async (id) => {
-    if (!confirm('Are you sure you want to delete this booking?')) return;
+    if (!confirm('Cancel this booking? It will be marked as cancelled but kept in the list.')) return;
     setSavingBookingId(id);
     try {
-      const result = await removeBooking({ db, id, timeoutMs: 6000 });
-      if (!result.ok) {
-        pushAlert({ title: 'Delete failed', message: result.message, code: result.code, raw: result.raw });
-        return;
-      }
-      setBookings((prev) => prev.filter((b) => b.id !== id));
-      pushAlert({ title: 'Booking deleted', message: 'The booking has been removed', tone: 'success' });
+      const nowIso = new Date().toISOString();
+      const payload = { status: 'cancelled', cancelledAt: nowIso, updatedAt: nowIso };
+      await setDoc(doc(db, 'bookings', id), payload, { merge: true });
+
+      setBookings((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, ...payload } : b))
+      );
+
+      pushAlert({ title: 'Booking cancelled', message: 'The booking remains in the list for history.', tone: 'success' });
     } catch (error) {
-      console.error('Error deleting booking:', error);
-      pushAlert({ title: 'Delete failed', message: error?.message || 'Unknown error', code: error?.code, raw: error });
+      console.error('Error cancelling booking:', error);
+      pushAlert({ title: 'Cancel failed', message: error?.message || 'Unknown error', code: error?.code, raw: error });
     } finally {
       setSavingBookingId(null);
     }
