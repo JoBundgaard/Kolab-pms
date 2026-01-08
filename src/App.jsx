@@ -4099,7 +4099,7 @@ export default function App() {
                     return (
                       <div
                         key={dateStr}
-                        className={`flex-1 min-w-[3rem] border-r ${isToday ? 'border-[#d9a25c]/70 bg-[#E2F05D]/12' : 'border-slate-200/60 bg-slate-100/70'}`}
+                        className={`flex-1 min-w-[3rem] border-r ${isToday ? 'border-[#d9a25c]/70 bg-[#E2F05D]/12' : 'border-slate-400/70'}`}
                         style={isToday ? { boxShadow: 'inset 0 0 0 1px rgba(217, 162, 92, 0.25)' } : undefined}
                       />
                     );
