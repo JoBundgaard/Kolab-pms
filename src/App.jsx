@@ -4068,10 +4068,7 @@ export default function App() {
                     {prop.name}
                   </div>
                   {prop.name === 'Neighbours' && (
-                    <div className="h-16 border-b border-slate-100 flex flex-col justify-center px-4 bg-white hover:bg-[#F9F8F2] transition-colors">
-                      <span className="font-bold text-sm" style={{ color: COLORS.darkGreen }}>🚲 Bikes</span>
-                      <span className="text-[10px] uppercase tracking-wide text-slate-400">Capacity: 2</span>
-                    </div>
+                    <div className="h-10 border-b border-slate-100 bg-white" />
                   )}
                   {prop.rooms.map((room) => (
                     <div
@@ -4082,14 +4079,34 @@ export default function App() {
                       <span className="text-[10px] uppercase tracking-wide text-slate-400">{room.type}</span>
                     </div>
                   ))}
+                  {prop.name === 'Neighbours' && (
+                    <div className="h-16 border-b border-slate-100 flex flex-col justify-center px-4 bg-white hover:bg-[#F9F8F2] transition-colors">
+                      <span className="font-bold text-sm" style={{ color: COLORS.darkGreen }}>🚲 Bikes</span>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-400">Capacity: 2</span>
+                    </div>
+                  )}
                 </React.Fragment>
               ))}
             </div>
 
             {/* Right pane: shared horizontal scroll for header + grid; vertical height driven by container */}
             <div className="min-w-0 overflow-x-auto" ref={timelineRef} onScroll={handleTimelineScroll}>
-              <div className="min-w-[1000px]">
-                <div className="flex border-b border-slate-300 sticky top-0 z-30 bg-white" style={{ height: DATE_HEADER_HEIGHT }}>
+              <div className="min-w-[1000px] relative">
+                <div className="absolute inset-0 pointer-events-none flex z-20">
+                  {dates.map((date) => {
+                    const dateStr = formatDate(date);
+                    const isToday = dateStr === TODAY_STR;
+                    return (
+                      <div
+                        key={dateStr}
+                        className={`flex-1 min-w-[3rem] border-r ${isToday ? 'border-[#d9a25c]/70 bg-[#E2F05D]/12' : 'border-slate-200/60'}`}
+                        style={isToday ? { boxShadow: 'inset 0 0 0 1px rgba(217, 162, 92, 0.25)' } : undefined}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="relative">
+                  <div className="flex border-b border-slate-300 sticky top-0 z-30 bg-white" style={{ height: DATE_HEADER_HEIGHT }}>
                   {dates.map(date => {
                     const dateStr = formatDate(date);
                     const isToday = date.toDateString() === new Date().toDateString();
@@ -4149,52 +4166,34 @@ export default function App() {
                       </div>
                     );
                   })}
-                </div>
+                  </div>
 
-                {PROPERTIES.map(prop => (
-                  <React.Fragment key={prop.id}>
-                    <div className="h-[46px] border-b border-slate-200 bg-white" />
-                    {prop.name === 'Neighbours' && (
-                      <div className={`flex border-b border-slate-200 h-16 relative transition-colors group bg-white hover:bg-[#F9F8F2]`}>
-                        {dates.map(date => {
-                          const dateStr = formatDate(date);
-                          const count = neighboursBikeCountMap[dateStr] || 0;
-                          const overCapacity = count > 2;
-                          const iconCount = Math.min(count, 4);
-                          const remaining = Math.max(0, count - iconCount);
-                          const icons = iconCount > 0 ? '🚲'.repeat(iconCount) : '';
-                          const showZero = count === 0;
-                          const tooltip = overCapacity ? `Over capacity: ${count} bikes (max 2)` : undefined;
-                          const isTodayCol = dateStr === TODAY_STR;
-                          const todayCellHighlight = isTodayCol
-                            ? {
-                                backgroundImage: 'linear-gradient(180deg, #fff8ed 0%, #fff3e2 100%)',
-                                boxShadow: 'inset 0 0 0 1px rgba(226, 190, 140, 0.25)',
-                              }
-                            : undefined;
-                          return (
-                            <div
-                              key={dateStr}
-                              className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''} ${overCapacity ? 'bg-red-50' : ''}`}
-                              title={tooltip}
-                              style={todayCellHighlight}
-                            >
-                              {isTodayCol && <div className="absolute inset-y-1 left-0 w-[3px] bg-[#d9a25c] rounded-full pointer-events-none" />}
-                              <div className="absolute inset-0 flex flex-col items-center justify-center text-xs">
-                                {overCapacity && <span className="text-red-600 font-bold mb-0.5">⚠️</span>}
-                                <div className={`flex items-center justify-center gap-1 ${overCapacity ? 'text-red-700 font-semibold' : 'text-slate-700 font-semibold'}`}>
-                                  {icons && <span className="leading-none">{icons}</span>}
-                                  {remaining > 0 && <span className="text-[11px] text-slate-600">+{remaining}</span>}
-                                  <span className="text-sm">{showZero ? '0' : count}</span>
-                                </div>
+                  {PROPERTIES.map(prop => (
+                    <React.Fragment key={prop.id}>
+                      <div className="h-[46px] border-b border-slate-200 bg-white" />
+
+                      {prop.name === 'Neighbours' && (
+                        <div
+                          className="flex border-b border-slate-200 h-10 sticky z-20 bg-white/90 backdrop-blur-sm"
+                          style={{ top: DATE_HEADER_HEIGHT }}
+                        >
+                          {dates.map((date) => {
+                            const dateStr = formatDate(date);
+                            const isToday = dateStr === TODAY_STR;
+                            return (
+                              <div
+                                key={dateStr}
+                                className={`flex-1 min-w-[3rem] text-[11px] font-semibold text-center border-r border-slate-200/60 flex items-center justify-center ${isToday ? 'text-[#26402E] bg-[#E2F05D]/16' : 'text-slate-500'}`}
+                              >
+                                <span className="leading-none">{date.toLocaleDateString(undefined, { day: 'numeric' })}</span>
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {prop.rooms.map((room, roomIndex) => (
-                      <div key={room.id} className={`flex border-b border-slate-200 h-16 relative transition-colors group ${roomIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'} hover:bg-[#F9F8F2]`}>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {prop.rooms.map((room, roomIndex) => (
+                        <div key={room.id} className={`flex border-b border-slate-200 h-16 relative transition-colors group ${roomIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'} hover:bg-[#F9F8F2]`}>
                         {dates.map(date => {
                           const dateStr = formatDate(date);
                           const weekdayKey = getWeekdayKey(dateStr);
@@ -4249,7 +4248,7 @@ export default function App() {
                                       ? 'ring-2 ring-amber-200'
                                       : 'ring-1 ring-white/40';
                                   return (
-                                    <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-0 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-20 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'} ${catBorder}`}
+                                    <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-30 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-40 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'} ${catBorder}`}
                                       style={{
                                         width: widthCalc,
                                         left: leftOffset,
@@ -4276,9 +4275,50 @@ export default function App() {
                           );
                         })}
                       </div>
-                    ))}
-                  </React.Fragment>
-                ))}
+                      ))}
+
+                      {prop.name === 'Neighbours' && (
+                        <div className={`flex border-b border-slate-200 h-16 relative transition-colors group bg-white hover:bg-[#F9F8F2]`}>
+                          {dates.map(date => {
+                            const dateStr = formatDate(date);
+                            const count = neighboursBikeCountMap[dateStr] || 0;
+                            const overCapacity = count > 2;
+                            const iconCount = Math.min(count, 4);
+                            const remaining = Math.max(0, count - iconCount);
+                            const icons = iconCount > 0 ? '🚲'.repeat(iconCount) : '';
+                            const showZero = count === 0;
+                            const tooltip = overCapacity ? `Over capacity: ${count} bikes (max 2)` : undefined;
+                            const isTodayCol = dateStr === TODAY_STR;
+                            const todayCellHighlight = isTodayCol
+                              ? {
+                                  backgroundImage: 'linear-gradient(180deg, #fff8ed 0%, #fff3e2 100%)',
+                                  boxShadow: 'inset 0 0 0 1px rgba(226, 190, 140, 0.25)',
+                                }
+                              : undefined;
+                            return (
+                              <div
+                                key={dateStr}
+                                className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''} ${overCapacity ? 'bg-red-50' : ''}`}
+                                title={tooltip}
+                                style={todayCellHighlight}
+                              >
+                                {isTodayCol && <div className="absolute inset-y-1 left-0 w-[3px] bg-[#d9a25c] rounded-full pointer-events-none" />}
+                                <div className="absolute inset-0 flex flex-col items-center justify-center text-xs">
+                                  {overCapacity && <span className="text-red-600 font-bold mb-0.5">⚠️</span>}
+                                  <div className={`flex items-center justify-center gap-1 ${overCapacity ? 'text-red-700 font-semibold' : 'text-slate-700 font-semibold'}`}>
+                                    {icons && <span className="leading-none">{icons}</span>}
+                                    {remaining > 0 && <span className="text-[11px] text-slate-600">+{remaining}</span>}
+                                    <span className="text-sm">{showZero ? '0' : count}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
