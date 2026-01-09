@@ -4092,7 +4092,7 @@ export default function App() {
             {/* Right pane: shared horizontal scroll for header + grid; vertical height driven by container */}
             <div className="min-w-0 overflow-x-auto" ref={timelineRef} onScroll={handleTimelineScroll}>
               <div className="min-w-[1000px] relative">
-                <div className="absolute inset-0 pointer-events-none flex z-20">
+                <div className="absolute inset-0 pointer-events-none flex z-0">
                   {dates.map((date) => {
                     const dateStr = formatDate(date);
                     const isToday = dateStr === TODAY_STR;
@@ -4105,7 +4105,7 @@ export default function App() {
                     );
                   })}
                 </div>
-                <div className="relative">
+                <div className="relative z-10">
                   <div className="flex border-b border-slate-300 sticky top-0 z-30 bg-white" style={{ height: DATE_HEADER_HEIGHT }}>
                   {dates.map(date => {
                     const dateStr = formatDate(date);
