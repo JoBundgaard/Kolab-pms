@@ -2317,6 +2317,7 @@ export default function App() {
   const [housekeepingDate, setHousekeepingDate] = useState(() => formatDate(new Date()));
   const [housekeepingOverrides, setHousekeepingOverrides] = useState({});
   const [bookingSearchTerm, setBookingSearchTerm] = useState('');
+  const autoCheckoutProcessedRef = useRef(new Set());
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -2530,6 +2531,38 @@ export default function App() {
       setGuestTagsDraft((guests[0].tags || []).join(', '));
     }
   }, [guests, selectedGuestId]);
+
+  // Auto-mark past stays as checked-out the day after departure.
+  useEffect(() => {
+    if (!bookings.length) return;
+    const todayStr = formatDate(new Date());
+    const todayTs = new Date(todayStr).getTime();
+
+    const overdue = bookings.filter((b) => {
+      if (!b?.id || !b.checkOut) return false;
+      if (['cancelled', 'checked-out'].includes(b.status)) return false;
+      if (autoCheckoutProcessedRef.current.has(b.id)) return false;
+      const checkoutTs = new Date(b.checkOut).getTime();
+      if (!Number.isFinite(checkoutTs)) return false;
+      return checkoutTs < todayTs;
+    });
+
+    if (!overdue.length) return;
+
+    overdue.forEach((b) => {
+      const nowIso = new Date().toISOString();
+      const payload = { status: 'checked-out', autoCheckedOut: true, autoCheckedOutAt: nowIso, updatedAt: nowIso };
+
+      setDoc(doc(db, 'bookings', b.id), payload, { merge: true })
+        .then(() => {
+          autoCheckoutProcessedRef.current.add(b.id);
+          setBookings((prev) => prev.map((bk) => (bk.id === b.id ? { ...bk, ...payload } : bk)));
+        })
+        .catch((err) => {
+          console.error('[auto-checkout] failed', err);
+        });
+    });
+  }, [bookings, db]);
 
   // Firestore is the single source of truth, accessed via real-time listeners
   useEffect(() => {
