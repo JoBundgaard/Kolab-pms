@@ -2316,6 +2316,7 @@ export default function App() {
   const [guestTagsDraft, setGuestTagsDraft] = useState('');
   const [housekeepingDate, setHousekeepingDate] = useState(() => formatDate(new Date()));
   const [housekeepingOverrides, setHousekeepingOverrides] = useState({});
+  const [bookingSearchTerm, setBookingSearchTerm] = useState('');
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -4369,6 +4370,8 @@ export default function App() {
 
     const todayTs = new Date(TODAY_STR).getTime();
 
+    const searchNorm = (bookingSearchTerm || '').trim().toLowerCase();
+
     const filteredBookings = bookings
       .filter((b) => {
         const stayCat = getBookingStayCategory(b);
@@ -4381,6 +4384,17 @@ export default function App() {
         if (bookingTimeFilter === 'future') return checkInTs > todayTs;
         if (bookingTimeFilter === 'past') return checkOutTs < todayTs;
         return true;
+      })
+      .filter((b) => {
+        if (!searchNorm) return true;
+        const guest = (b.guestName || '').toLowerCase();
+        const email = (b.guestEmail || '').toLowerCase();
+        const phone = (b.guestPhone || '').toLowerCase();
+        const roomName = (ALL_ROOMS.find((r) => r.id === b.roomId)?.name || '').toLowerCase();
+        const propertyName = (ALL_ROOMS.find((r) => r.id === b.roomId)?.propertyName || '').toLowerCase();
+        const channel = (b.channel || '').toLowerCase();
+        const dates = `${b.checkIn} ${b.checkOut}`.toLowerCase();
+        return [guest, email, phone, roomName, propertyName, channel, dates].some((field) => field.includes(searchNorm));
       })
       .sort((a, b) => {
         const rankA = statusRank[a.status] ?? 5;
@@ -4403,9 +4417,15 @@ export default function App() {
           <div className="flex justify-between items-center gap-4 flex-wrap">
             <h2 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>All Bookings</h2>
             <div className="flex items-center gap-3 flex-wrap">
-              <div className="relative">
-                   <input type="text" placeholder="Search guest..." className="pl-10 pr-4 py-2.5 border border-slate-300 rounded-full text-sm focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none w-64 shadow-sm bg-white" />
-                   <Search size={18} className="absolute left-3.5 top-3 text-slate-400" />
+                  <div className="relative">
+                    <input
+                   type="text"
+                   value={bookingSearchTerm}
+                   onChange={(e) => setBookingSearchTerm(e.target.value)}
+                   placeholder="Search guest, room, channel, dates"
+                   className="pl-10 pr-4 py-2.5 border border-slate-300 rounded-full text-sm focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none w-64 shadow-sm bg-white"
+                    />
+                    <Search size={18} className="absolute left-3.5 top-3 text-slate-400" />
               </div>
               <select
                 value={bookingCategoryFilter}
