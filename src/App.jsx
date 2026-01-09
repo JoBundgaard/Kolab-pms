@@ -4170,11 +4170,11 @@ export default function App() {
 
                   {PROPERTIES.map(prop => (
                     <React.Fragment key={prop.id}>
-                      <div className="h-[46px] border-b border-slate-200 bg-white" />
+                      <div className="h-[46px] border-b border-slate-200 bg-white/80" />
 
                       {prop.name === 'Neighbours' && (
                         <div
-                          className="flex border-b border-slate-200 h-10 sticky z-20 bg-white/90 backdrop-blur-sm"
+                          className="flex border-b border-slate-200 h-10 sticky z-20 bg-white/80 backdrop-blur-sm"
                           style={{ top: DATE_HEADER_HEIGHT }}
                         >
                           {dates.map((date) => {
@@ -4193,7 +4193,7 @@ export default function App() {
                       )}
 
                       {prop.rooms.map((room, roomIndex) => (
-                        <div key={room.id} className={`flex border-b border-slate-200 h-16 relative transition-colors group ${roomIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'} hover:bg-[#F9F8F2]`}>
+                        <div key={room.id} className={`flex border-b border-slate-200 h-16 relative transition-colors group ${roomIndex % 2 === 0 ? 'bg-white/70' : 'bg-slate-50/70'} hover:bg-[#F9F8F2]/80`}>
                         {dates.map(date => {
                           const dateStr = formatDate(date);
                           const weekdayKey = getWeekdayKey(dateStr);
@@ -4278,7 +4278,7 @@ export default function App() {
                       ))}
 
                       {prop.name === 'Neighbours' && (
-                        <div className={`flex border-b border-slate-200 h-16 relative transition-colors group bg-white hover:bg-[#F9F8F2]`}>
+                        <div className={`flex border-b border-slate-200 h-16 relative transition-colors group bg-white/70 hover:bg-[#F9F8F2]/80`}>
                           {dates.map(date => {
                             const dateStr = formatDate(date);
                             const count = neighboursBikeCountMap[dateStr] || 0;
