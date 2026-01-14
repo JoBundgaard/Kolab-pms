@@ -2318,6 +2318,7 @@ export default function App() {
   const [housekeepingOverrides, setHousekeepingOverrides] = useState({});
   const [bookingSearchTerm, setBookingSearchTerm] = useState('');
   const autoCheckoutProcessedRef = useRef(new Set());
+  const autoCheckinProcessedRef = useRef(new Set());
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -2560,6 +2561,38 @@ export default function App() {
         })
         .catch((err) => {
           console.error('[auto-checkout] failed', err);
+        });
+    });
+  }, [bookings, db]);
+
+  // Auto-mark overdue arrivals as checked-in the day after their check-in date.
+  useEffect(() => {
+    if (!bookings.length) return;
+    const todayStr = formatDate(new Date());
+    const todayTs = new Date(todayStr).getTime();
+
+    const overdueArrivals = bookings.filter((b) => {
+      if (!b?.id || !b.checkIn) return false;
+      if (['cancelled', 'checked-in', 'checked-out'].includes(b.status)) return false;
+      if (autoCheckinProcessedRef.current.has(b.id)) return false;
+      const checkinTs = new Date(b.checkIn).getTime();
+      if (!Number.isFinite(checkinTs)) return false;
+      return checkinTs < todayTs;
+    });
+
+    if (!overdueArrivals.length) return;
+
+    overdueArrivals.forEach((b) => {
+      const nowIso = new Date().toISOString();
+      const payload = { status: 'checked-in', autoCheckedIn: true, autoCheckedInAt: nowIso, updatedAt: nowIso };
+
+      setDoc(doc(db, 'bookings', b.id), payload, { merge: true })
+        .then(() => {
+          autoCheckinProcessedRef.current.add(b.id);
+          setBookings((prev) => prev.map((bk) => (bk.id === b.id ? { ...bk, ...payload } : bk)));
+        })
+        .catch((err) => {
+          console.error('[auto-checkin] failed', err);
         });
     });
   }, [bookings, db]);
