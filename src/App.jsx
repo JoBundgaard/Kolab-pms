@@ -78,6 +78,38 @@ const DEFAULT_CHECKIN_TIME = '15:00';
 const randomId = () => Math.random().toString(36).substr(2, 9);
 const ENABLE_HOUSEKEEPING_V2 = true;
 
+// Baseline 2025 Townhouse financials (monthly, VND, VAT-inclusive)
+const TOWNHOUSE_2025_FINANCIALS = [
+  { monthIdx: 0, month: 'Jan', revenue: 88299205, opex: 51851167, ebitda: 36448039, ownerCashflow: 16448039 },
+  { monthIdx: 1, month: 'Feb', revenue: 82781964, opex: 50779449, ebitda: 32002515, ownerCashflow: 12002515 },
+  { monthIdx: 2, month: 'Mar', revenue: 96755315, opex: 55247710, ebitda: 41507605, ownerCashflow: 21507605 },
+  { monthIdx: 3, month: 'Apr', revenue: 90101992, opex: 55776111, ebitda: 34325881, ownerCashflow: 14325881 },
+  { monthIdx: 4, month: 'May', revenue: 89375358, opex: 58615049, ebitda: 30760309, ownerCashflow: 10760309 },
+  { monthIdx: 5, month: 'Jun', revenue: 84489906, opex: 57032031, ebitda: 27457875, ownerCashflow: 7457875 },
+  { monthIdx: 6, month: 'Jul', revenue: 90681580, opex: 55924408, ebitda: 34757172, ownerCashflow: 14757172 },
+  { monthIdx: 7, month: 'Aug', revenue: 94589401, opex: 57266102, ebitda: 37323299, ownerCashflow: 17323299 },
+  { monthIdx: 8, month: 'Sep', revenue: 88619589, opex: 57714340, ebitda: 30905249, ownerCashflow: 10905249 },
+  { monthIdx: 9, month: 'Oct', revenue: 98807325, opex: 59138330, ebitda: 39668995, ownerCashflow: 19668995 },
+  { monthIdx: 10, month: 'Nov', revenue: 97270197, opex: 60052559, ebitda: 37217638, ownerCashflow: 17217638 },
+  { monthIdx: 11, month: 'Dec', revenue: 115246951, opex: 66290886, ebitda: 48956065, ownerCashflow: 28956065 },
+];
+
+// Baseline 2025 Townhouse operating KPIs (monthly)
+const TOWNHOUSE_2025_KPIS = [
+  { monthIdx: 0, occupancyPct: 97.78, adr: 486879, revpar: 490551, goppar: 391673 },
+  { monthIdx: 1, occupancyPct: 98.81, adr: 498519, revpar: 492750, goppar: 427259 },
+  { monthIdx: 2, occupancyPct: 96.24, adr: 548273, revpar: 516889, goppar: 409934 },
+  { monthIdx: 3, occupancyPct: 97.22, adr: 516672, revpar: 500565, goppar: 426534 },
+  { monthIdx: 4, occupancyPct: 98.39, adr: 494595, revpar: 480513, goppar: 428038 },
+  { monthIdx: 5, occupancyPct: 97.78, adr: 480742, revpar: 468431, goppar: 433511 },
+  { monthIdx: 6, occupancyPct: 99.46, adr: 506794, revpar: 487533, goppar: 413572 },
+  { monthIdx: 7, occupancyPct: 98.00, adr: 533226, revpar: 508543, goppar: 415409 },
+  { monthIdx: 8, occupancyPct: 95.56, adr: 512101, revpar: 473759, goppar: 431746 },
+  { monthIdx: 9, occupancyPct: 97.31, adr: 547475, revpar: 531220, goppar: 425475 },
+  { monthIdx: 10, occupancyPct: 95.56, adr: 566107, revpar: 565524, goppar: 444736 },
+  { monthIdx: 11, occupancyPct: 96.77, adr: 641764, revpar: 619607, goppar: 463929 },
+];
+
 const SERVICE_PRESETS = [
   { key: 'laundry', name: 'Laundry service', price: 90000 },
   { key: 'extra_cleaning', name: 'Extra cleaning', price: 100000 },
@@ -3743,6 +3775,7 @@ export default function App() {
   const calculateStats = (rangeKey, customStart, customEnd) => {
     const msInDay = 86400000;
     const today = new Date();
+    const currentYear = today.getFullYear();
     const startOfWeek = (d) => {
       const copy = new Date(d);
       copy.setHours(0, 0, 0, 0);
@@ -3873,7 +3906,7 @@ export default function App() {
 
     // Revenue trend for context (last 6 months)
     const currentMonth = today.getMonth();
-    const currentYear = today.getFullYear();
+    const trendYear = today.getFullYear();
     const last6Months = [];
     for (let i = 5; i >= 0; i--) {
       const d = new Date(currentYear, currentMonth - i, 1);
@@ -3909,6 +3942,74 @@ export default function App() {
             ? 'Custom range'
             : 'This week';
 
+    // Townhouse YOY vs 2025
+    const townhouseRooms = ALL_ROOMS.filter((r) => r.propertyName === 'Townhouse');
+    const townhouseBookings = bookings.filter((b) => {
+      const room = ALL_ROOMS.find((r) => r.id === b.roomId);
+      return room?.propertyName === 'Townhouse' && b.status !== 'cancelled';
+    });
+
+    const overlapNightsRange = (booking, start, end) => {
+      const checkIn = clampDate(booking.checkIn);
+      const checkOut = clampDate(booking.checkOut);
+      if (!checkIn || !checkOut) return 0;
+      const s = checkIn > start ? checkIn : start;
+      const e = checkOut < end ? checkOut : end;
+      const diff = e - s;
+      return diff > 0 ? Math.round(diff / msInDay) : 0;
+    };
+
+    const townhouseYoyMonths = Array.from({ length: 12 }, (_, monthIdx) => {
+      const mStart = new Date(currentYear, monthIdx, 1);
+      const mEnd = new Date(currentYear, monthIdx + 1, 1);
+      const daysInMonth = Math.round((mEnd - mStart) / msInDay);
+      const capacityNights = Math.max(1, townhouseRooms.length * daysInMonth);
+
+      let nights = 0;
+      let revenueMonth = 0;
+
+      townhouseBookings.forEach((b) => {
+        const overlap = overlapNightsRange(b, mStart, mEnd);
+        if (overlap <= 0) return;
+        nights += overlap;
+        const totalNights = b.nights || calculateNights(b.checkIn, b.checkOut) || 1;
+        const price = Number(b.price) || 0;
+        const prorated = price * (overlap / totalNights);
+        revenueMonth += prorated;
+      });
+
+      const occupancy = Math.min(100, Math.round((nights / capacityNights) * 100));
+      const adrMonth = nights > 0 ? Math.round(revenueMonth / nights) : 0;
+      const revparMonth = Math.round(revenueMonth / capacityNights);
+
+      const baselineFin = TOWNHOUSE_2025_FINANCIALS.find((f) => f.monthIdx === monthIdx);
+      const baselineKpi = TOWNHOUSE_2025_KPIS.find((k) => k.monthIdx === monthIdx);
+      const baseRevenue = baselineFin?.revenue || 0;
+      const revenueDeltaPct = baseRevenue ? Math.round(((revenueMonth - baseRevenue) / baseRevenue) * 100) : null;
+      return {
+        monthIdx,
+        label: mStart.toLocaleString('default', { month: 'short' }),
+        revenueCurrent: Math.round(revenueMonth),
+        revenueBaseline: baseRevenue,
+        revenueDeltaPct,
+        occupancyCurrent: occupancy,
+        occupancyBaseline: baselineKpi?.occupancyPct || null,
+        adrCurrent: adrMonth,
+        revparCurrent: revparMonth,
+        baselineRevpar: baselineKpi?.revpar || null,
+        baselineAdr: baselineKpi?.adr || null,
+        baselineOpex: baselineFin?.opex || null,
+        baselineEbitda: baselineFin?.ebitda || null,
+      };
+    });
+
+    const ytdMonths = townhouseYoyMonths.filter((m) => m.monthIdx <= today.getMonth());
+    const ytdRevenueCurrent = ytdMonths.reduce((s, m) => s + m.revenueCurrent, 0);
+    const ytdRevenueBaseline = ytdMonths.reduce((s, m) => s + m.revenueBaseline, 0);
+    const ytdDeltaPct = ytdRevenueBaseline ? Math.round(((ytdRevenueCurrent - ytdRevenueBaseline) / ytdRevenueBaseline) * 100) : null;
+    const ytdOccCurrent = ytdMonths.length ? Math.round(ytdMonths.reduce((s, m) => s + (m.occupancyCurrent || 0), 0) / ytdMonths.length) : 0;
+    const ytdOccBaseline = ytdMonths.length ? Math.round(ytdMonths.reduce((s, m) => s + (m.occupancyBaseline || 0), 0) / ytdMonths.length) : 0;
+
     return {
       rangeLabel,
       rangeStartStr,
@@ -3930,6 +4031,15 @@ export default function App() {
       sameDayTurnovers,
       last6Months,
       insights,
+      townhouseYoy: {
+        currentYear,
+        months: townhouseYoyMonths,
+        ytdRevenueCurrent,
+        ytdRevenueBaseline,
+        ytdDeltaPct,
+        ytdOccCurrent,
+        ytdOccBaseline,
+      },
     };
   };
 
@@ -5639,6 +5749,8 @@ export default function App() {
     const channelEntries = Object.entries(stats.channelBreakdown).sort((a, b) => b[1] - a[1]);
     const totalChannels = channelEntries.reduce((sum, [, v]) => sum + v, 0) || 1;
     const stayMixTotal = Object.values(stats.stayMix).reduce((sum, v) => sum + v, 0) || 1;
+    const fmtVnd = (val) => `${Math.round(val).toLocaleString('vi-VN')} ₫`;
+    const fmtDelta = (pct) => pct === null || pct === undefined ? '–' : `${pct > 0 ? '+' : ''}${pct}%`;
 
     const rangeTabs = [
       { id: 'this-week', label: 'This week' },
@@ -5846,6 +5958,62 @@ export default function App() {
               <p className="text-sm text-slate-600">Use for pricing and availability strategy.</p>
             </div>
           </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-5">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="font-serif font-bold text-xl" style={{ color: COLORS.darkGreen }}>Townhouse YoY vs 2025</h3>
+              <p className="text-sm text-slate-500">Monthly revenue and occupancy compared to 2025 baseline.</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm min-w-[260px]">
+              <div className="bg-[#F9F8F2] border border-slate-200 rounded-xl p-3">
+                <div className="text-xs uppercase text-slate-500">YTD revenue</div>
+                <div className="text-lg font-bold text-slate-800">{fmtVnd(stats.townhouseYoy.ytdRevenueCurrent)}</div>
+                <div className="text-xs text-slate-500">vs 2025: {fmtDelta(stats.townhouseYoy.ytdDeltaPct)}</div>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-3">
+                <div className="text-xs uppercase text-slate-500">YTD occupancy</div>
+                <div className="text-lg font-bold text-slate-800">{stats.townhouseYoy.ytdOccCurrent}%</div>
+                <div className="text-xs text-slate-500">2025 avg {stats.townhouseYoy.ytdOccBaseline}%</div>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-3">
+                <div className="text-xs uppercase text-slate-500">Baseline expenses</div>
+                <div className="text-lg font-bold text-slate-800">{fmtVnd(TOWNHOUSE_2025_FINANCIALS.reduce((s, m) => s + m.opex, 0) / 12)}</div>
+                <div className="text-xs text-slate-500">2025 average monthly opex (current opex not tracked)</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-auto">
+            <table className="w-full text-sm text-slate-700">
+              <thead className="text-xs uppercase text-slate-500 border-b">
+                <tr>
+                  <th className="py-2 text-left">Month</th>
+                  <th className="py-2 text-right">Revenue</th>
+                  <th className="py-2 text-right">vs 2025</th>
+                  <th className="py-2 text-right">Occ.</th>
+                  <th className="py-2 text-right">Occ. 2025</th>
+                  <th className="py-2 text-right">ADR</th>
+                  <th className="py-2 text-right">ADR 2025</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.townhouseYoy.months.map((m) => (
+                  <tr key={m.monthIdx} className="border-b last:border-0">
+                    <td className="py-2">{m.label}</td>
+                    <td className="py-2 text-right">{fmtVnd(m.revenueCurrent)}</td>
+                    <td className={`py-2 text-right font-semibold ${m.revenueDeltaPct > 0 ? 'text-emerald-600' : m.revenueDeltaPct < 0 ? 'text-red-600' : 'text-slate-600'}`}>{fmtDelta(m.revenueDeltaPct)}</td>
+                    <td className="py-2 text-right">{m.occupancyCurrent}%</td>
+                    <td className="py-2 text-right text-slate-500">{m.occupancyBaseline ? `${m.occupancyBaseline}%` : '–'}</td>
+                    <td className="py-2 text-right">{fmtVnd(m.adrCurrent)}</td>
+                    <td className="py-2 text-right text-slate-500">{m.baselineAdr ? fmtVnd(m.baselineAdr) : '–'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="text-xs text-slate-500">Notes: VAT included in revenue. Current expenses not tracked in PMS; baseline opex shown for cost-creep awareness. RevPAR/GOPPAR baselines available in source data if needed for deeper margin analysis.</div>
         </div>
       </div>
     );
