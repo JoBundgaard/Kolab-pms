@@ -2319,6 +2319,9 @@ export default function App() {
   const [bookingSearchTerm, setBookingSearchTerm] = useState('');
   const autoCheckoutProcessedRef = useRef(new Set());
   const autoCheckinProcessedRef = useRef(new Set());
+  const [statsRange, setStatsRange] = useState('this-week'); // 'this-week' | 'this-month' | 'last-30' | 'custom'
+  const [customStatsStart, setCustomStatsStart] = useState(formatDate(new Date()));
+  const [customStatsEnd, setCustomStatsEnd] = useState(formatDate(new Date()));
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -3737,65 +3740,200 @@ export default function App() {
   };
 
   // --- STATISTICS CALCULATIONS ---
-  const calculateStats = () => {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-    const last6Months = [];
+  const calculateStats = (rangeKey, customStart, customEnd) => {
+    const msInDay = 86400000;
+    const today = new Date();
+    const startOfWeek = (d) => {
+      const copy = new Date(d);
+      copy.setHours(0, 0, 0, 0);
+      const day = (copy.getDay() + 6) % 7; // Monday as start
+      copy.setDate(copy.getDate() - day);
+      return copy;
+    };
+    const addDays = (d, days) => new Date(d.getTime() + days * msInDay);
+    const clampDate = (input) => {
+      const d = new Date(input);
+      if (Number.isNaN(d.getTime())) return null;
+      d.setHours(0, 0, 0, 0);
+      return d;
+    };
 
+    let rangeStart;
+    let rangeEnd;
+    if (rangeKey === 'this-month') {
+      rangeStart = new Date(today.getFullYear(), today.getMonth(), 1);
+      rangeEnd = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    } else if (rangeKey === 'last-30') {
+      rangeStart = addDays(today, -29);
+      rangeEnd = addDays(today, 1);
+    } else if (rangeKey === 'custom') {
+      const cStart = clampDate(customStart);
+      const cEnd = clampDate(customEnd ? addDays(new Date(customEnd), 1) : customEnd);
+      rangeStart = cStart || startOfWeek(today);
+      rangeEnd = cEnd && cEnd > rangeStart ? cEnd : addDays(rangeStart, 7);
+    } else {
+      rangeStart = startOfWeek(today);
+      rangeEnd = addDays(rangeStart, 7);
+    }
+
+    const rangeDays = Math.max(1, Math.round((rangeEnd - rangeStart) / msInDay));
+    const rangeStartStr = formatDate(rangeStart);
+    const rangeEndStr = formatDate(addDays(rangeEnd, -1));
+
+    const overlapNights = (booking) => {
+      const checkIn = clampDate(booking.checkIn);
+      const checkOut = clampDate(booking.checkOut);
+      if (!checkIn || !checkOut) return 0;
+      const start = checkIn > rangeStart ? checkIn : rangeStart;
+      const end = checkOut < rangeEnd ? checkOut : rangeEnd;
+      const diff = end - start;
+      return diff > 0 ? Math.round(diff / msInDay) : 0;
+    };
+
+    const overlapping = bookings
+      .map((b) => ({ ...b, _overlapNights: overlapNights(b) }))
+      .filter((b) => b._overlapNights > 0);
+
+    const active = overlapping.filter((b) => b.status !== 'cancelled');
+
+    const roomNightsAvailable = Math.max(1, ALL_ROOMS.length * rangeDays);
+    const roomNightsBooked = active.reduce((sum, b) => sum + (b._overlapNights || 0), 0);
+    const revenue = active.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+    const avgLengthOfStay = active.length ? (roomNightsBooked / active.length).toFixed(1) : '0';
+    const adr = roomNightsBooked ? revenue / roomNightsBooked : 0;
+    const revPar = revenue / roomNightsAvailable;
+    const occupancyRate = Math.min(100, Math.round((roomNightsBooked / roomNightsAvailable) * 100));
+
+    const leadTimes = active
+      .map((b) => {
+        if (!b.createdAt || !b.checkIn) return null;
+        const created = clampDate(b.createdAt);
+        const checkIn = clampDate(b.checkIn);
+        if (!created || !checkIn) return null;
+        const diffDays = Math.max(0, Math.round((checkIn - created) / msInDay));
+        return diffDays;
+      })
+      .filter((v) => v !== null);
+    const avgLeadTime = leadTimes.length ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length) : 0;
+
+    const cancelled = overlapping.filter((b) => b.status === 'cancelled').length;
+    const cancellationRate = overlapping.length ? Math.round((cancelled / overlapping.length) * 100) : 0;
+
+    const dayKeys = Array.from({ length: rangeDays }, (_, i) => formatDate(addDays(rangeStart, i)));
+    const checkInCounts = Object.fromEntries(dayKeys.map((d) => [d, 0]));
+    const checkOutCounts = Object.fromEntries(dayKeys.map((d) => [d, 0]));
+
+    active.forEach((b) => {
+      if (checkInCounts[b.checkIn] !== undefined) checkInCounts[b.checkIn] += 1;
+      if (checkOutCounts[b.checkOut] !== undefined) checkOutCounts[b.checkOut] += 1;
+    });
+
+    const turnoverDays = dayKeys.map((d) => ({
+      date: d,
+      checkIns: checkInCounts[d] || 0,
+      checkOuts: checkOutCounts[d] || 0,
+    })).map((d) => ({ ...d, total: d.checkIns + d.checkOuts }));
+
+    const peakTurnover = turnoverDays.reduce((max, d) => (d.total > max.total ? d : max), { date: rangeStartStr, total: 0, checkIns: 0, checkOuts: 0 });
+    const sameDayTurnovers = turnoverDays.filter((d) => d.checkIns > 0 && d.checkOuts > 0).length;
+
+    const stayMix = active.reduce((acc, b) => {
+      const cat = getBookingStayCategory(b);
+      acc[cat] = (acc[cat] || 0) + 1;
+      return acc;
+    }, {});
+
+    const channelBreakdown = active.reduce((acc, b) => {
+      const ch = (b.channel || 'unknown').toLowerCase();
+      acc[ch] = (acc[ch] || 0) + 1;
+      return acc;
+    }, {});
+
+    const propertyLoad = ALL_ROOMS.reduce((acc, room) => {
+      const key = room.propertyName || 'Unknown';
+      if (!acc[key]) {
+        acc[key] = { rooms: 0, nights: 0 };
+      }
+      acc[key].rooms += 1;
+      return acc;
+    }, {});
+
+    active.forEach((b) => {
+      const room = ALL_ROOMS.find((r) => r.id === b.roomId);
+      const key = room?.propertyName || 'Unknown';
+      if (!propertyLoad[key]) propertyLoad[key] = { rooms: 0, nights: 0 };
+      propertyLoad[key].nights += b._overlapNights || 0;
+    });
+
+    const propertyLoadArray = Object.entries(propertyLoad).map(([name, data]) => {
+      const capacityNights = Math.max(1, data.rooms * rangeDays);
+      const occupancy = Math.min(100, Math.round((data.nights / capacityNights) * 100));
+      return { name, occupancy, nights: data.nights, rooms: data.rooms };
+    });
+
+    // Revenue trend for context (last 6 months)
+    const currentMonth = today.getMonth();
+    const currentYear = today.getFullYear();
+    const last6Months = [];
     for (let i = 5; i >= 0; i--) {
       const d = new Date(currentYear, currentMonth - i, 1);
       const monthName = d.toLocaleString('default', { month: 'short' });
       const monthIdx = d.getMonth();
       const year = d.getFullYear();
-
       const monthlyRevenue = bookings
-        .filter(b => {
+        .filter((b) => {
           const bDate = new Date(b.checkIn);
           return bDate.getMonth() === monthIdx && bDate.getFullYear() === year && b.status !== 'cancelled';
         })
         .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
-
       last6Months.push({ month: monthName, revenue: monthlyRevenue });
     }
 
-    const revenueByProp = { Townhouse: 0, Neighbours: 0, 'Unknown property': 0 };
-    bookings.forEach(b => {
-        if(b.status === 'cancelled') return;
-        const room = ALL_ROOMS.find(r => r.id === b.roomId);
-      const propName = room?.propertyName || 'Unknown property';
-      if (revenueByProp[propName] === undefined) revenueByProp[propName] = 0;
-      revenueByProp[propName] += (Number(b.price) || 0);
-    });
+    const insights = [];
+    if (occupancyRate >= 85) insights.push(`Occupancy is high at ${occupancyRate}% for ${rangeStartStr}–${rangeEndStr}. Keep an eye on turnover capacity.`);
+    if (occupancyRate <= 55) insights.push(`Occupancy is softer at ${occupancyRate}%. Consider promotions or adjusting minimum stays.`);
+    if (peakTurnover.total >= Math.max(4, Math.round(ALL_ROOMS.length * 0.4))) insights.push(`${peakTurnover.date} has the heaviest movement (${peakTurnover.total} moves). Plan staffing and cleaning accordingly.`);
+    const shortShare = active.length ? Math.round(((stayMix.short || 0) / active.length) * 100) : 0;
+    if (shortShare >= 60) insights.push(`Short stays dominate (${shortShare}%). Expect higher turnover effort.`);
+    if (cancellationRate >= 15) insights.push(`Cancellations are at ${cancellationRate}%. Review channel policies and payment terms.`);
+    const leadInsight = avgLeadTime <= 2 ? 'very short' : avgLeadTime <= 5 ? 'short' : null;
+    if (leadInsight) insights.push(`Lead time is ${leadInsight} (avg ${avgLeadTime} days). Keep prices dynamic for late demand.`);
+    if (!insights.length) insights.push('Stable period. Keep monitoring channel mix and peak turnover days.');
 
-    const totalRoomNightsAvailable = ALL_ROOMS.length * 30; 
-    const currentMonthNightsBooked = bookings
-        .filter(b => {
-            const bDate = new Date(b.checkIn);
-            return bDate.getMonth() === currentMonth && bDate.getFullYear() === currentYear && b.status !== 'cancelled';
-        })
-        .reduce((sum, b) => sum + (Number(b.nights) || 0), 0);
-    
-    const occupancyRate = Math.min(100, Math.round((currentMonthNightsBooked / totalRoomNightsAvailable) * 100));
+    const rangeLabel =
+      rangeKey === 'this-month'
+        ? 'This month'
+        : rangeKey === 'last-30'
+          ? 'Last 30 days'
+          : rangeKey === 'custom'
+            ? 'Custom range'
+            : 'This week';
 
-    let totalLeadTime = 0;
-    let count = 0;
-    bookings.forEach(b => {
-        if(b.createdAt && b.checkIn) {
-            const created = new Date(b.createdAt);
-            const checkIn = new Date(b.checkIn);
-            const diffTime = Math.abs(checkIn - created);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-            totalLeadTime += diffDays;
-            count++;
-        }
-    });
-    const avgLeadTime = count > 0 ? Math.round(totalLeadTime / count) : 0;
-
-    return { last6Months, revenueByProp, occupancyRate, avgLeadTime };
+    return {
+      rangeLabel,
+      rangeStartStr,
+      rangeEndStr,
+      occupancyRate,
+      roomNightsBooked,
+      roomNightsAvailable,
+      revenue,
+      adr,
+      revPar,
+      avgLeadTime,
+      cancellationRate,
+      avgLengthOfStay,
+      stayMix,
+      channelBreakdown,
+      propertyLoad: propertyLoadArray,
+      turnoverDays,
+      peakTurnover,
+      sameDayTurnovers,
+      last6Months,
+      insights,
+    };
   };
 
-  const statsData = useMemo(() => calculateStats(), [bookings]);
+  const statsData = useMemo(() => calculateStats(statsRange, customStatsStart, customStatsEnd), [bookings, statsRange, customStatsStart, customStatsEnd]);
 
 
   // --- View Renderers ---
@@ -5496,92 +5634,220 @@ export default function App() {
 
   // --- RENDER STATS VIEW ---
   const renderStats = () => {
-    const { last6Months, revenueByProp, occupancyRate, avgLeadTime } = statsData;
-    
-    const maxRevenue = Math.max(...last6Months.map(d => d.revenue), 1000); // Avoid div by zero
+    const stats = statsData;
+    const maxRevenue = Math.max(...stats.last6Months.map((d) => d.revenue), 1000);
+    const channelEntries = Object.entries(stats.channelBreakdown).sort((a, b) => b[1] - a[1]);
+    const totalChannels = channelEntries.reduce((sum, [, v]) => sum + v, 0) || 1;
+    const stayMixTotal = Object.values(stats.stayMix).reduce((sum, v) => sum + v, 0) || 1;
+
+    const rangeTabs = [
+      { id: 'this-week', label: 'This week' },
+      { id: 'this-month', label: 'This month' },
+      { id: 'last-30', label: 'Last 30 days' },
+      { id: 'custom', label: 'Custom' },
+    ];
 
     return (
-        <div className="space-y-8">
-            <div>
-                <h2 className="text-3xl font-serif font-bold mb-2" style={{ color: COLORS.darkGreen }}>Business Statistics</h2>
-                <p className="text-slate-500">Key performance indicators for your hospitality business.</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <StatCard title="Occupancy Rate" value={`${occupancyRate}%`} icon={<Home />} subtext="Current Month Average" />
-                <StatCard title="Avg Lead Time" value={`${avgLeadTime} Days`} icon={<Clock />} subtext="Booking to Check-in" />
-                <StatCard title="Townhouse Rev." value={`${(revenueByProp.Townhouse/1000000).toFixed(1)}M`} icon={<DollarSign />} subtext="Total Revenue (All Time)" />
-                <StatCard title="Neighbours Rev." value={`${(revenueByProp.Neighbours/1000000).toFixed(1)}M`} icon={<DollarSign />} subtext="Total Revenue (All Time)" />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Revenue Chart */}
-                <div className="lg:col-span-2 bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-                    <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
-                        <TrendingUp size={20} className="mr-3 text-slate-400" />
-                        Monthly Revenue Trend (Last 6 Months)
-                    </h3>
-                    <div className="h-64 flex items-end justify-between space-x-4 mt-8">
-                        {last6Months.map((data, index) => (
-                            <div key={index} className="flex flex-col items-center flex-1 group">
-                                <div className="w-full relative flex flex-col justify-end h-full group-hover:opacity-80 transition-opacity">
-                                    <div 
-                                        className="w-full rounded-t-lg transition-all duration-500"
-                                        style={{ 
-                                            height: `${(data.revenue / maxRevenue) * 100}%`,
-                                            backgroundColor: COLORS.darkGreen,
-                                            opacity: 0.8 + (index * 0.05) // Gradient effect
-                                        }}
-                                    ></div>
-                                    {/* Tooltip on hover could go here */}
-                                </div>
-                                <span className="text-xs font-medium text-slate-500 mt-3">{data.month}</span>
-                                <span className="text-xs font-bold text-slate-700 mt-1">{(data.revenue/1000000).toFixed(1)}M</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Property Revenue Split (Simple Visual) */}
-                <div className="bg-white p-8 rounded-2xl shadow-sm border border-[#E5E7EB]">
-                    <h3 className="font-serif font-bold text-xl mb-6 flex items-center" style={{ color: COLORS.darkGreen }}>
-                        <PieChart size={20} className="mr-3 text-slate-400" />
-                        Revenue Share
-                    </h3>
-                    
-                    <div className="space-y-6 mt-8">
-                        {Object.entries(revenueByProp).map(([name, value]) => {
-                            const total = revenueByProp.Townhouse + revenueByProp.Neighbours;
-                            const percent = total > 0 ? Math.round((value / total) * 100) : 0;
-                            
-                            return (
-                                <div key={name}>
-                                    <div className="flex justify-between text-sm mb-2">
-                                        <span className="font-bold text-slate-700">{name}</span>
-                                        <span className="text-slate-500">{percent}% ({(value/1000000).toFixed(1)}M)</span>
-                                    </div>
-                                    <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-                                        <div 
-                                            className="h-full rounded-full transition-all duration-1000"
-                                            style={{ 
-                                                width: `${percent}%`, 
-                                                backgroundColor: name === 'Townhouse' ? COLORS.darkGreen : COLORS.lime 
-                                            }}
-                                        ></div>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                    <div className="mt-8 p-4 bg-yellow-50 rounded-xl border border-yellow-100 text-xs text-yellow-800 leading-relaxed">
-                        <strong>Insight:</strong> 
-                        {revenueByProp.Townhouse > revenueByProp.Neighbours 
-                            ? " Townhouse is currently your top-performing property." 
-                            : " Neighbours is leading in revenue generation."}
-                    </div>
-                </div>
-            </div>
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-3xl font-serif font-bold mb-1" style={{ color: COLORS.darkGreen }}>Operations & Performance</h2>
+            <p className="text-slate-500 text-sm">Range: {stats.rangeLabel} ({stats.rangeStartStr} – {stats.rangeEndStr})</p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {rangeTabs.map((tab) => {
+              const active = statsRange === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setStatsRange(tab.id)}
+                  className={`px-4 py-2 rounded-full text-sm font-semibold border transition-all ${active ? 'bg-[#26402E] text-[#E2F05D] border-[#26402E]' : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'}`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+            {statsRange === 'custom' && (
+              <div className="flex items-center gap-2 text-sm">
+                <input
+                  type="date"
+                  value={customStatsStart}
+                  onChange={(e) => setCustomStatsStart(e.target.value)}
+                  className="px-3 py-2 border border-slate-300 rounded-lg bg-white shadow-sm"
+                />
+                <span className="text-slate-500">to</span>
+                <input
+                  type="date"
+                  value={customStatsEnd}
+                  onChange={(e) => setCustomStatsEnd(e.target.value)}
+                  className="px-3 py-2 border border-slate-300 rounded-lg bg-white shadow-sm"
+                />
+              </div>
+            )}
+          </div>
         </div>
+
+        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
+          <div className="flex items-start gap-3 mb-3">
+            <AlertTriangle size={18} className="text-amber-500 mt-1" />
+            <div>
+              <div className="font-semibold text-slate-800">Actionable insights</div>
+              <p className="text-sm text-slate-500">Snapshot of what needs attention right now.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {stats.insights.map((msg, idx) => (
+              <div key={idx} className="bg-[#F9F8F2] border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700">• {msg}</div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard title="Occupancy" value={`${stats.occupancyRate}%`} icon={<Home />} subtext={`Room-nights: ${stats.roomNightsBooked}/${stats.roomNightsAvailable}`} />
+          <StatCard title="RevPAR" value={`${Math.round(stats.revPar).toLocaleString('vi-VN')} ₫`} icon={<DollarSign />} subtext="Revenue per available room" />
+          <StatCard title="ADR" value={`${Math.round(stats.adr).toLocaleString('vi-VN')} ₫`} icon={<TrendingUp />} subtext="Avg daily rate (stay-weighted)" />
+          <StatCard title="Lead time" value={`${stats.avgLeadTime} days`} icon={<Clock />} subtext="Avg booking → check-in" />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm lg:col-span-2">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-serif font-bold text-xl" style={{ color: COLORS.darkGreen }}>Operational load</h3>
+                <p className="text-sm text-slate-500">Turnovers and friction within the selected range.</p>
+              </div>
+              <div className="text-xs text-slate-500">Same-day turns: {stats.sameDayTurnovers}</div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+              <div className="bg-[#F9F8F2] rounded-xl p-4 border border-slate-200">
+                <div className="text-xs uppercase text-slate-500">Peak day</div>
+                <div className="text-lg font-bold text-slate-800">{stats.peakTurnover.date}</div>
+                <div className="text-sm text-slate-600">{stats.peakTurnover.total} moves ({stats.peakTurnover.checkIns} in / {stats.peakTurnover.checkOuts} out)</div>
+              </div>
+              <div className="bg-white rounded-xl p-4 border border-slate-200">
+                <div className="text-xs uppercase text-slate-500">Avg LOS</div>
+                <div className="text-lg font-bold text-slate-800">{stats.avgLengthOfStay} nights</div>
+                <div className="text-sm text-slate-600">Shorter stays increase workload</div>
+              </div>
+              <div className="bg-white rounded-xl p-4 border border-slate-200">
+                <div className="text-xs uppercase text-slate-500">Cancellation rate</div>
+                <div className="text-lg font-bold text-slate-800">{stats.cancellationRate}%</div>
+                <div className="text-sm text-slate-600">Of bookings touching this range</div>
+              </div>
+            </div>
+            <div className="overflow-auto">
+              <table className="w-full text-sm text-slate-700">
+                <thead className="text-xs uppercase text-slate-500 border-b">
+                  <tr><th className="py-2 text-left">Date</th><th className="py-2 text-right">Check-ins</th><th className="py-2 text-right">Check-outs</th><th className="py-2 text-right">Total moves</th></tr>
+                </thead>
+                <tbody>
+                  {stats.turnoverDays.map((d) => (
+                    <tr key={d.date} className="border-b last:border-0">
+                      <td className="py-2">{d.date}</td>
+                      <td className="py-2 text-right">{d.checkIns}</td>
+                      <td className="py-2 text-right">{d.checkOuts}</td>
+                      <td className="py-2 text-right font-semibold">{d.total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-5">
+            <div>
+              <h3 className="font-serif font-bold text-xl" style={{ color: COLORS.darkGreen }}>Property load</h3>
+              <p className="text-sm text-slate-500">Occupancy spread by property.</p>
+            </div>
+            <div className="space-y-4">
+              {stats.propertyLoad.map((p) => (
+                <div key={p.name}>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="font-semibold text-slate-800">{p.name}</span>
+                    <span className="text-slate-500">{p.occupancy}% · {p.nights} nights</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${p.occupancy}%`, backgroundColor: COLORS.darkGreen }}></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t pt-4">
+              <h4 className="text-sm font-bold text-slate-800 mb-2">Stay mix</h4>
+              <div className="space-y-2">
+                {['short', 'medium', 'long'].map((k) => {
+                  const val = stats.stayMix[k] || 0;
+                  const pct = Math.round((val / stayMixTotal) * 100);
+                  const label = k === 'short' ? 'Short' : k === 'medium' ? 'Medium' : 'Long';
+                  return (
+                    <div key={k} className="flex items-center justify-between text-sm">
+                      <span className="text-slate-700">{label}</span>
+                      <span className="font-semibold text-slate-800">{pct}% ({val})</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4 lg:col-span-2">
+            <div className="flex items-center gap-2">
+              <BarChart2 size={18} className="text-slate-400" />
+              <div>
+                <h3 className="font-serif font-bold text-xl" style={{ color: COLORS.darkGreen }}>Recent revenue trend</h3>
+                <p className="text-sm text-slate-500">Last 6 months (context, not target-based).</p>
+              </div>
+            </div>
+            <div className="h-56 flex items-end justify-between space-x-4 mt-4">
+              {stats.last6Months.map((data, index) => (
+                <div key={index} className="flex flex-col items-center flex-1 group">
+                  <div className="w-full relative flex flex-col justify-end h-full group-hover:opacity-80 transition-opacity">
+                    <div
+                      className="w-full rounded-t-lg transition-all duration-500"
+                      style={{
+                        height: `${(data.revenue / maxRevenue) * 100}%`,
+                        backgroundColor: COLORS.darkGreen,
+                        opacity: 0.85,
+                      }}
+                    ></div>
+                  </div>
+                  <span className="text-xs font-medium text-slate-500 mt-2">{data.month}</span>
+                  <span className="text-xs font-bold text-slate-700 mt-1">{(data.revenue / 1000000).toFixed(1)}M</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+            <div>
+              <h3 className="font-serif font-bold text-xl" style={{ color: COLORS.darkGreen }}>Booking behavior</h3>
+              <p className="text-sm text-slate-500">Channel mix and lead patterns.</p>
+            </div>
+            <div className="space-y-3">
+              {channelEntries.map(([channel, count]) => {
+                const pct = Math.round((count / totalChannels) * 100);
+                const label = channel === 'coliving' ? 'Coliving.com' : channel === 'direct' ? 'Direct' : channel;
+                return (
+                  <div key={channel} className="flex items-center justify-between text-sm">
+                    <span className="text-slate-700 capitalize">{label}</span>
+                    <span className="font-semibold text-slate-800">{pct}% ({count})</span>
+                  </div>
+                );
+              })}
+              {!channelEntries.length && <div className="text-sm text-slate-500">No channel data in range.</div>}
+            </div>
+            <div className="pt-2 border-t">
+              <div className="text-xs uppercase text-slate-500">Avg lead time</div>
+              <div className="text-lg font-bold text-slate-800">{stats.avgLeadTime} days</div>
+              <p className="text-sm text-slate-600">Use for pricing and availability strategy.</p>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   };
 
