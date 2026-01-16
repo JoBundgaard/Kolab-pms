@@ -142,6 +142,38 @@ const NEIGHBOURS_2025_KPIS = [
   { monthIdx: 11, occupancyPct: 98.62, adr: 581212, revpar: 574019, goppar: 431909 },
 ];
 
+// Baseline 2025 Kolab (Townhouse + Neighbours) financials (monthly, VND, VAT-inclusive)
+const KOLAB_2025_FINANCIALS = [
+  { monthIdx: 0, month: 'Jan', revenue: 88299205, opex: 51851167, ebitda: 36448039, ownerCashflow: 16448039 },
+  { monthIdx: 1, month: 'Feb', revenue: 82781964, opex: 50779449, ebitda: 32002515, ownerCashflow: 12002515 },
+  { monthIdx: 2, month: 'Mar', revenue: 96755315, opex: 55247710, ebitda: 41507605, ownerCashflow: 21507605 },
+  { monthIdx: 3, month: 'Apr', revenue: 90101992, opex: 55776111, ebitda: 34325881, ownerCashflow: 14325881 },
+  { monthIdx: 4, month: 'May', revenue: 89375358, opex: 58615049, ebitda: 30760309, ownerCashflow: 10760309 },
+  { monthIdx: 5, month: 'Jun', revenue: 84489906, opex: 57032031, ebitda: 27457875, ownerCashflow: 7457875 },
+  { monthIdx: 6, month: 'Jul', revenue: 90681580, opex: 111981647, ebitda: -21300067, ownerCashflow: -41300067 },
+  { monthIdx: 7, month: 'Aug', revenue: 159316988, opex: 128527730, ebitda: 30789258, ownerCashflow: -3210742 },
+  { monthIdx: 8, month: 'Sep', revenue: 180982561, opex: 130242857, ebitda: 50739704, ownerCashflow: 16739704 },
+  { monthIdx: 9, month: 'Oct', revenue: 206134848, opex: 141155925, ebitda: 64978923, ownerCashflow: 30978923 },
+  { monthIdx: 10, month: 'Nov', revenue: 207880940, opex: 141632826, ebitda: 66248114, ownerCashflow: 32248114 },
+  { monthIdx: 11, month: 'Dec', revenue: 239235138, opex: 141646550, ebitda: 97588588, ownerCashflow: 63588588 },
+];
+
+// Baseline 2025 Kolab operating KPIs (monthly)
+const KOLAB_2025_KPIS = [
+  { monthIdx: 0, occupancyPct: 97.78, adr: 486879, revpar: 490551, goppar: 391673 },
+  { monthIdx: 1, occupancyPct: 98.81, adr: 498519, revpar: 492750, goppar: 427259 },
+  { monthIdx: 2, occupancyPct: 96.24, adr: 548273, revpar: 516889, goppar: 409934 },
+  { monthIdx: 3, occupancyPct: 97.22, adr: 516672, revpar: 500565, goppar: 426534 },
+  { monthIdx: 4, occupancyPct: 98.39, adr: 494595, revpar: 480513, goppar: 428038 },
+  { monthIdx: 5, occupancyPct: 97.78, adr: 480742, revpar: 468431, goppar: 433511 },
+  { monthIdx: 6, occupancyPct: 99.46, adr: 506794, revpar: 487533, goppar: 413572 },
+  { monthIdx: 7, occupancyPct: 81.18, adr: 497966, revpar: 434070, goppar: 433802 },
+  { monthIdx: 8, occupancyPct: 92.06, adr: 501132, revpar: 511769, goppar: 452873 },
+  { monthIdx: 9, occupancyPct: 97.96, adr: 525155, revpar: 554125, goppar: 475979 },
+  { monthIdx: 10, occupancyPct: 96.83, adr: 551745, revpar: 541172, goppar: 467741 },
+  { monthIdx: 11, occupancyPct: 97.70, adr: 611488, revpar: 596813, goppar: 447919 },
+];
+
 const SERVICE_PRESETS = [
   { key: 'laundry', name: 'Laundry service', price: 90000 },
   { key: 'extra_cleaning', name: 'Extra cleaning', price: 100000 },
@@ -4042,6 +4074,9 @@ export default function App() {
 
     const townhouseYoyMonths = buildYoy(townhouseRooms, townhouseBookings, TOWNHOUSE_2025_FINANCIALS, TOWNHOUSE_2025_KPIS);
     const neighboursYoyMonths = buildYoy(neighboursRooms, neighboursBookings, NEIGHBOURS_2025_FINANCIALS, NEIGHBOURS_2025_KPIS);
+    const kolabRooms = [...townhouseRooms, ...neighboursRooms];
+    const kolabBookings = [...townhouseBookings, ...neighboursBookings];
+    const kolabYoyMonths = buildYoy(kolabRooms, kolabBookings, KOLAB_2025_FINANCIALS, KOLAB_2025_KPIS);
 
     const summarizeYtd = (months) => {
       const ytd = months.filter((m) => m.monthIdx <= today.getMonth());
@@ -4055,6 +4090,7 @@ export default function App() {
 
     const townhouseYtd = summarizeYtd(townhouseYoyMonths);
     const neighboursYtd = summarizeYtd(neighboursYoyMonths);
+    const kolabYtd = summarizeYtd(kolabYoyMonths);
 
     return {
       rangeLabel,
@@ -4094,6 +4130,15 @@ export default function App() {
         ytdDeltaPct: neighboursYtd.deltaPct,
         ytdOccCurrent: neighboursYtd.occCurrent,
         ytdOccBaseline: neighboursYtd.occBaseline,
+      },
+      kolabYoy: {
+        currentYear,
+        months: kolabYoyMonths,
+        ytdRevenueCurrent: kolabYtd.revenueCurrent,
+        ytdRevenueBaseline: kolabYtd.revenueBaseline,
+        ytdDeltaPct: kolabYtd.deltaPct,
+        ytdOccCurrent: kolabYtd.occCurrent,
+        ytdOccBaseline: kolabYtd.occBaseline,
       },
     };
   };
@@ -6069,6 +6114,62 @@ export default function App() {
             </table>
           </div>
           <div className="text-xs text-slate-500">Notes: VAT included in revenue. Current expenses not tracked in PMS; baseline opex shown for cost-creep awareness. RevPAR/GOPPAR baselines available in source data if needed for deeper margin analysis.</div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-5">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="font-serif font-bold text-xl" style={{ color: COLORS.darkGreen }}>Kolab (All properties) YoY vs 2025</h3>
+              <p className="text-sm text-slate-500">Combined monthly revenue and occupancy vs 2025 baseline.</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm min-w-[260px]">
+              <div className="bg-[#F9F8F2] border border-slate-200 rounded-xl p-3">
+                <div className="text-xs uppercase text-slate-500">YTD revenue</div>
+                <div className="text-lg font-bold text-slate-800">{fmtVnd(stats.kolabYoy.ytdRevenueCurrent)}</div>
+                <div className="text-xs text-slate-500">vs 2025: {fmtDelta(stats.kolabYoy.ytdDeltaPct)}</div>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-3">
+                <div className="text-xs uppercase text-slate-500">YTD occupancy</div>
+                <div className="text-lg font-bold text-slate-800">{stats.kolabYoy.ytdOccCurrent}%</div>
+                <div className="text-xs text-slate-500">2025 avg {stats.kolabYoy.ytdOccBaseline}%</div>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-3">
+                <div className="text-xs uppercase text-slate-500">Baseline expenses</div>
+                <div className="text-lg font-bold text-slate-800">{fmtVnd(KOLAB_2025_FINANCIALS.reduce((s, m) => s + m.opex, 0) / 12)}</div>
+                <div className="text-xs text-slate-500">2025 average monthly opex (current opex not tracked)</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-auto">
+            <table className="w-full text-sm text-slate-700">
+              <thead className="text-xs uppercase text-slate-500 border-b">
+                <tr>
+                  <th className="py-2 text-left">Month</th>
+                  <th className="py-2 text-right">Revenue</th>
+                  <th className="py-2 text-right">vs 2025</th>
+                  <th className="py-2 text-right">Occ.</th>
+                  <th className="py-2 text-right">Occ. 2025</th>
+                  <th className="py-2 text-right">ADR</th>
+                  <th className="py-2 text-right">ADR 2025</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.kolabYoy.months.map((m) => (
+                  <tr key={m.monthIdx} className="border-b last:border-0">
+                    <td className="py-2">{m.label}</td>
+                    <td className="py-2 text-right">{fmtVnd(m.revenueCurrent)}</td>
+                    <td className={`py-2 text-right font-semibold ${m.revenueDeltaPct > 0 ? 'text-emerald-600' : m.revenueDeltaPct < 0 ? 'text-red-600' : 'text-slate-600'}`}>{fmtDelta(m.revenueDeltaPct)}</td>
+                    <td className="py-2 text-right">{m.occupancyCurrent}%</td>
+                    <td className="py-2 text-right text-slate-500">{m.occupancyBaseline ? `${m.occupancyBaseline}%` : '–'}</td>
+                    <td className="py-2 text-right">{fmtVnd(m.adrCurrent)}</td>
+                    <td className="py-2 text-right text-slate-500">{m.baselineAdr ? fmtVnd(m.baselineAdr) : '–'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="text-xs text-slate-500">Notes: VAT included in revenue. Current expenses not tracked in PMS; baseline opex shown for cost-creep awareness. Combined KPIs help spot portfolio-level seasonality and margin shifts.</div>
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-5">
