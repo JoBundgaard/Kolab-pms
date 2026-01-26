@@ -76,6 +76,49 @@ const HOUSEKEEPING_END_TIME = '18:00';
 const DEFAULT_CHECKOUT_TIME = '12:00';
 const DEFAULT_CHECKIN_TIME = '15:00';
 const randomId = () => Math.random().toString(36).substr(2, 9);
+
+// Compute Vietnam withholding for Airbnb bookings.
+// Gross base = netEarningsFromEmail (already after Airbnb host fee deduction from Make.com scrape).
+// VAT withheld = 5% of netEarningsFromEmail; Income tax = 2% of netEarningsFromEmail.
+// Final counted income = netEarningsFromEmail - (VAT + income tax).
+const computeAirbnbWithholding = (booking) => {
+  const channel = (booking?.channel || '').toLowerCase();
+  const netEarnings = Number(booking?.netEarningsFromEmail);
+  const hasNetEarnings = Number.isFinite(netEarnings) && netEarnings > 0;
+
+  const base = {
+    status: 'not_applicable',
+    vatWithheld: null,
+    incomeTaxWithheld: null,
+    totalWithheld: null,
+    finalCountedIncome: null,
+    netEarningsFromEmail: booking?.netEarningsFromEmail ?? null,
+  };
+
+  if (channel !== 'airbnb') return base;
+
+  if (!hasNetEarnings) {
+    return {
+      ...base,
+      status: 'withholding_unknown',
+      netEarningsFromEmail: booking?.netEarningsFromEmail ?? null,
+    };
+  }
+
+  const vatWithheld = Math.round(netEarnings * 0.05);
+  const incomeTaxWithheld = Math.round(netEarnings * 0.02);
+  const totalWithheld = vatWithheld + incomeTaxWithheld;
+  const finalCountedIncome = netEarnings - totalWithheld;
+
+  return {
+    status: 'computed',
+    vatWithheld,
+    incomeTaxWithheld,
+    totalWithheld,
+    finalCountedIncome,
+    netEarningsFromEmail: netEarnings,
+  };
+};
 const ENABLE_HOUSEKEEPING_V2 = true;
 
 // Baseline 2025 Townhouse financials (monthly, VND, VAT-inclusive)
@@ -836,6 +879,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     checkInTime: '',
     checkOutTime: '',
     price: '',
+    grossRoomRevenue: '',
+    payoutFromEmail: '',
     nights: 0, 
     status: 'confirmed',
     notes: '',
@@ -847,6 +892,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     weeklyCleaningDay: 'monday',
     channel: 'airbnb',
     paymentStatus: '',
+    netEarningsFromEmail: '',
   });
   
   const [nights, setNights] = useState(0);
@@ -888,6 +934,14 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
   const bookingTotalWithServices = useMemo(() => (Number(formData.price) || 0) + servicesTotal, [formData.price, servicesTotal]);
 
+  const withholdingPreview = useMemo(() => {
+    if (formData.channel !== 'airbnb') return null;
+    return computeAirbnbWithholding({
+      channel: formData.channel,
+      netEarningsFromEmail: formData.netEarningsFromEmail,
+    });
+  }, [formData.channel, formData.netEarningsFromEmail]);
+
   useEffect(() => {
     if (booking) {
       const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
@@ -906,6 +960,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         weeklyCleaningDay: booking.weeklyCleaningDay || 'monday',
         channel: booking.channel || 'airbnb',
         paymentStatus: booking.channel === 'direct' ? (booking.paymentStatus || '') : '',
+        netEarningsFromEmail: booking.netEarningsFromEmail ?? '',
       });
       setCategoryManual(!!booking.stayCategory);
       const normalizedServices = Array.isArray(booking.services) ? booking.services.map(normalizeServiceEntry) : [];
@@ -936,6 +991,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         weeklyCleaningDay: 'monday',
         channel: 'airbnb',
         paymentStatus: '',
+        netEarningsFromEmail: '',
       });
       setCategoryManual(false);
       setServices([]);
@@ -1086,6 +1142,10 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     const finalCheckInTime = sanitizedCheckInTime || DEFAULT_CHECKIN_TIME;
     const finalCheckOutTime = sanitizedCheckOutTime || DEFAULT_CHECKOUT_TIME;
 
+    const netEarningsFromEmail = formData.channel === 'airbnb'
+      ? (formData.netEarningsFromEmail === '' ? null : Number(formData.netEarningsFromEmail))
+      : null;
+
     const inferredCategory = formData.stayCategory || deriveStayCategory(formData.nights);
     const isLongTermCategory = ['medium', 'long'].includes(inferredCategory);
     const finalWeeklyDay = isLongTermCategory ? formData.weeklyCleaningDay || 'monday' : '';
@@ -1105,13 +1165,14 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       checkInTime: finalCheckInTime,
       checkOutTime: finalCheckOutTime,
       services: sanitizedServices,
+      netEarningsFromEmail,
     });
   };
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     
-    if (name === 'price') {
+    if (['price', 'netEarningsFromEmail'].includes(name)) {
       setFormData(prev => ({ 
         ...prev, 
         [name]: value === '' ? '' : Number(value) 
@@ -1572,6 +1633,49 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
               {formData.stayCategory === 'short' ? 'Short Term' : formData.stayCategory === 'medium' ? 'Medium Term' : 'Long Term'}
             </span>
           </div>
+
+          {formData.channel === 'airbnb' && (
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h4 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Airbnb Withholding (Vietnam)</h4>
+                  <p className="text-xs text-slate-500">Net earnings from Make.com email scrape (already after Airbnb host fee). We deduct 5% VAT + 2% income tax.</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Net earnings from email (₫)</label>
+                <input
+                  type="number"
+                  name="netEarningsFromEmail"
+                  value={formData.netEarningsFromEmail}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] bg-white"
+                  placeholder="Host payout from email (after Airbnb fee deducted)"
+                />
+              </div>
+
+              <div className="text-xs text-slate-600">
+                {withholdingPreview?.status === 'computed' ? (
+                  <div className="space-y-1">
+                    <div className="font-semibold text-slate-800">
+                      Net earnings: {formatCurrencyVND(withholdingPreview.netEarningsFromEmail || 0)}
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <span className="font-semibold text-slate-800">VAT 5%: {formatCurrencyVND(withholdingPreview.vatWithheld)}</span>
+                      <span className="font-semibold text-slate-800">Income tax 2%: {formatCurrencyVND(withholdingPreview.incomeTaxWithheld)}</span>
+                      <span className="font-semibold text-slate-800">Total withheld: {formatCurrencyVND(withholdingPreview.totalWithheld)}</span>
+                      <span className="font-semibold text-slate-800">Final counted: {formatCurrencyVND(withholdingPreview.finalCountedIncome)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-slate-600">
+                    Enter net earnings from email. Without it, the booking is marked withholding-unknown and excluded from totals.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div>
              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Total Price (VND)</label>
@@ -2846,6 +2950,63 @@ export default function App() {
   
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
 
+  const bookingsWithWithholding = useMemo(
+    () => bookings.map((b) => ({ ...b, _withholding: computeAirbnbWithholding(b) })),
+    [bookings]
+  );
+
+  const backfillRunningRef = useRef(false);
+
+  useEffect(() => {
+    if (!bookingsWithWithholding.length) return;
+    if (backfillRunningRef.current) return;
+
+    const toUpdate = bookingsWithWithholding
+      .filter((b) => (b.channel || '').toLowerCase() === 'airbnb')
+      .map((b) => {
+        const w = computeAirbnbWithholding(b);
+        const differs =
+          (b.withholdingStatus || 'not_applicable') !== (w.status || 'not_applicable') ||
+          (b.vatWithheld ?? null) !== (w.vatWithheld ?? null) ||
+          (b.incomeTaxWithheld ?? null) !== (w.incomeTaxWithheld ?? null) ||
+          (b.totalWithheld ?? null) !== (w.totalWithheld ?? null) ||
+          (b.finalCountedIncome ?? null) !== (w.finalCountedIncome ?? null) ||
+          (b.netEarningsFromEmail ?? null) !== (w.netEarningsFromEmail ?? null) ||
+          (w.status === 'computed' && Number.isFinite(w.finalCountedIncome) && (b.price ?? null) !== w.finalCountedIncome);
+
+        if (!differs) return null;
+
+        return {
+          id: b.id,
+          payload: {
+            netEarningsFromEmail: w.netEarningsFromEmail ?? null,
+            vatWithheld: w.vatWithheld ?? null,
+            incomeTaxWithheld: w.incomeTaxWithheld ?? null,
+            totalWithheld: w.totalWithheld ?? null,
+            finalCountedIncome: w.finalCountedIncome ?? null,
+            withholdingStatus: w.status || 'not_applicable',
+            price: w.status === 'computed' && Number.isFinite(w.finalCountedIncome) ? w.finalCountedIncome : b.price,
+          },
+        };
+      })
+      .filter(Boolean);
+
+    if (!toUpdate.length) return;
+
+    backfillRunningRef.current = true;
+    (async () => {
+      for (const { id, payload } of toUpdate) {
+        try {
+          await setDoc(doc(db, 'bookings', id), payload, { merge: true });
+          setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, ...payload } : b)));
+        } catch (error) {
+          console.error('[withholding-backfill] failed', { id, error });
+        }
+      }
+      backfillRunningRef.current = false;
+    })();
+  }, [bookingsWithWithholding, db]);
+
   const handleGoogleSignIn = async () => {
     try {
       const provider = new GoogleAuthProvider();
@@ -3487,10 +3648,15 @@ export default function App() {
       const guestEmailValue = bookingData.guestEmail?.trim?.() || '';
       const guestPhoneValue = bookingData.guestPhone?.trim?.() || '';
       const normalizedPrice = Number(bookingData.price) || 0;
+        const priceForBooking =
+          normalizedChannel === 'airbnb' && withholding.status === 'computed' && Number.isFinite(withholding.finalCountedIncome)
+            ? withholding.finalCountedIncome
+            : normalizedPrice;
       const normalizedNights = calculateNights(bookingData.checkIn, bookingData.checkOut);
       const normalizedChannel = bookingData.channel || 'airbnb';
       const normalizedPaymentStatus = normalizedChannel === 'direct' ? (bookingData.paymentStatus || null) : null;
       const nowIso = new Date().toISOString();
+      const withholding = computeAirbnbWithholding({ ...bookingData, channel: normalizedChannel, price: normalizedPrice });
 
       const guestResolution = await resolveGuestForBooking({
         db,
@@ -3510,10 +3676,16 @@ export default function App() {
         guestPhone: guestPhoneValue || null,
         guestEmailNorm: guestResolution?.normalized?.emailNorm || null,
         guestPhoneNorm: guestResolution?.normalized?.phoneNorm || null,
-        price: normalizedPrice,
+        price: priceForBooking,
         nights: normalizedNights,
         channel: normalizedChannel,
         paymentStatus: normalizedPaymentStatus,
+        netEarningsFromEmail: withholding.netEarningsFromEmail,
+        vatWithheld: withholding.vatWithheld,
+        incomeTaxWithheld: withholding.incomeTaxWithheld,
+        totalWithheld: withholding.totalWithheld,
+        finalCountedIncome: withholding.finalCountedIncome,
+        withholdingStatus: withholding.status,
         guestId: guestResolution?.guestId || null,
         isReturningGuest: !!guestResolution?.isReturningGuest,
         returningReason: guestResolution?.returningReason || null,
@@ -3837,8 +4009,19 @@ export default function App() {
 
   // --- STATISTICS CALCULATIONS ---
   const calculateStats = (rangeKey, customStart, customEnd) => {
+    const netForBooking = (booking) => {
+      const w = booking._withholding || {};
+      if (w.status === 'computed' && Number.isFinite(w.finalCountedIncome)) return w.finalCountedIncome;
+      return Number(booking.price) || 0;
+    };
+
+    const vatForBooking = (booking) => (booking._withholding?.status === 'computed' ? booking._withholding.vatWithheld || 0 : 0);
+    const incomeForBooking = (booking) => (booking._withholding?.status === 'computed' ? booking._withholding.incomeTaxWithheld || 0 : 0);
+
     const msInDay = 86400000;
     const today = new Date();
+    const todayClamp = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const startOfYear = new Date(today.getFullYear(), 0, 1);
     const currentYear = today.getFullYear();
     const startOfWeek = (d) => {
       const copy = new Date(d);
@@ -3887,15 +4070,38 @@ export default function App() {
       return diff > 0 ? Math.round(diff / msInDay) : 0;
     };
 
-    const overlapping = bookings
+    const overlapping = bookingsWithWithholding
       .map((b) => ({ ...b, _overlapNights: overlapNights(b) }))
       .filter((b) => b._overlapNights > 0);
 
     const active = overlapping.filter((b) => b.status !== 'cancelled');
+    const airbnbActive = active.filter((b) => (b.channel || '').toLowerCase() === 'airbnb');
+    const withholdingComputedRange = airbnbActive.filter((b) => b._withholding?.status === 'computed');
+    const withholdingUnknownRange = airbnbActive.filter((b) => b._withholding?.status === 'withholding_unknown');
 
     const roomNightsAvailable = Math.max(1, ALL_ROOMS.length * rangeDays);
     const roomNightsBooked = active.reduce((sum, b) => sum + (b._overlapNights || 0), 0);
-    const revenue = active.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+    const revenue = active.reduce((sum, b) => sum + netForBooking(b), 0);
+    const vatWithheldRange = withholdingComputedRange.reduce((sum, b) => sum + vatForBooking(b), 0);
+    const incomeWithheldRange = withholdingComputedRange.reduce((sum, b) => sum + incomeForBooking(b), 0);
+    const totalWithheldRange = vatWithheldRange + incomeWithheldRange;
+    const withholdingUnknownCount = withholdingUnknownRange.length;
+
+    const groupWithholdingByProperty = (list) => {
+      const map = {};
+      list.forEach((b) => {
+        const room = ALL_ROOMS.find((r) => r.id === b.roomId);
+        const key = room?.propertyName || 'Unknown';
+        if (!map[key]) map[key] = { property: key, vat: 0, income: 0, total: 0, computedCount: 0 };
+        map[key].vat += vatForBooking(b);
+        map[key].income += incomeForBooking(b);
+        map[key].total += vatForBooking(b) + incomeForBooking(b);
+        map[key].computedCount += 1;
+      });
+      return Object.values(map).sort((a, b) => b.total - a.total);
+    };
+
+    const withholdingRangeByProperty = groupWithholdingByProperty(withholdingComputedRange);
     const avgLengthOfStay = active.length ? (roomNightsBooked / active.length).toFixed(1) : '0';
     const adr = roomNightsBooked ? revenue / roomNightsBooked : 0;
     const revPar = revenue / roomNightsAvailable;
@@ -3977,14 +4183,29 @@ export default function App() {
       const monthName = d.toLocaleString('default', { month: 'short' });
       const monthIdx = d.getMonth();
       const year = d.getFullYear();
-      const monthlyRevenue = bookings
+      const monthlyRevenue = bookingsWithWithholding
         .filter((b) => {
           const bDate = new Date(b.checkIn);
           return bDate.getMonth() === monthIdx && bDate.getFullYear() === year && b.status !== 'cancelled';
         })
-        .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+        .reduce((sum, b) => sum + netForBooking(b), 0);
       last6Months.push({ month: monthName, revenue: monthlyRevenue });
     }
+
+    const ytdBookings = bookingsWithWithholding
+      .filter((b) => {
+        const checkInDate = clampDate(b.checkIn);
+        if (!checkInDate) return false;
+        if (checkInDate < startOfYear || checkInDate >= addDays(todayClamp, 1)) return false;
+        if (b.status === 'cancelled') return false;
+        return (b.channel || '').toLowerCase() === 'airbnb';
+      });
+    const ytdComputed = ytdBookings.filter((b) => b._withholding?.status === 'computed');
+    const ytdUnknown = ytdBookings.filter((b) => b._withholding?.status === 'withholding_unknown');
+    const ytdVat = ytdComputed.reduce((s, b) => s + vatForBooking(b), 0);
+    const ytdIncome = ytdComputed.reduce((s, b) => s + incomeForBooking(b), 0);
+    const ytdTotalWithheld = ytdVat + ytdIncome;
+    const withholdingYtdByProperty = groupWithholdingByProperty(ytdComputed);
 
     const insights = [];
     if (occupancyRate >= 85) insights.push(`Occupancy is high at ${occupancyRate}% for ${rangeStartStr}–${rangeEndStr}. Keep an eye on turnover capacity.`);
@@ -4036,15 +4257,18 @@ export default function App() {
 
       let nights = 0;
       let revenueMonth = 0;
+      let withheldMonth = 0;
 
       propBookings.forEach((b) => {
         const overlap = overlapNightsRange(b, mStart, mEnd);
         if (overlap <= 0) return;
         nights += overlap;
         const totalNights = b.nights || calculateNights(b.checkIn, b.checkOut) || 1;
-        const price = Number(b.price) || 0;
-        const prorated = price * (overlap / totalNights);
-        revenueMonth += prorated;
+        const netValue = netForBooking(b);
+        const withheldValue = b._withholding?.status === 'computed' ? (b._withholding.totalWithheld || 0) : 0;
+        const prorateFactor = overlap / totalNights;
+        revenueMonth += netValue * prorateFactor;
+        withheldMonth += withheldValue * prorateFactor;
       });
 
       const occupancy = Math.min(100, Math.round((nights / capacityNights) * 100));
@@ -4069,6 +4293,7 @@ export default function App() {
         baselineAdr: baselineKpi?.adr ?? null,
         baselineOpex: baselineFin?.opex ?? null,
         baselineEbitda: baselineFin?.ebitda ?? null,
+        withheldTotal: Math.round(withheldMonth),
       };
     });
 
@@ -4113,6 +4338,26 @@ export default function App() {
       sameDayTurnovers,
       last6Months,
       insights,
+      withholding: {
+        range: {
+          vat: vatWithheldRange,
+          income: incomeWithheldRange,
+          total: totalWithheldRange,
+          computedCount: withholdingComputedRange.length,
+          unknownCount: withholdingUnknownCount,
+          totalBookings: airbnbActive.length,
+          byProperty: withholdingRangeByProperty,
+        },
+        ytd: {
+          vat: ytdVat,
+          income: ytdIncome,
+          total: ytdTotalWithheld,
+          computedCount: ytdComputed.length,
+          unknownCount: ytdUnknown.length,
+          totalBookings: ytdBookings.length,
+          byProperty: withholdingYtdByProperty,
+        },
+      },
       townhouseYoy: {
         currentYear,
         months: townhouseYoyMonths,
@@ -5921,6 +6166,100 @@ export default function App() {
           <StatCard title="ADR" value={`${Math.round(stats.adr).toLocaleString('vi-VN')} ₫`} icon={<TrendingUp />} subtext="Avg daily rate (stay-weighted)" />
           <StatCard title="Lead time" value={`${stats.avgLeadTime} days`} icon={<Clock />} subtext="Avg booking → check-in" />
         </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Withholding (Airbnb)</h3>
+                <p className="text-xs text-slate-500">5% VAT + 2% income tax applied to imported earnings from email (host fee already removed).</p>
+              </div>
+              <div className="text-[11px] uppercase font-semibold text-slate-500">Range</div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="space-y-1">
+                <div className="text-slate-500 text-xs uppercase">VAT withheld</div>
+                <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.range.vat)}</div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-slate-500 text-xs uppercase">Income tax withheld</div>
+                <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.range.income)}</div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-slate-500 text-xs uppercase">Total withheld</div>
+                <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.range.total)}</div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-slate-500 text-xs uppercase">Coverage</div>
+                <div className="font-semibold text-slate-800">{stats.withholding.range.computedCount}/{stats.withholding.range.totalBookings} included</div>
+                <div className="text-[11px] text-slate-500">Excluded (missing base): {stats.withholding.range.unknownCount}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Withholding YTD (Airbnb)</h3>
+                <p className="text-xs text-slate-500">Calendar YTD, based on check-in date.</p>
+              </div>
+              <div className="text-[11px] uppercase font-semibold text-slate-500">YTD</div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="space-y-1">
+                <div className="text-slate-500 text-xs uppercase">VAT withheld</div>
+                <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.ytd.vat)}</div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-slate-500 text-xs uppercase">Income tax withheld</div>
+                <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.ytd.income)}</div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-slate-500 text-xs uppercase">Total withheld</div>
+                <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.ytd.total)}</div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-slate-500 text-xs uppercase">Coverage</div>
+                <div className="font-semibold text-slate-800">{stats.withholding.ytd.computedCount}/{stats.withholding.ytd.totalBookings} included</div>
+                <div className="text-[11px] text-slate-500">Excluded (missing base): {stats.withholding.ytd.unknownCount}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {stats.withholding.range.byProperty?.length ? (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
+            <div className="flex items-center gap-2">
+              <h3 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Withholding by property (range)</h3>
+              <span className="text-[11px] text-slate-500">Airbnb only</span>
+            </div>
+            <div className="overflow-auto">
+              <table className="w-full text-sm text-slate-700">
+                <thead className="text-xs uppercase text-slate-500 border-b">
+                  <tr>
+                    <th className="py-2 text-left">Property</th>
+                    <th className="py-2 text-right">VAT</th>
+                    <th className="py-2 text-right">Income</th>
+                    <th className="py-2 text-right">Total</th>
+                    <th className="py-2 text-right">Bookings</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.withholding.range.byProperty.map((p) => (
+                    <tr key={p.property} className="border-b last:border-0">
+                      <td className="py-2">{p.property}</td>
+                      <td className="py-2 text-right">{fmtVnd(p.vat)}</td>
+                      <td className="py-2 text-right">{fmtVnd(p.income)}</td>
+                      <td className="py-2 text-right font-semibold">{fmtVnd(p.total)}</td>
+                      <td className="py-2 text-right text-slate-500">{p.computedCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-[11px] text-slate-500">Final earnings used in stats = imported earnings − VAT − income tax. Host fee already excluded by Make.com email.</div>
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm lg:col-span-2">
