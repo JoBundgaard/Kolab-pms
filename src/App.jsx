@@ -3826,6 +3826,17 @@ export default function App() {
     }
   };
 
+  const openBookingDetails = useCallback(
+    (bookingId) => {
+      if (!bookingId) return;
+      const booking = bookings.find((b) => b.id === bookingId);
+      if (!booking) return;
+      setEditingBooking(booking);
+      setIsModalOpen(true);
+    },
+    [bookings]
+  );
+
   const handleDeleteBooking = async (id) => {
     if (!confirm('Cancel this booking? It will be marked as cancelled but kept in the list.')) return;
     setSavingBookingId(id);
@@ -4520,6 +4531,18 @@ export default function App() {
 
     const rowIcon = (icon) => <span className="text-sm mr-2">{icon}</span>;
 
+    const interactiveHandlers = (bookingId) => ({
+      role: 'button',
+      tabIndex: 0,
+      onClick: () => openBookingDetails(bookingId),
+      onKeyDown: (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openBookingDetails(bookingId);
+        }
+      },
+    });
+
     const renderPlanGroup = (items, accentDotClass, targetDate) => (
       <div className="space-y-2">
         {items.length === 0 ? (
@@ -4533,8 +4556,15 @@ export default function App() {
             const startLabel = task.earliestLabel || '—';
             const endLabel = task.latestLabel || '—';
             const conflict = task.hasScheduleConflict;
+            const targetBookingId = incoming?.id || inHouse?.id || null;
+            const interactive = targetBookingId ? interactiveHandlers(targetBookingId) : {};
+            const clickClasses = targetBookingId ? 'cursor-pointer hover:bg-[#F9F8F2]' : 'cursor-default';
             return (
-              <div key={task.roomId} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div
+                key={task.roomId}
+                className={`flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white shadow-sm transition-colors ${clickClasses}`}
+                {...interactive}
+              >
                 <div className="space-y-1">
                   <div className="flex items-center font-bold text-slate-800">
                     <span className={`w-2 h-2 rounded-full mr-2 ${accentDotClass}`}></span>
@@ -4587,7 +4617,11 @@ export default function App() {
                        checkingOutToday.map(booking => {
                        const roomName = ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'Unknown room';
                        return (
-                         <div key={booking.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                         <div
+                           key={booking.id}
+                           className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer hover:bg-white transition-colors"
+                           {...interactiveHandlers(booking.id)}
+                         >
                            <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('⬅️')}<span>{booking.guestName}</span></div>
                            <span className={getRoomTagClasses(booking.roomId)}>
                              {roomName}
@@ -4610,9 +4644,13 @@ export default function App() {
                      </p>
                  ) : (
                      checkingIn.map(booking => (
-                           <div key={booking.id} className={`flex items-center justify-between p-3 rounded-xl border shadow-sm ${
-                             booking.earlyCheckIn ? 'bg-yellow-50/70 border-yellow-200' : 'bg-[#E2F05D]/40 border-[#E2F05D]'
-                           }`}>
+                           <div
+                             key={booking.id}
+                             className={`flex items-center justify-between p-3 rounded-xl border shadow-sm cursor-pointer hover:brightness-[0.98] transition-all ${
+                               booking.earlyCheckIn ? 'bg-yellow-50/70 border-yellow-200' : 'bg-[#E2F05D]/40 border-[#E2F05D]'
+                             }`}
+                             {...interactiveHandlers(booking.id)}
+                           >
                              <div className="flex items-center text-sm font-bold text-slate-800">
                                {rowIcon('👤')}
                                <span>{booking.guestName}</span>
@@ -4687,7 +4725,11 @@ export default function App() {
                     </p>
                 ) : (
                     checkingInTomorrow.map(booking => (
-                          <div key={booking.id} className="flex items-center justify-between p-3 rounded-xl border shadow-sm bg-slate-50">
+                          <div
+                            key={booking.id}
+                            className="flex items-center justify-between p-3 rounded-xl border shadow-sm bg-slate-50 cursor-pointer hover:bg-white transition-colors"
+                            {...interactiveHandlers(booking.id)}
+                          >
                             <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('👤')}<span>{booking.guestName}</span></div>
                             <div className="flex items-center gap-2">
                               {booking.earlyCheckIn && <span className="text-[11px] font-bold text-orange-600 flex items-center"><Sunrise size={14} className="mr-1"/>Early</span>}
@@ -4717,7 +4759,11 @@ export default function App() {
                        checkingOutTomorrow.map(booking => {
                        const roomName = ALL_ROOMS.find(r => r.id === booking.roomId)?.name || 'Unknown room';
                        return (
-                         <div key={booking.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                         <div
+                           key={booking.id}
+                           className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer hover:bg-white transition-colors"
+                           {...interactiveHandlers(booking.id)}
+                         >
                            <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('➡️')}<span>{booking.guestName}</span></div>
                            <span className={getRoomTagClasses(booking.roomId)}>
                              {roomName}
