@@ -908,6 +908,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     paymentStatus: '',
     netEarningsFromEmail: '',
     airbnbBaseEarningsVnd: '',
+    monthlyRentVnd: '',
   });
   
   const [nights, setNights] = useState(0);
@@ -948,6 +949,21 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   );
 
   const bookingTotalWithServices = useMemo(() => (Number(formData.price) || 0) + servicesTotal, [formData.price, servicesTotal]);
+  const longStayEstimatedTotal = useMemo(() => {
+    const rent = Number(formData.monthlyRentVnd);
+    if (!Number.isFinite(rent) || rent <= 0 || !nights) return 0;
+    return Math.round(rent * (nights / 30));
+  }, [formData.monthlyRentVnd, nights]);
+
+  const bookingBaseAmount = useMemo(() => {
+    if (['long'].includes(formData.stayCategory)) {
+      const rent = Number(formData.monthlyRentVnd);
+      return Number.isFinite(rent) ? rent : 0;
+    }
+    return Number(formData.price) || 0;
+  }, [formData.monthlyRentVnd, formData.price, formData.stayCategory]);
+
+  const bookingTotalWithServices = useMemo(() => bookingBaseAmount + servicesTotal, [bookingBaseAmount, servicesTotal]);
 
   const withholdingPreview = useMemo(() => {
     if (formData.channel !== 'airbnb') return null;
@@ -977,6 +993,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         paymentStatus: booking.channel === 'direct' ? (booking.paymentStatus || '') : '',
         netEarningsFromEmail: booking.netEarningsFromEmail ?? '',
         airbnbBaseEarningsVnd: booking.airbnbBaseEarningsVnd ?? booking.netEarningsFromEmail ?? booking.price ?? '',
+        monthlyRentVnd: booking.monthlyRentVnd ?? booking.price ?? '',
       });
       setCategoryManual(!!booking.stayCategory);
       const normalizedServices = Array.isArray(booking.services) ? booking.services.map(normalizeServiceEntry) : [];
@@ -1009,6 +1026,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         paymentStatus: '',
         netEarningsFromEmail: '',
         airbnbBaseEarningsVnd: '',
+        monthlyRentVnd: '',
       });
       setCategoryManual(false);
       setServices([]);
@@ -1184,6 +1202,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       ? (formData.airbnbBaseEarningsVnd === '' ? null : Number(formData.airbnbBaseEarningsVnd))
       : null;
     const netEarningsFromEmail = formData.channel === 'airbnb' ? airbnbBaseEarningsVnd : null;
+    const monthlyRentVnd = ['long'].includes(formData.stayCategory)
+      ? (formData.monthlyRentVnd === '' ? null : Number(formData.monthlyRentVnd))
+      : null;
 
     const inferredCategory = formData.stayCategory || deriveStayCategory(formData.nights);
     const isLongTermCategory = ['medium', 'long'].includes(inferredCategory);
@@ -1206,13 +1227,14 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       services: sanitizedServices,
       airbnbBaseEarningsVnd,
       netEarningsFromEmail,
+      monthlyRentVnd,
     });
   };
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     
-    if (['price', 'netEarningsFromEmail', 'airbnbBaseEarningsVnd'].includes(name)) {
+    if (['price', 'netEarningsFromEmail', 'airbnbBaseEarningsVnd', 'monthlyRentVnd'].includes(name)) {
       setFormData(prev => ({ 
         ...prev, 
         [name]: value === '' ? '' : Number(value) 
@@ -1718,23 +1740,38 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
               </div>
             </div>
           )}
-
-          <div>
-             <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Total Price (VND)</label>
-             <input 
+          {formData.stayCategory === 'long' ? (
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Monthly Rent (VND)</label>
+              <input
                 required
-                type="number" 
-                name="price"
+                type="number"
+                name="monthlyRentVnd"
                 className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
-                value={formData.price}
+                value={formData.monthlyRentVnd}
                 onChange={handleChange}
-                readOnly={formData.channel === 'airbnb'}
-                disabled={formData.channel === 'airbnb'}
+                min="0"
               />
-              {formData.channel === 'airbnb' && (
-                <p className="text-xs text-slate-500 mt-1">Auto-calculated: Imported earnings minus VAT (5%) and income tax (2%).</p>
-              )}
-          </div>
+              <p className="text-xs text-slate-500 mt-1">Estimated total for selected dates: {formatCurrencyVND(longStayEstimatedTotal)}</p>
+            </div>
+          ) : (
+            <div>
+               <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Total Price (VND)</label>
+               <input 
+                  required
+                  type="number" 
+                  name="price"
+                  className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                  value={formData.price}
+                  onChange={handleChange}
+                  readOnly={formData.channel === 'airbnb'}
+                  disabled={formData.channel === 'airbnb'}
+                />
+                {formData.channel === 'airbnb' && (
+                  <p className="text-xs text-slate-500 mt-1">Auto-calculated: Imported earnings minus VAT (5%) and income tax (2%).</p>
+                )}
+            </div>
+          )}
 
           <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
             <div className="flex flex-wrap items-start gap-3 min-w-0">
@@ -3739,10 +3776,17 @@ export default function App() {
         price: normalizedPrice,
         airbnbBaseEarningsVnd: normalizedAirbnbBase,
       });
-      const priceForBooking =
-        normalizedChannel === 'airbnb' && withholding.status === 'computed' && Number.isFinite(withholding.finalCountedIncome)
-          ? withholding.finalCountedIncome
-          : normalizedPrice;
+      const isLongTermCategory = ['long'].includes(bookingData.stayCategory) || bookingData.isLongTerm;
+      const monthlyRentVnd = isLongTermCategory && Number.isFinite(Number(bookingData.monthlyRentVnd)) ? Number(bookingData.monthlyRentVnd) : null;
+      const estimatedLongTotal = isLongTermCategory && monthlyRentVnd ? Math.round(monthlyRentVnd * (Math.max(1, calculateNights(bookingData.checkIn, bookingData.checkOut)) / 30)) : null;
+
+      const priceForBooking = (() => {
+        if (isLongTermCategory && estimatedLongTotal !== null) return estimatedLongTotal;
+        if (normalizedChannel === 'airbnb' && withholding.status === 'computed' && Number.isFinite(withholding.finalCountedIncome)) {
+          return withholding.finalCountedIncome;
+        }
+        return normalizedPrice;
+      })();
       const normalizedNights = calculateNights(bookingData.checkIn, bookingData.checkOut);
 
       const guestResolution = await resolveGuestForBooking({
@@ -3769,6 +3813,7 @@ export default function App() {
         paymentStatus: normalizedPaymentStatus,
         airbnbBaseEarningsVnd: normalizedAirbnbBase,
         netEarningsFromEmail: normalizedAirbnbBase,
+        monthlyRentVnd: monthlyRentVnd,
         vatWithheld: withholding.vatWithheld,
         incomeTaxWithheld: withholding.incomeTaxWithheld,
         totalWithheld: withholding.totalWithheld,
@@ -4109,6 +4154,12 @@ export default function App() {
   // --- STATISTICS CALCULATIONS ---
   const calculateStats = (rangeKey, customStart, customEnd) => {
     const netForBooking = (booking) => {
+      const overlapNights = booking._overlapNights || 0;
+      const isLong = (booking.stayCategory || '').toLowerCase() === 'long' || booking.isLongTerm;
+      const monthlyRent = Number(booking.monthlyRentVnd);
+      if (isLong && Number.isFinite(monthlyRent) && monthlyRent > 0 && overlapNights > 0) {
+        return Math.round(monthlyRent * (overlapNights / 30));
+      }
       const w = booking._withholding || {};
       if (w.status === 'computed' && Number.isFinite(w.finalCountedIncome)) return w.finalCountedIncome;
       return Number(booking.price) || 0;
