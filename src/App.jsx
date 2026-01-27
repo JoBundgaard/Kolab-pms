@@ -948,7 +948,6 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     [services]
   );
 
-  const bookingTotalWithServices = useMemo(() => (Number(formData.price) || 0) + servicesTotal, [formData.price, servicesTotal]);
   const longStayEstimatedTotal = useMemo(() => {
     const rent = Number(formData.monthlyRentVnd);
     if (!Number.isFinite(rent) || rent <= 0 || !nights) return 0;
