@@ -2182,7 +2182,7 @@ const MaintenanceModal = ({ isOpen, onClose, onSave, issue, allLocations, isSavi
   );
 };
 
-const RecurringTaskModal = ({ isOpen, onClose, onSave, onDelete, task, allLocations, defaultMode = 'single' }) => {
+const RecurringTaskModal = ({ isOpen, onClose, onSave, onDelete, task, prefill, allLocations, defaultMode = 'single' }) => {
   const [formData, setFormData] = useState({
     locationId: allLocations[0]?.id || '',
     description: '',
@@ -2201,17 +2201,18 @@ const RecurringTaskModal = ({ isOpen, onClose, onSave, onDelete, task, allLocati
       setAppliesTo('single');
       setSelectedRooms([]);
     } else {
-      setFormData({
+      const base = {
         locationId: allLocations[0]?.id || '',
         description: '',
         frequency: 'monthly',
         nextDue: formatDate(new Date()),
-      });
+      };
+      setFormData({ ...base, ...(prefill || {}) });
       setAppliesTo(defaultMode);
       setSelectedRooms([]);
     }
     setError('');
-  }, [task, isOpen, allLocations, defaultMode]);
+  }, [task, prefill, isOpen, allLocations, defaultMode]);
 
   if (!isOpen) return null;
 
@@ -3091,6 +3092,7 @@ export default function App() {
   const [pendingMaintenancePrefill, setPendingMaintenancePrefill] = useState(null);
   const [isRecurringModalOpen, setIsRecurringModalOpen] = useState(false);
   const [editingRecurringTask, setEditingRecurringTask] = useState(null);
+  const [pendingRecurringPrefill, setPendingRecurringPrefill] = useState(null);
   
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
 
@@ -4007,6 +4009,7 @@ export default function App() {
         pushAlert({ title: 'Recurring updated', message: updatedTask.description || 'Task saved', tone: 'success' });
         setIsRecurringModalOpen(false);
         setEditingRecurringTask(null);
+        setPendingRecurringPrefill(null);
         return;
       }
 
@@ -4043,6 +4046,7 @@ export default function App() {
           pushAlert({ title: 'Recurring created', message: `Created for ${results.success.length} room${results.success.length === 1 ? '' : 's'}`, tone: 'success' });
           setIsRecurringModalOpen(false);
           setEditingRecurringTask(null);
+          setPendingRecurringPrefill(null);
         } else {
           const savedCount = results.success.length;
           const failed = results.failed[0];
@@ -4061,6 +4065,7 @@ export default function App() {
       pushAlert({ title: 'Recurring created', message: 'Task saved', tone: 'success' });
       setIsRecurringModalOpen(false);
       setEditingRecurringTask(null);
+      setPendingRecurringPrefill(null);
     } catch (error) {
       console.error('Error saving recurring task:', error);
       pushAlert({ title: 'Recurring save failed', message: error?.message || 'Please try again', code: error?.code, raw: error });
@@ -5782,7 +5787,7 @@ export default function App() {
               Report Issue
             </button>
             <button
-              onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(null); setIsRecurringModalOpen(true); }}
+              onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(null); setPendingRecurringPrefill(null); setIsRecurringModalOpen(true); }}
               className="px-4 py-3 rounded-full flex items-center shadow-md hover:shadow-lg transition-all font-bold text-xs uppercase tracking-wide"
               style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}
             >
@@ -5790,7 +5795,7 @@ export default function App() {
               Recurring
             </button>
             <button
-              onClick={() => { setRecurringModalMode('multiple'); setEditingRecurringTask(null); setIsRecurringModalOpen(true); }}
+              onClick={() => { setRecurringModalMode('multiple'); setEditingRecurringTask(null); setPendingRecurringPrefill(null); setIsRecurringModalOpen(true); }}
               className="px-4 py-3 rounded-full flex items-center shadow-md hover:shadow-lg transition-all font-bold text-[11px] uppercase tracking-wide"
               style={{ backgroundColor: COLORS.white, color: COLORS.darkGreen, border: '1px solid #E5E7EB' }}
             >
@@ -6139,10 +6144,25 @@ export default function App() {
                           </span>
                         )}
                         <button
-                          onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(group.tasks[0]); setIsRecurringModalOpen(true); }}
+                          onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(group.tasks[0]); setPendingRecurringPrefill(null); setIsRecurringModalOpen(true); }}
                           className="px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-200 text-slate-700 bg-white hover:bg-slate-100"
                         >
                           Edit
+                        </button>
+                        <button
+                          onClick={() => {
+                            setRecurringModalMode('single');
+                            setEditingRecurringTask(null);
+                            setPendingRecurringPrefill({
+                              description: group.description,
+                              frequency: group.frequency,
+                              nextDue: group.nextDue || formatDate(new Date()),
+                            });
+                            setIsRecurringModalOpen(true);
+                          }}
+                          className="px-3 py-1.5 rounded-full text-xs font-semibold border border-emerald-200 text-emerald-700 bg-white hover:bg-emerald-50"
+                        >
+                          Add room
                         </button>
                         <button
                           onClick={() => handleBulkDeleteRecurringGroup(group.key)}
@@ -6177,7 +6197,7 @@ export default function App() {
                               </div>
                               <div className="flex justify-end gap-2 text-xs">
                                 <button
-                                  onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(task); setIsRecurringModalOpen(true); }}
+                                  onClick={() => { setRecurringModalMode('single'); setEditingRecurringTask(task); setPendingRecurringPrefill(null); setIsRecurringModalOpen(true); }}
                                   className="px-3 py-1 rounded-full border border-slate-200 text-slate-700 bg-white hover:bg-slate-100"
                                 >
                                   Edit
@@ -6932,7 +6952,16 @@ export default function App() {
           allLocations={ALL_LOCATIONS}
           isSaving={isSavingMaintenanceIssue}
         />
-        <RecurringTaskModal isOpen={isRecurringModalOpen} onClose={() => setIsRecurringModalOpen(false)} onSave={handleSaveRecurringTask} onDelete={handleDeleteRecurringTask} task={editingRecurringTask} allLocations={ALL_LOCATIONS} defaultMode={recurringModalMode} />
+        <RecurringTaskModal
+          isOpen={isRecurringModalOpen}
+          onClose={() => { setIsRecurringModalOpen(false); setPendingRecurringPrefill(null); }}
+          onSave={handleSaveRecurringTask}
+          onDelete={handleDeleteRecurringTask}
+          task={editingRecurringTask}
+          prefill={pendingRecurringPrefill}
+          allLocations={ALL_LOCATIONS}
+          defaultMode={recurringModalMode}
+        />
         <InvoiceModal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} bookings={bookings} />
         <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
           {alerts.map((alert) => {
