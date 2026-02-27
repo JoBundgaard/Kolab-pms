@@ -430,6 +430,63 @@ const addMonths = (dateStr, months = 1) => {
   return formatDate(d);
 };
 
+const addDays = (dateStr, days = 1) => {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  d.setDate(d.getDate() + days);
+  return formatDate(d);
+};
+
+const addYears = (dateStr, years = 1) => {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  d.setFullYear(d.getFullYear() + years);
+  return formatDate(d);
+};
+
+const RECURRING_FREQUENCY_OPTIONS = [
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'every_45_days', label: 'Every 45 days' },
+  { value: 'bimonthly', label: 'Every 2 months (bi-monthly)' },
+  { value: 'every_3_months', label: 'Every 3 months' },
+  { value: 'every_4_months', label: 'Every 4 months' },
+  { value: 'every_5_months', label: 'Every 5 months' },
+  { value: 'every_6_months', label: 'Every 6 months' },
+  { value: 'yearly', label: 'Yearly' },
+];
+
+const FREQUENCY_LABELS = RECURRING_FREQUENCY_OPTIONS.reduce((acc, option) => {
+  acc[option.value] = option.label;
+  return acc;
+}, {});
+
+const getFrequencyLabel = (frequency) => FREQUENCY_LABELS[frequency] || frequency || 'Monthly';
+
+const getNextRecurringDueDate = (dateStr, frequency) => {
+  switch (frequency) {
+    case 'weekly':
+      return addDays(dateStr, 7);
+    case 'every_45_days':
+      return addDays(dateStr, 45);
+    case 'bimonthly':
+      return addMonths(dateStr, 2);
+    case 'every_3_months':
+      return addMonths(dateStr, 3);
+    case 'every_4_months':
+      return addMonths(dateStr, 4);
+    case 'every_5_months':
+      return addMonths(dateStr, 5);
+    case 'every_6_months':
+      return addMonths(dateStr, 6);
+    case 'yearly':
+      return addYears(dateStr, 1);
+    case 'monthly':
+    default:
+      return addMonths(dateStr, 1);
+  }
+};
+
 const timeToMinutes = (timeStr, fallbackMinutes = 0) => {
   if (typeof timeStr !== 'string') return fallbackMinutes;
   const [h, m] = timeStr.split(':').map((v) => Number(v));
@@ -2310,7 +2367,11 @@ const RecurringTaskModal = ({ isOpen, onClose, onSave, onDelete, task, allLocati
                 value={formData.frequency}
                 onChange={handleChange}
               >
-                <option value="monthly">Monthly</option>
+                {RECURRING_FREQUENCY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
@@ -3671,7 +3732,7 @@ export default function App() {
 
         try {
           await setDoc(doc(db, 'maintenance', issueId), newIssue);
-          const nextDue = task.frequency === 'monthly' ? addMonths(dueDateStr, 1) : dueDateStr;
+          const nextDue = getNextRecurringDueDate(dueDateStr, task.frequency);
           await setDoc(doc(db, 'recurringTasks', task.id), { nextDue }, { merge: true });
           processedRecurringRef.current.add(processKey);
           console.log(`Created recurring maintenance issue from task ${task.id}`);
@@ -6057,7 +6118,7 @@ export default function App() {
                         <div>
                           <div className="font-semibold text-slate-800">{group.description}</div>
                           <div className="text-xs text-slate-500 flex flex-wrap gap-3 mt-1">
-                            <span className="uppercase tracking-wide font-semibold text-[11px]">Every {group.frequency}</span>
+                            <span className="uppercase tracking-wide font-semibold text-[11px]">{getFrequencyLabel(group.frequency)}</span>
                             <span>Applies to {group.roomCount} room{group.roomCount === 1 ? '' : 's'}</span>
                             {group.nextDue && <span className="text-slate-600">Next due {group.nextDue}</span>}
                           </div>
