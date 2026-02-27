@@ -3718,7 +3718,7 @@ export default function App() {
           continue;
         }
 
-        const issueId = Math.random().toString(36).substr(2, 9);
+        const issueId = `${task.id}_${dueDateStr}_${task.locationId}`.replace(/\//g, '_');
         const newIssue = {
           id: issueId,
           locationId: task.locationId,
