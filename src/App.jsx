@@ -3707,9 +3707,12 @@ export default function App() {
           continue;
         }
 
+        processedRecurringRef.current.add(processKey);
+
         const locationInfo = ALL_LOCATIONS.find((loc) => loc.id === task.locationId);
         if (!locationInfo) {
           console.warn('[recurring] skipped task with unknown location', task);
+          processedRecurringRef.current.delete(processKey);
           continue;
         }
 
@@ -3734,10 +3737,10 @@ export default function App() {
           await setDoc(doc(db, 'maintenance', issueId), newIssue);
           const nextDue = getNextRecurringDueDate(dueDateStr, task.frequency);
           await setDoc(doc(db, 'recurringTasks', task.id), { nextDue }, { merge: true });
-          processedRecurringRef.current.add(processKey);
           console.log(`Created recurring maintenance issue from task ${task.id}`);
         } catch (err) {
           console.error('Recurring task generation error:', err);
+          processedRecurringRef.current.delete(processKey);
         }
       }
     };
