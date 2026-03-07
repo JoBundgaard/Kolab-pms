@@ -2952,6 +2952,7 @@ export default function App() {
     let unsubMaintenance = () => {};
     let unsubRecurring = () => {};
     let unsubRoomStatuses = () => {};
+    let unsubHousekeepingOverrides = () => {};
     let listenersStarted = false;
 
     const startListeners = () => {
@@ -3040,6 +3041,22 @@ export default function App() {
         }
       );
 
+      const housekeepingOverridesQuery = query(collection(db, 'housekeepingOverrides'));
+      unsubHousekeepingOverrides = onSnapshot(
+        housekeepingOverridesQuery,
+        (snapshot) => {
+          const overrides = {};
+          snapshot.forEach((docSnap) => {
+            overrides[docSnap.id] = docSnap.data();
+          });
+          setHousekeepingOverrides(overrides);
+        },
+        (error) => {
+          console.error('Error listening to housekeeping overrides:', error);
+          pushAlert({ title: 'Sync error: housekeeping', message: error.message, code: error.code || 'firestore-error', raw: error });
+        }
+      );
+
       setLoading(false);
     };
 
@@ -3053,6 +3070,7 @@ export default function App() {
             unsubMaintenance();
             unsubRecurring();
             unsubRoomStatuses();
+            unsubHousekeepingOverrides();
             listenersStarted = false;
           }
           setAuthLoading(false);
@@ -3079,6 +3097,7 @@ export default function App() {
       unsubMaintenance();
       unsubRecurring();
       unsubRoomStatuses();
+      unsubHousekeepingOverrides();
     };
   }, []);
 
@@ -3798,16 +3817,30 @@ export default function App() {
     }
   };
 
-  const handleHousekeepingTaskUpdate = useCallback((taskId, patch) => {
+  const handleHousekeepingTaskUpdate = useCallback(async (taskId, patch, actingUser = user) => {
     if (!taskId || !patch) return;
+    const nowIso = new Date().toISOString();
+    const payload = {
+      ...patch,
+      updatedAt: nowIso,
+      updatedBy: actingUser?.uid || actingUser?.email || 'unknown',
+    };
+
     setHousekeepingOverrides((prev) => ({
       ...prev,
       [taskId]: {
         ...(prev?.[taskId] || {}),
-        ...patch,
+        ...payload,
       },
     }));
-  }, []);
+
+    try {
+      await setDoc(doc(db, 'housekeepingOverrides', taskId), payload, { merge: true });
+    } catch (error) {
+      console.error('Error updating housekeeping override:', { taskId, patch, error });
+      pushAlert({ title: 'Housekeeping update failed', message: error?.message || 'Could not save housekeeping status', code: error?.code, raw: error });
+    }
+  }, [user, pushAlert]);
 
   const handleSaveBooking = async (bookingData, actingUser = user) => {
     const targetId = editingBooking?.id || Math.random().toString(36).substr(2, 9);
