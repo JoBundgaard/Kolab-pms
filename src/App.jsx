@@ -3967,6 +3967,37 @@ export default function App() {
       setSavingBookingId(null);
     }
   };
+
+  const advanceRecurringTaskForResolvedIssue = async (issue, resolvedAtIso = new Date().toISOString()) => {
+    const recurringTaskId = issue?.recurringTaskId || issue?.templateId;
+    if (!recurringTaskId) return { attempted: false, advanced: false };
+
+    const recurringTask = recurringTasks.find((task) => task.id === recurringTaskId);
+    if (!recurringTask) {
+      console.warn('[recurring] linked task not found for resolved issue', { issueId: issue?.id, recurringTaskId });
+      return { attempted: false, advanced: false };
+    }
+
+    const referenceDue = formatDate(issue?.recurringDueDateKey || issue?.dueDate || recurringTask.nextDue || resolvedAtIso);
+    if (!referenceDue) return { attempted: true, advanced: false };
+
+    const nextDue = getNextRecurringDueDate(referenceDue, recurringTask.frequency);
+    const currentNextDue = formatDate(recurringTask.nextDue);
+    if (currentNextDue) {
+      const currentTs = new Date(currentNextDue).getTime();
+      const nextTs = new Date(nextDue).getTime();
+      if (!Number.isNaN(currentTs) && !Number.isNaN(nextTs) && currentTs >= nextTs) {
+        return { attempted: true, advanced: false };
+      }
+    }
+
+    await setDoc(
+      doc(db, 'recurringTasks', recurringTaskId),
+      { nextDue, lastCompleted: resolvedAtIso, updatedAt: resolvedAtIso },
+      { merge: true }
+    );
+    return { attempted: true, advanced: true, nextDue };
+  };
   
   const handleSaveMaintenanceIssue = async (issueData, actingUser = user) => {
     try {
@@ -3977,9 +4008,20 @@ export default function App() {
         severity: issueData.severity || 'normal',
       };
       if (editingMaintenanceIssue) {
-        const updatedIssue = { ...payload, id: editingMaintenanceIssue.id, reportedAt: editingMaintenanceIssue.reportedAt, updatedAt: new Date().toISOString() };
+        const resolvedNow = isResolvedStatus(payload.status) && !isResolvedStatus(editingMaintenanceIssue.status);
+        const resolvedAtIso = payload.resolvedAt || new Date().toISOString();
+        const updatedIssue = {
+          ...payload,
+          id: editingMaintenanceIssue.id,
+          reportedAt: editingMaintenanceIssue.reportedAt,
+          updatedAt: new Date().toISOString(),
+          ...(resolvedNow && !payload.resolvedAt ? { resolvedAt: resolvedAtIso } : {}),
+        };
         // Save to Firestore - real-time listener will update state
         await setDoc(doc(db, 'maintenance', editingMaintenanceIssue.id), updatedIssue, { merge: true });
+        if (resolvedNow) {
+          await advanceRecurringTaskForResolvedIssue({ ...editingMaintenanceIssue, ...updatedIssue }, resolvedAtIso);
+        }
       } else {
         const newIssue = {
             ...payload,
@@ -4156,9 +4198,20 @@ export default function App() {
     if (!ids || ids.length === 0) return;
     const now = new Date().toISOString();
     const failures = [];
+    const renewalFailures = [];
     for (const id of ids) {
       try {
+        const issue = maintenanceIssues.find((i) => i.id === id);
+        const wasResolved = isResolvedStatus(issue?.status);
         await setDoc(doc(db, 'maintenance', id), { status: 'resolved', resolvedAt: now, updatedAt: now }, { merge: true });
+        if (issue && !wasResolved) {
+          try {
+            await advanceRecurringTaskForResolvedIssue({ ...issue, status: 'resolved', resolvedAt: now }, now);
+          } catch (renewError) {
+            console.error('Recurring auto-renew failed during bulk resolve', id, renewError);
+            renewalFailures.push({ id, renewError });
+          }
+        }
       } catch (error) {
         console.error('Bulk resolve failed for issue', id, error);
         failures.push({ id, error });
@@ -4166,6 +4219,8 @@ export default function App() {
     }
     if (failures.length) {
       pushAlert({ title: 'Partial close', message: `Closed ${ids.length - failures.length}/${ids.length}. Some failed.`, tone: 'error' });
+    } else if (renewalFailures.length) {
+      pushAlert({ title: 'Issues closed', message: `Closed ${ids.length} issue${ids.length === 1 ? '' : 's'}, but ${renewalFailures.length} recurring schedule update${renewalFailures.length === 1 ? '' : 's'} failed.`, tone: 'error' });
     } else {
       pushAlert({ title: 'Issues closed', message: `Closed ${ids.length} issue${ids.length === 1 ? '' : 's'}`, tone: 'success' });
     }
@@ -5705,14 +5760,27 @@ export default function App() {
     };
 
     const updateIssue = async (issueId, updates, successMessage, undoPayload) => {
+      const previousIssue = maintenanceIssues.find((i) => i.id === issueId);
       try {
         await setDoc(doc(db, 'maintenance', issueId), { ...updates, updatedAt: new Date().toISOString() }, { merge: true });
         setMaintenanceIssues((prev) => prev.map((i) => (i.id === issueId ? { ...i, ...updates } : i)));
         setActiveIssue((prev) => (prev && prev.id === issueId ? { ...prev, ...updates } : prev));
+        const isResolvingNow = isResolvedStatus(updates.status) && !isResolvedStatus(previousIssue?.status);
+        if (isResolvingNow) {
+          try {
+            const resolvedAtIso = updates.resolvedAt || new Date().toISOString();
+            await advanceRecurringTaskForResolvedIssue({ ...previousIssue, ...updates }, resolvedAtIso);
+          } catch (renewError) {
+            console.error('Recurring auto-renew failed while resolving issue', issueId, renewError);
+            pushAlert({ title: 'Issue resolved, schedule update failed', message: 'Recurring next due date could not be advanced.', tone: 'error' });
+          }
+        }
         if (successMessage) pushAlert({ title: successMessage, tone: 'success' });
         if (undoPayload) startUndo(undoPayload);
+        return true;
       } catch (error) {
         pushAlert({ title: 'Update failed', message: error?.message || 'Unable to update issue', code: error?.code, raw: error });
+        return false;
       }
     };
 
