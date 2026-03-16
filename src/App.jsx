@@ -423,6 +423,64 @@ const calculateNights = (checkInDateStr, checkOutDateStr) => {
   return diffDays;
 };
 
+const normalizeBookingBreaks = (breaksInput = []) => {
+  if (!Array.isArray(breaksInput)) return [];
+  const normalized = breaksInput
+    .map((entry) => {
+      const startDate = formatDate(entry?.startDate || entry?.start || '');
+      const endDate = formatDate(entry?.endDate || entry?.end || '');
+      if (!startDate || !endDate) return null;
+      if (new Date(endDate).getTime() < new Date(startDate).getTime()) return null;
+      return {
+        id: entry?.id || randomId(),
+        startDate,
+        endDate,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+  return normalized;
+};
+
+const isDateOnBookingBreak = (booking, dateStr) => {
+  const breaks = normalizeBookingBreaks(booking?.guestBreakPeriods || booking?.breakPeriods || booking?.breaks || []);
+  if (!breaks.length) return false;
+  return breaks.some((brk) => dateStr >= brk.startDate && dateStr <= brk.endDate);
+};
+
+const bookingOccupiesDate = (booking, dateStr) => {
+  if (!booking || !dateStr) return false;
+  if (!(booking.checkIn <= dateStr && booking.checkOut > dateStr)) return false;
+  return !isDateOnBookingBreak(booking, dateStr);
+};
+
+const getBookingOccupiedDates = (booking) => {
+  const occupied = [];
+  if (!booking?.checkIn || !booking?.checkOut) return occupied;
+  const startTs = new Date(booking.checkIn).getTime();
+  const endTs = new Date(booking.checkOut).getTime();
+  if (Number.isNaN(startTs) || Number.isNaN(endTs) || startTs >= endTs) return occupied;
+
+  for (let ts = startTs; ts < endTs; ts += 86_400_000) {
+    const dateStr = formatDate(new Date(ts));
+    if (bookingOccupiesDate(booking, dateStr)) occupied.push(dateStr);
+  }
+  return occupied;
+};
+
+const bookingsOverlapConsideringBreaks = (bookingA, bookingB) => {
+  if (!bookingA || !bookingB) return false;
+  const overlapStartTs = Math.max(new Date(bookingA.checkIn).getTime(), new Date(bookingB.checkIn).getTime());
+  const overlapEndTs = Math.min(new Date(bookingA.checkOut).getTime(), new Date(bookingB.checkOut).getTime());
+  if (Number.isNaN(overlapStartTs) || Number.isNaN(overlapEndTs) || overlapStartTs >= overlapEndTs) return false;
+
+  for (let ts = overlapStartTs; ts < overlapEndTs; ts += 86_400_000) {
+    const dateStr = formatDate(new Date(ts));
+    if (bookingOccupiesDate(bookingA, dateStr) && bookingOccupiesDate(bookingB, dateStr)) return true;
+  }
+  return false;
+};
+
 const addMonths = (dateStr, months = 1) => {
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return dateStr;
@@ -512,14 +570,9 @@ const getDaysArray = (start, end) => {
 
 const getOccupiedDates = (bookings, roomId, excludeBookingId) => {
   const occupied = new Set();
-  bookings.forEach(b => {
-    if (b.roomId !== roomId || b.status === 'cancelled' || b.id === excludeBookingId) return;
-    let current = new Date(b.checkIn);
-    const end = new Date(b.checkOut);
-    while (current < end) {
-      occupied.add(formatDate(current));
-      current.setDate(current.getDate() + 1);
-    }
+  bookings.forEach((b) => {
+    if (b.roomId !== roomId || isCancelledStatus(b.status) || b.id === excludeBookingId) return;
+    getBookingOccupiedDates(b).forEach((dateStr) => occupied.add(dateStr));
   });
   return occupied;
 };
@@ -537,10 +590,10 @@ const getDaySummaryForDate = (dateStr, bookings) => {
   const weekdayKey = getWeekdayKey(dateStr);
   const longTermCleans = bookings.filter((b) => {
     if (!b.isLongTerm) return false;
-    if (b.status === 'cancelled') return false;
+    if (isCancelledStatus(b.status)) return false;
     if (!b.weeklyCleaningDay) return false;
     if (b.weeklyCleaningDay !== weekdayKey) return false;
-    return b.checkIn <= dateStr && b.checkOut > dateStr;
+    return bookingOccupiesDate(b, dateStr);
   });
 
   const roomsToClean = dayCheckOuts.length + longTermCleans.length;
@@ -557,7 +610,7 @@ const getDaySummaryForDate = (dateStr, bookings) => {
 // Builds cleaning tasks for a specific date based on room status, check-outs, and long-stay weekly cleans.
 function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
   const checkoutsForDate = bookings
-    .filter((b) => b.checkOut === targetDateStr && b.status !== 'cancelled' && b.status !== 'checked-out');
+    .filter((b) => b.checkOut === targetDateStr && !isCancelledStatus(b.status) && b.status !== 'checked-out');
 
   const checkoutRoomIds = checkoutsForDate.map((b) => b.roomId);
   const weekdayKey = getWeekdayKey(targetDateStr);
@@ -566,11 +619,11 @@ function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
     bookings
       .filter((b) => {
         if (!b.isLongTerm) return false;
-        if (b.status === 'cancelled') return false;
+        if (isCancelledStatus(b.status)) return false;
         if (!b.weeklyCleaningDay) return false;
         if (b.weeklyCleaningDay !== weekdayKey) return false;
         // Only treat as weekly clean when guest is already in-house before target date.
-        return b.checkIn < targetDateStr && b.checkOut > targetDateStr;
+        return b.checkIn < targetDateStr && bookingOccupiesDate(b, targetDateStr);
       })
       .map((b) => b.roomId)
   );
@@ -587,7 +640,7 @@ function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
     const storedStatus = statusData.status || 'clean';
 
     const incomingToday = bookings.find(
-      (b) => b.roomId === room.id && b.checkIn === targetDateStr && b.status !== 'cancelled'
+      (b) => b.roomId === room.id && b.checkIn === targetDateStr && !isCancelledStatus(b.status)
     );
 
     const isCheckout = checkoutRoomIds.includes(room.id);
@@ -966,6 +1019,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     netEarningsFromEmail: '',
     airbnbBaseEarningsVnd: '',
     monthlyRentVnd: '',
+    hasGuestBreaks: false,
+    guestBreakPeriods: [],
   });
   
   const [nights, setNights] = useState(0);
@@ -1050,6 +1105,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         netEarningsFromEmail: booking.netEarningsFromEmail ?? '',
         airbnbBaseEarningsVnd: booking.airbnbBaseEarningsVnd ?? booking.netEarningsFromEmail ?? booking.price ?? '',
         monthlyRentVnd: booking.monthlyRentVnd ?? booking.price ?? '',
+        hasGuestBreaks: !!booking.hasGuestBreaks || normalizeBookingBreaks(booking.guestBreakPeriods || booking.breakPeriods || []).length > 0,
+        guestBreakPeriods: normalizeBookingBreaks(booking.guestBreakPeriods || booking.breakPeriods || []),
       });
       setCategoryManual(!!booking.stayCategory);
       const normalizedServices = Array.isArray(booking.services) ? booking.services.map(normalizeServiceEntry) : [];
@@ -1083,6 +1140,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         netEarningsFromEmail: '',
         airbnbBaseEarningsVnd: '',
         monthlyRentVnd: '',
+        hasGuestBreaks: false,
+        guestBreakPeriods: [],
       });
       setCategoryManual(false);
       setServices([]);
@@ -1178,18 +1237,15 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       if (b.roomId !== formData.roomId) return;
       if (!isBlockingStatus(b.status)) return;
       if (booking && b.id === booking.id) return;
-
-      const startTs = new Date(b.checkIn).getTime();
-      const endTs = new Date(b.checkOut).getTime();
-
-      for (let ts = startTs, day = 0; ts < endTs; ts += 86_400_000, day += 1) {
-        const dateStr = formatDate(new Date(ts));
+      const occupiedDates = getBookingOccupiedDates(b);
+      const occupiedSet = new Set(occupiedDates);
+      occupiedDates.forEach((dateStr) => {
         checkInBlocked.add(dateStr);
-        if (day > 0) {
-          // For check-out selection, allow the boundary that matches another booking's check-in.
+        if (occupiedSet.has(addDays(dateStr, -1))) {
+          // For check-out selection, allow boundaries where occupancy starts.
           checkOutBlocked.add(dateStr);
         }
-      }
+      });
     });
 
     return { checkInBlocked, checkOutBlocked };
@@ -1209,7 +1265,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     return rooms.map(room => {
       const bookingsForRoom = roomBookings[room.id] || [];
       const isOccupiedToday = bookingsForRoom.some(b => 
-        b.checkIn <= today && b.checkOut > today && (!booking || b.id !== booking.id)
+        bookingOccupiesDate(b, today) && (!booking || b.id !== booking.id)
       );
 
       let displayStatus = '';
@@ -1237,8 +1293,25 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       setPaymentStatusError('Select whether this booking is paid or unpaid.');
       return;
     }
-    
-    const conflictResult = checkBookingConflict(formData, booking ? booking.id : null);
+
+    const draftBreaks = Array.isArray(formData.guestBreakPeriods) ? formData.guestBreakPeriods : [];
+    if (formData.hasGuestBreaks && draftBreaks.some((brk) => !brk?.startDate || !brk?.endDate)) {
+      setConflictError('Each break must have both start and end dates.');
+      return;
+    }
+
+    const rawBreaks = formData.hasGuestBreaks ? normalizeBookingBreaks(draftBreaks) : [];
+    for (const brk of rawBreaks) {
+      if (brk.startDate < formData.checkIn || brk.endDate >= formData.checkOut) {
+        setConflictError(`Break ${brk.startDate} → ${brk.endDate} must be within the stay (${formData.checkIn} → ${addDays(formData.checkOut, -1)}).`);
+        return;
+      }
+    }
+
+    const conflictResult = checkBookingConflict(
+      { ...formData, hasGuestBreaks: formData.hasGuestBreaks, guestBreakPeriods: rawBreaks },
+      booking ? booking.id : null
+    );
 
     if (conflictResult.conflict) {
         setConflictError(conflictResult.reason);
@@ -1284,6 +1357,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       airbnbBaseEarningsVnd,
       netEarningsFromEmail,
       monthlyRentVnd,
+      hasGuestBreaks: !!formData.hasGuestBreaks && rawBreaks.length > 0,
+      guestBreakPeriods: rawBreaks,
     });
   };
 
@@ -1329,6 +1404,33 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
           [name]: type === 'checkbox' ? checked : value
       }));
     }
+  };
+
+  const addGuestBreakPeriod = () => {
+    setFormData((prev) => ({
+      ...prev,
+      hasGuestBreaks: true,
+      guestBreakPeriods: [
+        ...(Array.isArray(prev.guestBreakPeriods) ? prev.guestBreakPeriods : []),
+        { id: randomId(), startDate: '', endDate: '' },
+      ],
+    }));
+  };
+
+  const updateGuestBreakPeriod = (id, field, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      guestBreakPeriods: (Array.isArray(prev.guestBreakPeriods) ? prev.guestBreakPeriods : []).map((period) =>
+        period.id === id ? { ...period, [field]: value } : period
+      ),
+    }));
+  };
+
+  const removeGuestBreakPeriod = (id) => {
+    setFormData((prev) => ({
+      ...prev,
+      guestBreakPeriods: (Array.isArray(prev.guestBreakPeriods) ? prev.guestBreakPeriods : []).filter((period) => period.id !== id),
+    }));
   };
 
   const addServiceFromPreset = (preset) => {
@@ -1741,6 +1843,75 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
               </select>
             </div>
           )}
+
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Guest Breaks</div>
+                <div className="text-xs text-slate-500 mt-1">If this guest leaves temporarily, mark the break dates so those days can be booked by someone else.</div>
+              </div>
+              <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  name="hasGuestBreaks"
+                  checked={!!formData.hasGuestBreaks}
+                  onChange={handleChange}
+                  className="h-4 w-4 rounded border-slate-300"
+                  style={{ accentColor: COLORS.darkGreen }}
+                />
+                Enable
+              </label>
+            </div>
+
+            {formData.hasGuestBreaks && (
+              <div className="space-y-2">
+                {(formData.guestBreakPeriods || []).length === 0 ? (
+                  <div className="text-xs text-slate-500">No breaks added yet.</div>
+                ) : (
+                  (formData.guestBreakPeriods || []).map((period, idx) => (
+                    <div key={period.id || idx} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Away from</label>
+                        <input
+                          type="date"
+                          value={period.startDate || ''}
+                          min={formData.checkIn || undefined}
+                          max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
+                          onChange={(e) => updateGuestBreakPeriod(period.id, 'startDate', e.target.value)}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Until</label>
+                        <input
+                          type="date"
+                          value={period.endDate || ''}
+                          min={period.startDate || formData.checkIn || undefined}
+                          max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
+                          onChange={(e) => updateGuestBreakPeriod(period.id, 'endDate', e.target.value)}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeGuestBreakPeriod(period.id)}
+                        className="px-3 py-2 rounded-lg border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                )}
+                <button
+                  type="button"
+                  onClick={addGuestBreakPeriod}
+                  className="px-3 py-2 rounded-full border border-slate-200 text-xs font-semibold bg-white hover:bg-slate-50"
+                >
+                  + Add break dates
+                </button>
+              </div>
+            )}
+          </div>
           
           <div className="py-2 text-sm font-medium flex items-center justify-end">
             <Clock size={16} className="text-slate-500 mr-2" />
@@ -3479,7 +3650,7 @@ export default function App() {
       return calendarBookings.reduce((sum, booking) => {
         if (!booking || booking.status === 'cancelled') return sum;
         if (!roomsForProperty.has(booking.roomId)) return sum;
-        if (!(booking.checkIn <= dateStr && booking.checkOut > dateStr)) return sum;
+        if (!bookingOccupiesDate(booking, dateStr)) return sum;
 
         if (!booking.bikeParkingNeeded) return sum;
         const bikes = Number(booking.bikeCount);
@@ -3646,14 +3817,7 @@ export default function App() {
       if (existingBooking.roomId !== newRoomId) return false;
       if (existingBooking.id === excludeBookingId) return false;
       if (!isBlockingStatus(existingBooking.status)) return false;
-
-      const existingCheckIn = new Date(existingBooking.checkIn).getTime();
-      const existingCheckOut = new Date(existingBooking.checkOut).getTime(); 
-
-      // Inclusive check-in, exclusive check-out to permit same-day turnover.
-      const overlaps = (newCheckIn < existingCheckOut) && (newCheckOut > existingCheckIn);
-
-      return overlaps;
+      return bookingsOverlapConsideringBreaks(existingBooking, newBookingData);
     });
 
     if (conflictingBooking) {
@@ -3675,7 +3839,7 @@ export default function App() {
           newCheckOut,
           existingCheckIn: new Date(conflictingBooking.checkIn).getTime(),
           existingCheckOut: new Date(conflictingBooking.checkOut).getTime(),
-          formula: '(newCheckIn < existingCheckOut) && (newCheckOut > existingCheckIn)',
+          formula: 'bookingsOverlapConsideringBreaks(existingBooking, newBookingData)',
         },
       });
       return { 
@@ -4700,7 +4864,7 @@ export default function App() {
   // --- View Renderers ---
 
   const renderDashboard = () => {
-    const activeBookings = bookings.filter(b => b.checkIn <= TODAY_STR && b.checkOut > TODAY_STR && b.status !== 'cancelled');
+    const activeBookings = bookings.filter((b) => !isCancelledStatus(b.status) && bookingOccupiesDate(b, TODAY_STR));
     const checkingIn = bookings.filter(b => b.checkIn === TODAY_STR && b.status !== 'cancelled');
     const checkingOutToday = bookings.filter(b => b.checkOut === TODAY_STR && b.status !== 'cancelled');
     const checkingInTomorrow = bookings.filter(b => b.checkIn === TOMORROW_STR && b.status !== 'cancelled');
@@ -4717,11 +4881,11 @@ export default function App() {
     } = splitCleaningByPriority(cleaningTasks);
 
     const findIncomingForDate = (roomId, targetDate) => bookings.find(
-      (b) => b.roomId === roomId && b.checkIn === targetDate && b.status !== 'cancelled'
+      (b) => b.roomId === roomId && b.checkIn === targetDate && !isCancelledStatus(b.status)
     );
 
     const findInHouseForDate = (roomId, targetDate) => bookings.find(
-      (b) => b.roomId === roomId && b.status !== 'cancelled' && b.checkIn <= targetDate && b.checkOut > targetDate
+      (b) => b.roomId === roomId && !isCancelledStatus(b.status) && bookingOccupiesDate(b, targetDate)
     );
 
     const getRoomTagClasses = (roomId, { highlightPriority, highlightWeekly } = {}) => {
@@ -5032,7 +5196,7 @@ export default function App() {
 
     const getBookingForCell = (roomId, date) => {
       const dateStr = formatDate(date);
-      return calendarBookings.find(b => b.roomId === roomId && b.checkIn <= dateStr && b.checkOut > dateStr && b.status !== 'cancelled');
+      return calendarBookings.find((b) => b.roomId === roomId && !isCancelledStatus(b.status) && bookingOccupiesDate(b, dateStr));
     };
       const dateIndexMap = new Map(dates.map((d, i) => [formatDate(d), i]));
     return (
@@ -5200,30 +5364,24 @@ export default function App() {
                           const weekdayKey = getWeekdayKey(dateStr);
                           const booking = getBookingForCell(room.id, date);
                           const dateIndex = dateIndexMap.get(dateStr) ?? 0;
-                          const isStart = booking && booking.checkIn === dateStr;
-                          const isTruncatedAtStart = booking && booking.checkIn < formatDate(dates[0]);
+                          const previousDateStr = addDays(dateStr, -1);
+                          const isStart = !!booking && !bookingOccupiesDate(booking, previousDateStr);
+                          const isTruncatedAtStart = !!booking && dateIndex === 0 && bookingOccupiesDate(booking, previousDateStr);
                           const lastDateStr = formatDate(dates[dates.length - 1]);
                           const hasLongTermCleaningToday = calendarBookings.some((b) => {
                             if (!b.isLongTerm) return false;
-                            if (b.status === 'cancelled') return false;
+                            if (isCancelledStatus(b.status)) return false;
                             if (b.roomId !== room.id) return false;
-
-                            return (
-                              b.checkIn <= dateStr &&
-                              b.checkOut > dateStr &&
-                              b.weeklyCleaningDay === weekdayKey
-                            );
+                            return bookingOccupiesDate(b, dateStr) && b.weeklyCleaningDay === weekdayKey;
                           });
                           let colSpan = 0;
                           if (booking) {
-                            const start = new Date(booking.checkIn);
-                            if (isStart) {
-                              const duration = calculateNights(formatDate(start), booking.checkOut);
-                              colSpan = Math.min(duration, dates.length - dateIndex);
-                            } else if (isTruncatedAtStart && dateIndex === 0) {
-                              const windowStart = dates[0];
-                              const visibleDuration = calculateNights(formatDate(windowStart), booking.checkOut);
-                              colSpan = Math.min(visibleDuration, dates.length);
+                            if (isStart || isTruncatedAtStart) {
+                              for (let idx = dateIndex; idx < dates.length; idx += 1) {
+                                const segmentDateStr = formatDate(dates[idx]);
+                                if (!bookingOccupiesDate(booking, segmentDateStr)) break;
+                                colSpan += 1;
+                              }
                             }
                           }
                           const shouldRenderBlock = booking && (isStart || (isTruncatedAtStart && dateIndex === 0));

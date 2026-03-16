@@ -14,6 +14,25 @@ const weekdayKey = (dateStr) => {
   return keys[d.getDay ? d.getDay() : 0] || 'sunday';
 };
 
+const normalizeBookingBreaks = (breaksInput = []) => {
+  if (!Array.isArray(breaksInput)) return [];
+  return breaksInput
+    .map((entry) => {
+      const startDate = safeFormatDate(entry?.startDate || entry?.start || '');
+      const endDate = safeFormatDate(entry?.endDate || entry?.end || '');
+      if (!startDate || !endDate) return null;
+      if (new Date(endDate).getTime() < new Date(startDate).getTime()) return null;
+      return { startDate, endDate };
+    })
+    .filter(Boolean);
+};
+
+const isDateOnBookingBreak = (booking, dateStr) => {
+  const breaks = normalizeBookingBreaks(booking?.guestBreakPeriods || booking?.breakPeriods || booking?.breaks || []);
+  if (!breaks.length) return false;
+  return breaks.some((brk) => dateStr >= brk.startDate && dateStr <= brk.endDate);
+};
+
 export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDate, overrides = {} }) {
   const dateStr = safeFormatDate(targetDate);
   if (!dateStr) return [];
@@ -61,6 +80,7 @@ export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDa
     // Weekly task for long/medium stays
     const isLong = booking.isLongTerm || booking.stayCategory === 'medium' || booking.stayCategory === 'long';
     if (isLong && booking.weeklyCleaningDay === weekday && checkIn && checkOut && checkIn < dateStr && checkOut > dateStr) {
+      if (isDateOnBookingBreak(booking, dateStr)) return;
       const id = `hk_${booking.id || booking.roomId || 'unknown'}_${dateStr}_weekly`;
       const override = overrides[id] || {};
       tasks.push({
