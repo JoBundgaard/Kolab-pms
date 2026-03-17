@@ -21,6 +21,7 @@ export function buildHousekeepingWhatsappMessage({ tasks = [], selectedDate, cle
   const typeLabel = (type) => {
     if (type === 'checkout') return 'Checkout clean';
     if (type === 'weekly') return 'Weekly clean';
+    if (type === 'recurring') return 'Recurring clean';
     if (type === 'touchup') return 'Touch-up';
     return type || 'Task';
   };
@@ -40,7 +41,8 @@ export function buildHousekeepingWhatsappMessage({ tasks = [], selectedDate, cle
     grouped[prop].forEach((task) => {
       const prio = task.priority ?? '-';
       const staff = task.assignedTo || 'Unassigned';
-      lines.push(`• ${task.roomLabel || 'Room'} – ${typeLabel(task.type)} – Prio ${prio} – ${staff}`);
+      const desc = task.description ? ` (${task.description})` : '';
+      lines.push(`• ${task.roomLabel || 'Room'} – ${typeLabel(task.type)}${desc} – Prio ${prio} – ${staff}`);
     });
     lines.push('');
   });
@@ -95,12 +97,14 @@ export default function HousekeepingTaskManager({
 
   const handleStatus = (id, status) => {
     if (!onUpdateTask) return;
-    onUpdateTask(id, { status });
+    const task = orderedTasks.find((t) => t.id === id);
+    onUpdateTask(id, { status }, task);
   };
 
   const handleAssign = (id, staff) => {
     if (!onUpdateTask) return;
-    onUpdateTask(id, { assignedTo: staff || null });
+    const task = orderedTasks.find((t) => t.id === id);
+    onUpdateTask(id, { assignedTo: staff || null }, task);
   };
 
   const reorderByDrag = (sourceId, targetId) => {
@@ -116,7 +120,7 @@ export default function HousekeepingTaskManager({
     next.forEach((task, idx) => {
       const nextPriority = idx + 1;
       if (Number(task.priority) !== nextPriority) {
-        onUpdateTask(task.id, { priority: nextPriority });
+        onUpdateTask(task.id, { priority: nextPriority }, task);
       }
     });
   };
@@ -257,7 +261,10 @@ export default function HousekeepingTaskManager({
                           <span className="text-slate-400 cursor-grab select-none" aria-hidden>⋮⋮</span>
                           <span>{task.roomLabel || 'Room'}</span>
                         </div>
-                        <div className="text-xs text-slate-500">{task.propertyName || 'Property'}</div>
+                        <div className="text-xs text-slate-500">
+                          {task.propertyName || 'Property'}
+                          {task.description ? ` · ${task.description}` : ''}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-xs font-semibold text-slate-700 uppercase">{task.type}</td>
                       <td className="px-4 py-3">

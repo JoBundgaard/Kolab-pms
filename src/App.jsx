@@ -2806,6 +2806,7 @@ export default function App() {
   const [roomStatuses, setRoomStatuses] = useState({});
   const [maintenanceIssues, setMaintenanceIssues] = useState([]);
   const [recurringTasks, setRecurringTasks] = useState([]);
+  const [recurringCleaningTasks, setRecurringCleaningTasks] = useState([]);
   const [loadingRecurring, setLoadingRecurring] = useState(true);
   const [dataError, setDataError] = useState(null); // surfaces listener/auth errors
   const [bookingCategoryFilter, setBookingCategoryFilter] = useState('all');
@@ -2833,6 +2834,14 @@ export default function App() {
   const [housekeepingDate, setHousekeepingDate] = useState(() => formatDate(new Date()));
   const [housekeepingStartTime, setHousekeepingStartTime] = useState(HOUSEKEEPING_START_TIME);
   const [housekeepingOverrides, setHousekeepingOverrides] = useState({});
+  const [recurringCleaningDraft, setRecurringCleaningDraft] = useState(() => ({
+    roomId: ALL_ROOMS?.[0]?.id || '',
+    description: '',
+    frequency: 'weekly',
+    nextDue: formatDate(new Date()),
+    priority: 2,
+    assignedTo: 'Unassigned',
+  }));
   const [bookingSearchTerm, setBookingSearchTerm] = useState('');
   const autoCheckoutProcessedRef = useRef(new Set());
   const autoCheckinProcessedRef = useRef(new Set());
@@ -3123,6 +3132,7 @@ export default function App() {
     let unsubGuests = () => {};
     let unsubMaintenance = () => {};
     let unsubRecurring = () => {};
+    let unsubRecurringCleaning = () => {};
     let unsubRoomStatuses = () => {};
     let unsubHousekeepingOverrides = () => {};
     let listenersStarted = false;
@@ -3194,6 +3204,18 @@ export default function App() {
         }
       );
 
+      const recurringCleaningQuery = query(collection(db, 'recurringCleaningTasks'));
+      unsubRecurringCleaning = onSnapshot(
+        recurringCleaningQuery,
+        (snapshot) => {
+          setRecurringCleaningTasks(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        },
+        (error) => {
+          console.error('Error listening to recurring cleaning tasks:', error);
+          pushAlert({ title: 'Sync error: recurring cleaning', message: error.message, code: error.code || 'firestore-error', raw: error });
+        }
+      );
+
       const roomStatusesQuery = query(collection(db, 'roomStatuses'));
       unsubRoomStatuses = onSnapshot(
         roomStatusesQuery,
@@ -3241,6 +3263,7 @@ export default function App() {
             unsubGuests();
             unsubMaintenance();
             unsubRecurring();
+            unsubRecurringCleaning();
             unsubRoomStatuses();
             unsubHousekeepingOverrides();
             listenersStarted = false;
@@ -3268,6 +3291,7 @@ export default function App() {
       unsubGuests();
       unsubMaintenance();
       unsubRecurring();
+      unsubRecurringCleaning();
       unsubRoomStatuses();
       unsubHousekeepingOverrides();
     };
@@ -3387,6 +3411,7 @@ export default function App() {
       setRoomStatuses({});
       setMaintenanceIssues([]);
       setRecurringTasks([]);
+      setRecurringCleaningTasks([]);
       setLoadingRecurring(true);
       processedRecurringRef.current = new Set();
     } catch (err) {
@@ -3706,7 +3731,7 @@ export default function App() {
     return ALL_ROOMS.filter((room) => checkoutRoomIds.has(room.id));
   }, [checkoutsForDate]);
 
-  const housekeepingTasks = useMemo(
+  const bookingHousekeepingTasks = useMemo(
     () =>
       normalizeHousekeepingTasks({
         bookings: (bookings || []).filter((b) => isBlockingStatus(b?.status)),
@@ -3715,6 +3740,37 @@ export default function App() {
         overrides: housekeepingOverrides,
       }),
     [bookings, housekeepingDate, housekeepingOverrides]
+  );
+
+  const recurringHousekeepingDueTasks = useMemo(() => {
+    if (!housekeepingDate) return [];
+    return (recurringCleaningTasks || [])
+      .filter((task) => task?.roomId && task?.nextDue && task.nextDue <= housekeepingDate)
+      .map((task) => {
+        const room = ALL_ROOMS.find((r) => r.id === task.roomId);
+        const dueKey = formatDate(task.nextDue);
+        const occurrenceId = `hk_rec_${task.id}_${dueKey}`;
+        const override = housekeepingOverrides[occurrenceId] || {};
+        return {
+          id: occurrenceId,
+          recurringTemplateId: task.id,
+          recurringDueDateKey: dueKey,
+          roomId: task.roomId,
+          roomLabel: room?.name || task.roomId,
+          propertyName: room?.propertyName || 'Unknown property',
+          type: 'recurring',
+          description: task.description || 'Recurring cleaning task',
+          dueDate: dueKey,
+          status: override.status || 'dirty',
+          priority: override.priority ?? task.priority ?? 2,
+          assignedTo: override.assignedTo ?? task.assignedTo ?? 'Unassigned',
+        };
+      });
+  }, [recurringCleaningTasks, housekeepingDate, housekeepingOverrides]);
+
+  const housekeepingTasks = useMemo(
+    () => [...bookingHousekeepingTasks, ...recurringHousekeepingDueTasks],
+    [bookingHousekeepingTasks, recurringHousekeepingDueTasks]
   );
 
   const cleaningTasks = useMemo(
@@ -3982,9 +4038,10 @@ export default function App() {
     }
   };
 
-  const handleHousekeepingTaskUpdate = useCallback(async (taskId, patch, actingUser = user) => {
+  const handleHousekeepingTaskUpdate = useCallback(async (taskId, patch, taskMeta = null, actingUser = user) => {
     if (!taskId || !patch) return;
     const nowIso = new Date().toISOString();
+    const resolvedTask = taskMeta || housekeepingTasks.find((t) => t.id === taskId) || null;
     const payload = {
       ...patch,
       updatedAt: nowIso,
@@ -4001,11 +4058,99 @@ export default function App() {
 
     try {
       await setDoc(doc(db, 'housekeepingOverrides', taskId), payload, { merge: true });
+
+      // Keep recurring cleaning template settings in sync with daily ordering/assignment.
+      const recurringTemplateId = resolvedTask?.recurringTemplateId;
+      if (recurringTemplateId) {
+        const template = recurringCleaningTasks.find((t) => t.id === recurringTemplateId);
+        if (template) {
+          if (patch.priority != null || patch.assignedTo != null) {
+            await setDoc(
+              doc(db, 'recurringCleaningTasks', recurringTemplateId),
+              {
+                ...(patch.priority != null ? { priority: Number(patch.priority) || 1 } : {}),
+                ...(patch.assignedTo != null ? { assignedTo: patch.assignedTo || 'Unassigned' } : {}),
+                updatedAt: nowIso,
+                updatedBy: actingUser?.uid || actingUser?.email || 'unknown',
+              },
+              { merge: true }
+            );
+          }
+
+          if (patch.status === 'clean') {
+            const dueKey = formatDate(resolvedTask?.recurringDueDateKey || template.nextDue || nowIso);
+            const nextDue = getNextRecurringDueDate(dueKey, template.frequency || 'weekly');
+            const currentNextDue = formatDate(template.nextDue);
+            if (!currentNextDue || new Date(nextDue).getTime() > new Date(currentNextDue).getTime()) {
+              await setDoc(
+                doc(db, 'recurringCleaningTasks', recurringTemplateId),
+                { nextDue, lastCompleted: nowIso, updatedAt: nowIso, updatedBy: actingUser?.uid || actingUser?.email || 'unknown' },
+                { merge: true }
+              );
+            }
+          }
+        }
+      }
     } catch (error) {
       console.error('Error updating housekeeping override:', { taskId, patch, error });
       pushAlert({ title: 'Housekeeping update failed', message: error?.message || 'Could not save housekeeping status', code: error?.code, raw: error });
     }
-  }, [user, pushAlert]);
+  }, [user, pushAlert, housekeepingTasks, recurringCleaningTasks]);
+
+  const handleCreateRecurringCleaningTask = async (actingUser = user) => {
+    const roomId = recurringCleaningDraft.roomId || '';
+    const description = (recurringCleaningDraft.description || '').trim();
+    const frequency = recurringCleaningDraft.frequency || 'weekly';
+    const nextDue = formatDate(recurringCleaningDraft.nextDue || '');
+    const priority = Math.max(1, Number(recurringCleaningDraft.priority) || 2);
+    const assignedTo = recurringCleaningDraft.assignedTo || 'Unassigned';
+
+    if (!roomId || !description || !nextDue) {
+      pushAlert({ title: 'Recurring cleaning not saved', message: 'Room, description, and next due date are required.', tone: 'error' });
+      return;
+    }
+
+    const room = ALL_ROOMS.find((r) => r.id === roomId);
+    const id = Math.random().toString(36).substr(2, 9);
+    const payload = {
+      id,
+      roomId,
+      roomName: room?.name || roomId,
+      propertyName: room?.propertyName || 'Unknown property',
+      description,
+      frequency,
+      nextDue,
+      priority,
+      assignedTo,
+      createdAt: new Date().toISOString(),
+      createdBy: actingUser?.uid || actingUser?.email || 'unknown',
+    };
+
+    try {
+      await setDoc(doc(db, 'recurringCleaningTasks', id), payload);
+      setRecurringCleaningDraft((prev) => ({
+        ...prev,
+        description: '',
+        nextDue: formatDate(new Date()),
+      }));
+      pushAlert({ title: 'Recurring cleaning added', message: `${payload.roomName}: ${payload.description}`, tone: 'success' });
+    } catch (error) {
+      console.error('Error saving recurring cleaning task:', error);
+      pushAlert({ title: 'Recurring cleaning save failed', message: error?.message || 'Please try again', code: error?.code, raw: error });
+    }
+  };
+
+  const handleDeleteRecurringCleaningTask = async (id) => {
+    if (!id) return;
+    if (!confirm('Delete this recurring cleaning task?')) return;
+    try {
+      await deleteDoc(doc(db, 'recurringCleaningTasks', id));
+      pushAlert({ title: 'Recurring cleaning deleted', tone: 'success' });
+    } catch (error) {
+      console.error('Error deleting recurring cleaning task:', error);
+      pushAlert({ title: 'Delete failed', message: error?.message || 'Unable to delete recurring cleaning task', code: error?.code, raw: error });
+    }
+  };
 
   const handleSaveBooking = async (bookingData, actingUser = user) => {
     const targetId = editingBooking?.id || Math.random().toString(36).substr(2, 9);
@@ -5861,6 +6006,96 @@ export default function App() {
   const renderHousekeeping = () => (
     <div className="space-y-6">
       <div><h2 className="text-3xl font-serif font-bold mb-2" style={{ color: COLORS.darkGreen }}>Cleaning Task Manager</h2></div>
+      <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] p-4 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold text-slate-800">Recurring Cleaning Tasks</div>
+            <div className="text-xs text-slate-500">Auto-adds to daily cleaning tasks when next due date is reached.</div>
+          </div>
+          <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-xs text-slate-600">{recurringCleaningTasks.length} template{recurringCleaningTasks.length === 1 ? '' : 's'}</span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+          <select
+            value={recurringCleaningDraft.roomId}
+            onChange={(e) => setRecurringCleaningDraft((prev) => ({ ...prev, roomId: e.target.value }))}
+            className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+          >
+            {ALL_ROOMS.map((room) => (
+              <option key={room.id} value={room.id}>{room.name} ({room.propertyName})</option>
+            ))}
+          </select>
+          <input
+            type="text"
+            placeholder="Task description"
+            value={recurringCleaningDraft.description}
+            onChange={(e) => setRecurringCleaningDraft((prev) => ({ ...prev, description: e.target.value }))}
+            className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white md:col-span-2"
+          />
+          <select
+            value={recurringCleaningDraft.frequency}
+            onChange={(e) => setRecurringCleaningDraft((prev) => ({ ...prev, frequency: e.target.value }))}
+            className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+          >
+            {RECURRING_FREQUENCY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <input
+            type="date"
+            value={recurringCleaningDraft.nextDue}
+            onChange={(e) => setRecurringCleaningDraft((prev) => ({ ...prev, nextDue: e.target.value }))}
+            className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+          />
+          <button
+            onClick={() => handleCreateRecurringCleaningTask()}
+            className="px-3 py-2 rounded-lg text-sm font-semibold border border-[#26402E] bg-[#E2F05D]/50 text-[#26402E] hover:bg-[#E2F05D]"
+          >
+            Add recurring
+          </button>
+        </div>
+
+        {recurringCleaningTasks.length > 0 && (
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Room</th>
+                  <th className="px-3 py-2">Description</th>
+                  <th className="px-3 py-2">Frequency</th>
+                  <th className="px-3 py-2">Next due</th>
+                  <th className="px-3 py-2 text-right">Delete</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {[...recurringCleaningTasks]
+                  .sort((a, b) => {
+                    const aDue = formatDate(a.nextDue);
+                    const bDue = formatDate(b.nextDue);
+                    if (aDue !== bDue) return aDue.localeCompare(bDue);
+                    return (a.roomName || '').localeCompare(b.roomName || '');
+                  })
+                  .map((task) => (
+                    <tr key={task.id} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 text-slate-700">{task.roomName || ALL_ROOMS.find((r) => r.id === task.roomId)?.name || task.roomId}</td>
+                      <td className="px-3 py-2 text-slate-700">{task.description}</td>
+                      <td className="px-3 py-2 text-slate-600">{getFrequencyLabel(task.frequency)}</td>
+                      <td className="px-3 py-2 text-slate-600">{formatDate(task.nextDue)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          onClick={() => handleDeleteRecurringCleaningTask(task.id)}
+                          className="px-2.5 py-1 rounded-full border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
       {ENABLE_HOUSEKEEPING_V2 ? (
         <HousekeepingErrorBoundary>
           <HousekeepingTaskManager
