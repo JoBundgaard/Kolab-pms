@@ -2835,7 +2835,7 @@ export default function App() {
   const [housekeepingStartTime, setHousekeepingStartTime] = useState(HOUSEKEEPING_START_TIME);
   const [housekeepingOverrides, setHousekeepingOverrides] = useState({});
   const [recurringCleaningDraft, setRecurringCleaningDraft] = useState(() => ({
-    roomId: ALL_ROOMS?.[0]?.id || '',
+    selectedRoomIds: ALL_ROOMS?.[0]?.id ? [ALL_ROOMS[0].id] : [],
     description: '',
     frequency: 'weekly',
     nextDue: formatDate(new Date()),
@@ -4098,42 +4098,68 @@ export default function App() {
   }, [user, pushAlert, housekeepingTasks, recurringCleaningTasks]);
 
   const handleCreateRecurringCleaningTask = async (actingUser = user) => {
-    const roomId = recurringCleaningDraft.roomId || '';
+    const selectedRoomIds = Array.from(new Set(recurringCleaningDraft.selectedRoomIds || []));
     const description = (recurringCleaningDraft.description || '').trim();
     const frequency = recurringCleaningDraft.frequency || 'weekly';
     const nextDue = formatDate(recurringCleaningDraft.nextDue || '');
     const priority = Math.max(1, Number(recurringCleaningDraft.priority) || 2);
     const assignedTo = recurringCleaningDraft.assignedTo || 'Unassigned';
 
-    if (!roomId || !description || !nextDue) {
-      pushAlert({ title: 'Recurring cleaning not saved', message: 'Room, description, and next due date are required.', tone: 'error' });
+    if (!selectedRoomIds.length || !description || !nextDue) {
+      pushAlert({ title: 'Recurring cleaning not saved', message: 'Select at least one room, plus description and next due date.', tone: 'error' });
       return;
     }
 
-    const room = ALL_ROOMS.find((r) => r.id === roomId);
-    const id = Math.random().toString(36).substr(2, 9);
-    const payload = {
-      id,
-      roomId,
-      roomName: room?.name || roomId,
-      propertyName: room?.propertyName || 'Unknown property',
-      description,
-      frequency,
-      nextDue,
-      priority,
-      assignedTo,
-      createdAt: new Date().toISOString(),
-      createdBy: actingUser?.uid || actingUser?.email || 'unknown',
-    };
+    const nowIso = new Date().toISOString();
 
     try {
-      await setDoc(doc(db, 'recurringCleaningTasks', id), payload);
+      const results = { success: [], failed: [] };
+
+      for (const roomId of selectedRoomIds) {
+        const room = ALL_ROOMS.find((r) => r.id === roomId);
+        const id = Math.random().toString(36).substr(2, 9);
+        const payload = {
+          id,
+          roomId,
+          roomName: room?.name || roomId,
+          propertyName: room?.propertyName || 'Unknown property',
+          description,
+          frequency,
+          nextDue,
+          priority,
+          assignedTo,
+          createdAt: nowIso,
+          createdBy: actingUser?.uid || actingUser?.email || 'unknown',
+        };
+
+        try {
+          await setDoc(doc(db, 'recurringCleaningTasks', id), payload);
+          results.success.push(payload.roomName);
+        } catch (err) {
+          console.error('[recurring-cleaning] failed room', roomId, err);
+          results.failed.push(roomId);
+        }
+      }
+
       setRecurringCleaningDraft((prev) => ({
         ...prev,
         description: '',
         nextDue: formatDate(new Date()),
       }));
-      pushAlert({ title: 'Recurring cleaning added', message: `${payload.roomName}: ${payload.description}`, tone: 'success' });
+
+      if (results.failed.length) {
+        pushAlert({
+          title: 'Partial recurring save',
+          message: `Created ${results.success.length}/${selectedRoomIds.length}. Failed: ${results.failed.join(', ')}`,
+          tone: 'error',
+        });
+      } else {
+        pushAlert({
+          title: 'Recurring cleaning added',
+          message: `Created for ${results.success.length} room${results.success.length === 1 ? '' : 's'}`,
+          tone: 'success',
+        });
+      }
     } catch (error) {
       console.error('Error saving recurring cleaning task:', error);
       pushAlert({ title: 'Recurring cleaning save failed', message: error?.message || 'Please try again', code: error?.code, raw: error });
@@ -6016,15 +6042,54 @@ export default function App() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
-          <select
-            value={recurringCleaningDraft.roomId}
-            onChange={(e) => setRecurringCleaningDraft((prev) => ({ ...prev, roomId: e.target.value }))}
-            className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
-          >
-            {ALL_ROOMS.map((room) => (
-              <option key={room.id} value={room.id}>{room.name} ({room.propertyName})</option>
-            ))}
-          </select>
+          <div className="md:col-span-2 border border-slate-200 rounded-lg p-2 bg-white">
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              <button
+                type="button"
+                onClick={() => setRecurringCleaningDraft((prev) => ({ ...prev, selectedRoomIds: ALL_ROOMS.map((r) => r.id) }))}
+                className="px-2 py-1 rounded-full text-[11px] font-semibold border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+              >
+                All rooms
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecurringCleaningDraft((prev) => ({ ...prev, selectedRoomIds: ALL_ROOMS.filter((r) => r.propertyName === 'Neighbours').map((r) => r.id) }))}
+                className="px-2 py-1 rounded-full text-[11px] font-semibold border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+              >
+                All Neighbours
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecurringCleaningDraft((prev) => ({ ...prev, selectedRoomIds: ALL_ROOMS.filter((r) => r.propertyName === 'Townhouse').map((r) => r.id) }))}
+                className="px-2 py-1 rounded-full text-[11px] font-semibold border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+              >
+                All Townhouse
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecurringCleaningDraft((prev) => ({ ...prev, selectedRoomIds: [] }))}
+                className="px-2 py-1 rounded-full text-[11px] font-semibold border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              >
+                Clear
+              </button>
+            </div>
+            <select
+              multiple
+              value={recurringCleaningDraft.selectedRoomIds || []}
+              onChange={(e) => {
+                const values = Array.from(e.target.selectedOptions).map((opt) => opt.value);
+                setRecurringCleaningDraft((prev) => ({ ...prev, selectedRoomIds: values }));
+              }}
+              className="w-full px-2 py-2 rounded-lg border border-slate-200 text-sm bg-white min-h-[112px]"
+            >
+              {ALL_ROOMS.map((room) => (
+                <option key={room.id} value={room.id}>{room.name} ({room.propertyName})</option>
+              ))}
+            </select>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Selected: {(recurringCleaningDraft.selectedRoomIds || []).length}
+            </div>
+          </div>
           <input
             type="text"
             placeholder="Task description"
