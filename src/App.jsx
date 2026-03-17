@@ -3768,9 +3768,27 @@ export default function App() {
       });
   }, [recurringCleaningTasks, housekeepingDate, housekeepingOverrides]);
 
+  const recurringDueByRoomId = useMemo(() => {
+    const map = {};
+    recurringHousekeepingDueTasks.forEach((task) => {
+      if (!task?.roomId) return;
+      if (!map[task.roomId]) map[task.roomId] = [];
+      map[task.roomId].push(task);
+    });
+    Object.keys(map).forEach((roomId) => {
+      map[roomId] = map[roomId].sort((a, b) => {
+        const pa = Number(a.priority) || 99;
+        const pb = Number(b.priority) || 99;
+        if (pa !== pb) return pa - pb;
+        return (a.description || '').localeCompare(b.description || '');
+      });
+    });
+    return map;
+  }, [recurringHousekeepingDueTasks]);
+
   const housekeepingTasks = useMemo(
-    () => [...bookingHousekeepingTasks, ...recurringHousekeepingDueTasks],
-    [bookingHousekeepingTasks, recurringHousekeepingDueTasks]
+    () => bookingHousekeepingTasks,
+    [bookingHousekeepingTasks]
   );
 
   const cleaningTasks = useMemo(
@@ -4038,6 +4056,22 @@ export default function App() {
     }
   };
 
+  const findNextRoomCleaningDate = useCallback((roomId, afterDateStr) => {
+    if (!roomId || !afterDateStr) return '';
+    const start = new Date(afterDateStr);
+    if (isNaN(start.getTime())) return '';
+    for (let dayOffset = 1; dayOffset <= 120; dayOffset += 1) {
+      const candidate = new Date(start);
+      candidate.setDate(candidate.getDate() + dayOffset);
+      const candidateStr = formatDate(candidate);
+      const tasksForCandidate = buildCleaningTasksForDate(candidateStr, bookings, roomStatuses);
+      if (tasksForCandidate.some((t) => t.roomId === roomId)) {
+        return candidateStr;
+      }
+    }
+    return '';
+  }, [bookings, roomStatuses]);
+
   const handleHousekeepingTaskUpdate = useCallback(async (taskId, patch, taskMeta = null, actingUser = user) => {
     if (!taskId || !patch) return;
     const nowIso = new Date().toISOString();
@@ -4091,11 +4125,87 @@ export default function App() {
           }
         }
       }
+
+      // If today's room clean is completed and recurring room todos were not checked, defer them to next cleaning day.
+      const cleanedNonRecurringTask = patch.status === 'clean' && !resolvedTask?.recurringTemplateId && resolvedTask?.roomId;
+      if (cleanedNonRecurringTask) {
+        const dueRoomTodos = (recurringDueByRoomId[resolvedTask.roomId] || []).filter((t) => t?.recurringTemplateId);
+        if (dueRoomTodos.length) {
+          const baselineDate = formatDate(housekeepingDate || nowIso);
+          const nextRoomCleaningDate = findNextRoomCleaningDate(resolvedTask.roomId, baselineDate);
+          for (const dueTodo of dueRoomTodos) {
+            const template = recurringCleaningTasks.find((t) => t.id === dueTodo.recurringTemplateId);
+            if (!template) continue;
+            const fallbackNext = getNextRecurringDueDate(baselineDate, template.frequency || 'weekly');
+            const nextDue = nextRoomCleaningDate || fallbackNext;
+            await setDoc(
+              doc(db, 'recurringCleaningTasks', template.id),
+              {
+                nextDue,
+                updatedAt: nowIso,
+                updatedBy: actingUser?.uid || actingUser?.email || 'unknown',
+              },
+              { merge: true }
+            );
+          }
+        }
+      }
     } catch (error) {
       console.error('Error updating housekeeping override:', { taskId, patch, error });
       pushAlert({ title: 'Housekeeping update failed', message: error?.message || 'Could not save housekeeping status', code: error?.code, raw: error });
     }
-  }, [user, pushAlert, housekeepingTasks, recurringCleaningTasks]);
+  }, [user, pushAlert, housekeepingTasks, recurringCleaningTasks, recurringDueByRoomId, housekeepingDate, findNextRoomCleaningDate]);
+
+  const handleCompleteRecurringRoomTodo = useCallback(async (todoTask, actingUser = user) => {
+    if (!todoTask?.recurringTemplateId) return;
+    const template = recurringCleaningTasks.find((t) => t.id === todoTask.recurringTemplateId);
+    if (!template) return;
+    const nowIso = new Date().toISOString();
+    const nextDue = getNextRecurringDueDate(formatDate(housekeepingDate || nowIso), template.frequency || 'weekly');
+    try {
+      await setDoc(
+        doc(db, 'recurringCleaningTasks', template.id),
+        {
+          nextDue,
+          lastCompleted: nowIso,
+          updatedAt: nowIso,
+          updatedBy: actingUser?.uid || actingUser?.email || 'unknown',
+        },
+        { merge: true }
+      );
+      pushAlert({ title: 'Recurring todo completed', message: `${template.roomName || template.roomId} · ${template.description}`, tone: 'success' });
+    } catch (error) {
+      console.error('Error completing recurring room todo:', error);
+      pushAlert({ title: 'Recurring update failed', message: error?.message || 'Could not complete recurring todo', code: error?.code, raw: error });
+    }
+  }, [recurringCleaningTasks, housekeepingDate, user, pushAlert]);
+
+  const handleSkipRecurringRoomTodo = useCallback(async (todoTask, actingUser = user) => {
+    if (!todoTask?.recurringTemplateId) return;
+    const template = recurringCleaningTasks.find((t) => t.id === todoTask.recurringTemplateId);
+    if (!template) return;
+    const nowIso = new Date().toISOString();
+    const roomId = template.roomId;
+    const baselineDate = formatDate(housekeepingDate || nowIso);
+    const nextRoomCleaningDate = findNextRoomCleaningDate(roomId, baselineDate);
+    const fallbackNext = getNextRecurringDueDate(baselineDate, template.frequency || 'weekly');
+    const nextDue = nextRoomCleaningDate || fallbackNext;
+    try {
+      await setDoc(
+        doc(db, 'recurringCleaningTasks', template.id),
+        {
+          nextDue,
+          updatedAt: nowIso,
+          updatedBy: actingUser?.uid || actingUser?.email || 'unknown',
+        },
+        { merge: true }
+      );
+      pushAlert({ title: 'Deferred to next cleaning', message: `${template.roomName || template.roomId} · ${nextDue}`, tone: 'success' });
+    } catch (error) {
+      console.error('Error deferring recurring room todo:', error);
+      pushAlert({ title: 'Recurring update failed', message: error?.message || 'Could not defer recurring todo', code: error?.code, raw: error });
+    }
+  }, [recurringCleaningTasks, housekeepingDate, findNextRoomCleaningDate, user, pushAlert]);
 
   const handleCreateRecurringCleaningTask = async (actingUser = user) => {
     const selectedRoomIds = Array.from(new Set(recurringCleaningDraft.selectedRoomIds || []));
@@ -6166,6 +6276,9 @@ export default function App() {
           <HousekeepingTaskManager
             tasks={housekeepingTasks}
             onUpdateTask={handleHousekeepingTaskUpdate}
+            recurringDueByRoomId={recurringDueByRoomId}
+            onCompleteRecurringTodo={handleCompleteRecurringRoomTodo}
+            onSkipRecurringTodo={handleSkipRecurringRoomTodo}
             staffOptions={STAFF}
             selectedDate={housekeepingDate}
             setSelectedDate={setHousekeepingDate}

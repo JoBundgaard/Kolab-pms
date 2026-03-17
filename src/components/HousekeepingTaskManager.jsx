@@ -65,6 +65,9 @@ const statusStyle = {
 export default function HousekeepingTaskManager({
   tasks = [],
   onUpdateTask,
+  recurringDueByRoomId = {},
+  onCompleteRecurringTodo,
+  onSkipRecurringTodo,
   staffOptions = [],
   selectedDate,
   setSelectedDate,
@@ -229,6 +232,7 @@ export default function HousekeepingTaskManager({
                   const statusClass = statusStyle[statusKey] || statusStyle.dirty;
                   const isDragging = dragTaskId === task.id;
                   const isDropTarget = dragOverTaskId === task.id && dragTaskId && dragTaskId !== task.id;
+                  const roomRecurringTodos = (recurringDueByRoomId?.[task.roomId] || []).filter(Boolean);
                   return (
                     <tr
                       key={task.id}
@@ -265,6 +269,31 @@ export default function HousekeepingTaskManager({
                           {task.propertyName || 'Property'}
                           {task.description ? ` · ${task.description}` : ''}
                         </div>
+                        {roomRecurringTodos.length > 0 && (
+                          <div className="mt-2 space-y-1.5">
+                            {roomRecurringTodos.map((todo) => (
+                              <div key={todo.id} className="text-xs rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                <div className="font-semibold text-slate-700">Todo: {todo.description}</div>
+                                <div className="mt-1 flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => onCompleteRecurringTodo && onCompleteRecurringTodo(todo)}
+                                    className="px-2 py-1 rounded-full border border-green-200 text-green-800 bg-white hover:bg-green-50 font-semibold text-[10px]"
+                                  >
+                                    Done
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => onSkipRecurringTodo && onSkipRecurringTodo(todo)}
+                                    className="px-2 py-1 rounded-full border border-amber-200 text-amber-800 bg-white hover:bg-amber-50 font-semibold text-[10px]"
+                                  >
+                                    Not today
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-xs font-semibold text-slate-700 uppercase">{task.type}</td>
                       <td className="px-4 py-3">
