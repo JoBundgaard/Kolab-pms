@@ -2842,6 +2842,7 @@ export default function App() {
     priority: 2,
     assignedTo: 'Unassigned',
   }));
+  const [expandedRecurringCleaningGroups, setExpandedRecurringCleaningGroups] = useState({});
   const [bookingSearchTerm, setBookingSearchTerm] = useState('');
   const autoCheckoutProcessedRef = useRef(new Set());
   const autoCheckinProcessedRef = useRef(new Set());
@@ -6235,37 +6236,70 @@ export default function App() {
             <table className="w-full text-sm text-left">
               <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="px-3 py-2">Room</th>
-                  <th className="px-3 py-2">Description</th>
+                  <th className="px-3 py-2">Task</th>
                   <th className="px-3 py-2">Frequency</th>
                   <th className="px-3 py-2">Next due</th>
                   <th className="px-3 py-2 text-right">Delete</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {[...recurringCleaningTasks]
-                  .sort((a, b) => {
-                    const aDue = formatDate(a.nextDue);
-                    const bDue = formatDate(b.nextDue);
-                    if (aDue !== bDue) return aDue.localeCompare(bDue);
-                    return (a.roomName || '').localeCompare(b.roomName || '');
-                  })
-                  .map((task) => (
-                    <tr key={task.id} className="hover:bg-slate-50">
-                      <td className="px-3 py-2 text-slate-700">{task.roomName || ALL_ROOMS.find((r) => r.id === task.roomId)?.name || task.roomId}</td>
-                      <td className="px-3 py-2 text-slate-700">{task.description}</td>
-                      <td className="px-3 py-2 text-slate-600">{getFrequencyLabel(task.frequency)}</td>
-                      <td className="px-3 py-2 text-slate-600">{formatDate(task.nextDue)}</td>
-                      <td className="px-3 py-2 text-right">
-                        <button
-                          onClick={() => handleDeleteRecurringCleaningTask(task.id)}
-                          className="px-2.5 py-1 rounded-full border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                {Object.entries(
+                  recurringCleaningTasks.reduce((acc, task) => {
+                    const key = (task.description || 'Untitled task').trim().toLowerCase();
+                    if (!acc[key]) acc[key] = { label: task.description || 'Untitled task', tasks: [] };
+                    acc[key].tasks.push(task);
+                    return acc;
+                  }, {})
+                )
+                  .sort((a, b) => a[1].label.localeCompare(b[1].label))
+                  .map(([key, group]) => {
+                    const isExpanded = !!expandedRecurringCleaningGroups[key];
+                    const sortedTasks = [...group.tasks].sort((a, b) => {
+                      const aDue = formatDate(a.nextDue);
+                      const bDue = formatDate(b.nextDue);
+                      if (aDue !== bDue) return aDue.localeCompare(bDue);
+                      return (a.roomName || '').localeCompare(b.roomName || '');
+                    });
+                    return (
+                      <React.Fragment key={key}>
+                        <tr className="bg-slate-50/60">
+                          <td className="px-3 py-2 text-slate-800 font-semibold">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedRecurringCleaningGroups((prev) => ({ ...prev, [key]: !isExpanded }))}
+                              className="inline-flex items-center gap-2 text-slate-700 hover:text-slate-900"
+                            >
+                              <span className="text-slate-400">{isExpanded ? '▾' : '▸'}</span>
+                              <span>{group.label}</span>
+                              <span className="text-xs text-slate-500">({group.tasks.length})</span>
+                            </button>
+                          </td>
+                          <td className="px-3 py-2 text-slate-500 text-xs">{isExpanded ? 'Room-specific entries' : 'Collapsed'}</td>
+                          <td className="px-3 py-2 text-slate-500 text-xs">{isExpanded ? '' : ''}</td>
+                          <td className="px-3 py-2 text-right"></td>
+                        </tr>
+                        {isExpanded &&
+                          sortedTasks.map((task) => (
+                            <tr key={task.id} className="hover:bg-slate-50">
+                              <td className="px-3 py-2 text-slate-700">
+                                {task.roomName || ALL_ROOMS.find((r) => r.id === task.roomId)?.name || task.roomId}
+                                <span className="text-xs text-slate-500"> · {task.propertyName || ''}</span>
+                              </td>
+                              <td className="px-3 py-2 text-slate-600">{getFrequencyLabel(task.frequency)}</td>
+                              <td className="px-3 py-2 text-slate-600">{formatDate(task.nextDue)}</td>
+                              <td className="px-3 py-2 text-right">
+                                <button
+                                  onClick={() => handleDeleteRecurringCleaningTask(task.id)}
+                                  className="px-2.5 py-1 rounded-full border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
+                                >
+                                  Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                      </React.Fragment>
+                    );
+                  })}
               </tbody>
             </table>
           </div>
