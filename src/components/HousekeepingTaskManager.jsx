@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 
-export function buildHousekeepingWhatsappMessage({ tasks = [], selectedDate }) {
+export function buildHousekeepingWhatsappMessage({ tasks = [], selectedDate, cleaningStartTime = '' }) {
   const safeTasks = Array.isArray(tasks) ? tasks.filter(Boolean) : [];
   const dateLabel = (() => {
     if (!selectedDate) return 'Unknown date';
@@ -11,10 +11,11 @@ export function buildHousekeepingWhatsappMessage({ tasks = [], selectedDate }) {
     const year = d.getFullYear();
     return `${day}/${month}/${year}`;
   })();
+  const startTimeLabel = cleaningStartTime || 'Not set';
 
   const relevant = safeTasks.filter((t) => (t?.status || 'dirty') !== 'clean');
   if (relevant.length === 0) {
-    return `Housekeeping plan (${dateLabel})\n\nAll clear.`;
+    return `Housekeeping plan (${dateLabel})\nCleaning starts: ${startTimeLabel}\n\nAll clear.`;
   }
 
   const typeLabel = (type) => {
@@ -32,7 +33,7 @@ export function buildHousekeepingWhatsappMessage({ tasks = [], selectedDate }) {
   }, {});
 
   const propertyNames = Object.keys(grouped).sort();
-  const lines = [`Housekeeping plan (${dateLabel})`, ''];
+  const lines = [`Housekeeping plan (${dateLabel})`, `Cleaning starts: ${startTimeLabel}`, ''];
 
   propertyNames.forEach((prop) => {
     lines.push(`${prop}:`);
@@ -65,6 +66,8 @@ export default function HousekeepingTaskManager({
   staffOptions = [],
   selectedDate,
   setSelectedDate,
+  cleaningStartTime = '',
+  setCleaningStartTime,
   checkins = [],
   checkouts = [],
 }) {
@@ -86,8 +89,8 @@ export default function HousekeepingTaskManager({
   }, [safeTasks]);
 
   const message = useMemo(
-    () => buildHousekeepingWhatsappMessage({ tasks: orderedTasks, selectedDate }),
-    [orderedTasks, selectedDate]
+    () => buildHousekeepingWhatsappMessage({ tasks: orderedTasks, selectedDate, cleaningStartTime }),
+    [orderedTasks, selectedDate, cleaningStartTime]
   );
 
   const handleStatus = (id, status) => {
@@ -152,6 +155,16 @@ export default function HousekeepingTaskManager({
             type="date"
             value={selectedDate || ''}
             onChange={(e) => setSelectedDate && setSelectedDate(e.target.value)}
+            className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+          />
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <label className="text-slate-600 font-semibold" htmlFor="hk-start-time">Cleaning starts</label>
+          <input
+            id="hk-start-time"
+            type="time"
+            value={cleaningStartTime || ''}
+            onChange={(e) => setCleaningStartTime && setCleaningStartTime(e.target.value)}
             className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
           />
         </div>

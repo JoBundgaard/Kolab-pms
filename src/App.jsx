@@ -2831,6 +2831,7 @@ export default function App() {
   const [guestNotesDraft, setGuestNotesDraft] = useState('');
   const [guestTagsDraft, setGuestTagsDraft] = useState('');
   const [housekeepingDate, setHousekeepingDate] = useState(() => formatDate(new Date()));
+  const [housekeepingStartTime, setHousekeepingStartTime] = useState(HOUSEKEEPING_START_TIME);
   const [housekeepingOverrides, setHousekeepingOverrides] = useState({});
   const [bookingSearchTerm, setBookingSearchTerm] = useState('');
   const autoCheckoutProcessedRef = useRef(new Set());
@@ -5868,6 +5869,8 @@ export default function App() {
             staffOptions={STAFF}
             selectedDate={housekeepingDate}
             setSelectedDate={setHousekeepingDate}
+            cleaningStartTime={housekeepingStartTime}
+            setCleaningStartTime={setHousekeepingStartTime}
             checkins={checkinsForDate}
             checkouts={checkoutsForDate}
           />
