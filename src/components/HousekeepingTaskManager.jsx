@@ -71,10 +71,23 @@ export default function HousekeepingTaskManager({
   const safeTasks = Array.isArray(tasks) ? tasks : [];
   const [copyStatus, setCopyStatus] = useState('idle');
   const [showPreview, setShowPreview] = useState(false);
+  const [dragTaskId, setDragTaskId] = useState(null);
+  const [dragOverTaskId, setDragOverTaskId] = useState(null);
+
+  const orderedTasks = useMemo(() => {
+    return [...safeTasks].sort((a, b) => {
+      const pa = Number.isFinite(Number(a?.priority)) ? Number(a.priority) : Number.MAX_SAFE_INTEGER;
+      const pb = Number.isFinite(Number(b?.priority)) ? Number(b.priority) : Number.MAX_SAFE_INTEGER;
+      if (pa !== pb) return pa - pb;
+      const roomA = (a?.roomLabel || '').toLowerCase();
+      const roomB = (b?.roomLabel || '').toLowerCase();
+      return roomA.localeCompare(roomB);
+    });
+  }, [safeTasks]);
 
   const message = useMemo(
-    () => buildHousekeepingWhatsappMessage({ tasks: safeTasks, selectedDate }),
-    [safeTasks, selectedDate]
+    () => buildHousekeepingWhatsappMessage({ tasks: orderedTasks, selectedDate }),
+    [orderedTasks, selectedDate]
   );
 
   const handleStatus = (id, status) => {
@@ -85,6 +98,24 @@ export default function HousekeepingTaskManager({
   const handleAssign = (id, staff) => {
     if (!onUpdateTask) return;
     onUpdateTask(id, { assignedTo: staff || null });
+  };
+
+  const reorderByDrag = (sourceId, targetId) => {
+    if (!sourceId || !targetId || sourceId === targetId || !onUpdateTask) return;
+    const sourceIndex = orderedTasks.findIndex((t) => t.id === sourceId);
+    const targetIndex = orderedTasks.findIndex((t) => t.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+
+    const next = [...orderedTasks];
+    const [moved] = next.splice(sourceIndex, 1);
+    next.splice(targetIndex, 0, moved);
+
+    next.forEach((task, idx) => {
+      const nextPriority = idx + 1;
+      if (Number(task.priority) !== nextPriority) {
+        onUpdateTask(task.id, { priority: nextPriority });
+      }
+    });
   };
 
   const copyToClipboard = async () => {
@@ -176,13 +207,43 @@ export default function HousekeepingTaskManager({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {safeTasks.map((task) => {
+                {orderedTasks.map((task) => {
                   const statusKey = task.status || 'dirty';
                   const statusClass = statusStyle[statusKey] || statusStyle.dirty;
+                  const isDragging = dragTaskId === task.id;
+                  const isDropTarget = dragOverTaskId === task.id && dragTaskId && dragTaskId !== task.id;
                   return (
-                    <tr key={task.id} className="hover:bg-slate-50">
+                    <tr
+                      key={task.id}
+                      draggable
+                      onDragStart={(e) => {
+                        setDragTaskId(task.id);
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', task.id);
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        if (dragTaskId && dragTaskId !== task.id) setDragOverTaskId(task.id);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const sourceId = e.dataTransfer.getData('text/plain') || dragTaskId;
+                        reorderByDrag(sourceId, task.id);
+                        setDragTaskId(null);
+                        setDragOverTaskId(null);
+                      }}
+                      onDragEnd={() => {
+                        setDragTaskId(null);
+                        setDragOverTaskId(null);
+                      }}
+                      className={`hover:bg-slate-50 ${isDragging ? 'opacity-50' : ''} ${isDropTarget ? 'ring-2 ring-[#26402E]/30 ring-inset bg-[#E2F05D]/15' : ''}`}
+                      title="Drag to reorder cleaning priority"
+                    >
                       <td className="px-4 py-3">
-                        <div className="font-semibold text-slate-800">{task.roomLabel || 'Room'}</div>
+                        <div className="font-semibold text-slate-800 flex items-center gap-2">
+                          <span className="text-slate-400 cursor-grab select-none" aria-hidden>⋮⋮</span>
+                          <span>{task.roomLabel || 'Room'}</span>
+                        </div>
                         <div className="text-xs text-slate-500">{task.propertyName || 'Property'}</div>
                       </td>
                       <td className="px-4 py-3 text-xs font-semibold text-slate-700 uppercase">{task.type}</td>
