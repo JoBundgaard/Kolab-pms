@@ -467,22 +467,26 @@ const getRentCycleDueDate = (booking, todayInput = new Date()) => {
   return formatDate(new Date(year, monthIndex, Math.min(dueDay, maxDay)));
 };
 
-const buildLongTermExtrasLog = (booking, fallbackDate = new Date()) => {
-  const explicitLog = Array.isArray(booking?.longTermOps?.extrasLog) ? booking.longTermOps.extrasLog : [];
+const buildLongTermLedgerEntries = (booking, fallbackDate = new Date()) => {
+  const explicitLedger = Array.isArray(booking?.longTermOps?.extrasLedger)
+    ? booking.longTermOps.extrasLedger
+    : (Array.isArray(booking?.longTermOps?.extrasLog) ? booking.longTermOps.extrasLog : []);
+
   const fallbackServices = Array.isArray(booking?.services)
     ? booking.services.map((service) => ({
         id: service.id || randomId(),
-        label: service.name || 'Extra charge',
+        kind: 'charge',
+        title: service.name || 'Extra charge',
+        description: service.notes || '',
         amountVnd: Math.max(0, Math.round(Number(service.price) || 0)) * Math.max(1, parseInt(service.qty, 10) || 1),
         qty: Math.max(1, parseInt(service.qty, 10) || 1),
         date: formatDate(service.createdAt || booking?.updatedAt || booking?.createdAt || fallbackDate),
-        notes: service.notes || '',
         status: service.billedAt ? 'billed' : 'unbilled',
         source: 'services',
       }))
     : [];
 
-  const source = explicitLog.length ? explicitLog : fallbackServices;
+  const source = explicitLedger.length ? explicitLedger : fallbackServices;
 
   return source
     .map((entry) => {
@@ -494,19 +498,64 @@ const buildLongTermExtrasLog = (booking, fallbackDate = new Date()) => {
         Math.round(Number.isFinite(explicitAmount) ? explicitAmount : (Number.isFinite(unitAmount) ? unitAmount * qty : 0))
       );
       const date = formatDate(entry?.date || entry?.createdAt || booking?.updatedAt || booking?.createdAt || fallbackDate);
+      const kind = entry?.kind === 'credit' || entry?.type === 'credit' ? 'credit' : 'charge';
+      const settledMonthKey = entry?.settledMonthKey || entry?.billedMonthKey || '';
+      const status = entry?.status || (settledMonthKey ? 'billed' : (entry?.billedAt ? 'billed' : 'unbilled'));
+
       return {
-        id: entry?.id || `${entry?.label || entry?.name || 'extra'}_${date}_${amountVnd}_${qty}`,
-        label: entry?.label || entry?.name || 'Extra charge',
+        id: entry?.id || `${entry?.title || entry?.label || entry?.name || 'ledger'}_${date}_${amountVnd}_${qty}_${kind}`,
+        kind,
+        title: entry?.title || entry?.label || entry?.name || (kind === 'credit' ? 'Guest credit' : 'Extra charge'),
+        description: entry?.description || entry?.notes || '',
         amountVnd,
+        signedAmountVnd: kind === 'credit' ? -amountVnd : amountVnd,
         qty,
         date,
-        notes: entry?.notes || '',
-        status: entry?.status || (entry?.billedAt ? 'billed' : 'unbilled'),
-        source: entry?.source || (explicitLog.length ? 'longTermOps' : 'services'),
+        status,
+        settledMonthKey,
+        source: entry?.source || (explicitLedger.length ? 'longTermOps' : 'services'),
       };
     })
     .filter((entry) => entry.amountVnd > 0)
     .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+};
+
+const buildLongTermReceiptMessage = ({ row, monthKey }) => {
+  if (!row) return '';
+  const rent = Math.max(0, Math.round(Number(row.booking?.monthlyRentVnd) || 0));
+  const monthEntries = (row.ledgerEntries || []).filter((entry) => getMonthKey(entry.date) === monthKey);
+  const chargeTotal = monthEntries.filter((entry) => entry.kind === 'charge').reduce((sum, entry) => sum + entry.amountVnd, 0);
+  const creditTotal = monthEntries.filter((entry) => entry.kind === 'credit').reduce((sum, entry) => sum + entry.amountVnd, 0);
+  const netExtras = chargeTotal - creditTotal;
+  const totalDue = rent + netExtras;
+  const lines = [
+    `Kolab receipt for ${row.booking?.guestName || 'Guest'}`,
+    `Room: ${row.room?.name || row.booking?.roomId || 'Unknown room'}`,
+    `Billing month: ${monthKey}`,
+    `Rent due date: ${row.dueDate || 'Not set'}`,
+    '',
+    `Monthly rent: ${formatCurrencyVND(rent)}`,
+  ];
+
+  if (monthEntries.length) {
+    lines.push('Extras and credits:');
+    monthEntries
+      .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0))
+      .forEach((entry) => {
+        const sign = entry.kind === 'credit' ? '-' : '+';
+        lines.push(`${entry.date}  ${entry.title}  ${sign}${formatCurrencyVND(entry.amountVnd)}`);
+        if (entry.description) lines.push(`  ${entry.description}`);
+      });
+  } else {
+    lines.push('Extras and credits: none this month.');
+  }
+
+  lines.push('');
+  lines.push(`Charges: ${formatCurrencyVND(chargeTotal)}`);
+  lines.push(`Credits: ${formatCurrencyVND(creditTotal)}`);
+  lines.push(`Net extras: ${formatCurrencyVND(netExtras)}`);
+  lines.push(`Total due: ${formatCurrencyVND(totalDue)}`);
+  return lines.join('\n');
 };
 
 const calculateNights = (checkInDateStr, checkOutDateStr) => {
@@ -2934,6 +2983,8 @@ export default function App() {
   const [guestTagsDraft, setGuestTagsDraft] = useState('');
   const [longTermAlertFilter, setLongTermAlertFilter] = useState('all');
   const [expandedLongTermRows, setExpandedLongTermRows] = useState({});
+  const [longTermEntryDrafts, setLongTermEntryDrafts] = useState({});
+  const [receiptCopyState, setReceiptCopyState] = useState({});
   const [housekeepingDate, setHousekeepingDate] = useState(() => formatDate(new Date()));
   const [housekeepingStartTime, setHousekeepingStartTime] = useState(HOUSEKEEPING_START_TIME);
   const [housekeepingOverrides, setHousekeepingOverrides] = useState({});
@@ -3930,10 +3981,19 @@ export default function App() {
           rentPaidThrough === currentMonthKey ||
           (rentLastPaidAt && getMonthKey(rentLastPaidAt) === currentMonthKey);
         const rentStatus = rentIsPaid ? 'paid' : (dueDate && TODAY_STR > dueDate ? 'overdue' : 'pending');
-        const extrasLog = buildLongTermExtrasLog(booking, today);
-        const unbilledExtrasTotal = extrasLog
-          .filter((entry) => entry.status !== 'billed' && getMonthKey(entry.date || today) === currentMonthKey)
-          .reduce((sum, entry) => sum + (Number(entry.amountVnd) || 0), 0);
+        const ledgerEntries = buildLongTermLedgerEntries(booking, today);
+        const monthLedgerEntries = ledgerEntries.filter((entry) => getMonthKey(entry.date || today) === currentMonthKey);
+        const currentMonthChargeTotal = monthLedgerEntries
+          .filter((entry) => entry.kind === 'charge' && entry.status !== 'billed')
+          .reduce((sum, entry) => sum + entry.amountVnd, 0);
+        const currentMonthCreditTotal = monthLedgerEntries
+          .filter((entry) => entry.kind === 'credit' && entry.status !== 'billed')
+          .reduce((sum, entry) => sum + entry.amountVnd, 0);
+        const unbilledExtrasTotal = currentMonthChargeTotal - currentMonthCreditTotal;
+        const outstandingLedgerBalance = ledgerEntries
+          .filter((entry) => entry.status !== 'billed')
+          .reduce((sum, entry) => sum + entry.signedAmountVnd, 0);
+        const currentMonthTotalDue = Math.max(0, Math.round(Number(booking.monthlyRentVnd) || 0)) + unbilledExtrasTotal;
 
         const rawLaundryStatus = longTermOps.laundryStatus || 'pending';
         const laundryUpdatedAt = longTermOps.laundryUpdatedAt || '';
@@ -3956,8 +4016,15 @@ export default function App() {
           laundryStatus,
           laundryUpdatedAt,
           isCleaningToday: !!cleaningDayKey && cleaningDayKey === todayWeekday,
-          extrasLog,
+          ledgerEntries,
+          monthLedgerEntries,
+          currentMonthChargeTotal,
+          currentMonthCreditTotal,
           unbilledExtrasTotal,
+          outstandingLedgerBalance,
+          currentMonthTotalDue,
+          currentMonthKey,
+          receiptMessage: '',
           leaseEndDate: longTermOps.leaseEndDate || booking.checkOut || '',
           specialNotes: [longTermOps.specialNotes, booking.notes, guest?.notes].filter(Boolean),
         };
@@ -4613,6 +4680,22 @@ export default function App() {
     setExpandedLongTermRows((prev) => ({ ...prev, [bookingId]: !prev[bookingId] }));
   }, []);
 
+  const updateLongTermEntryDraft = useCallback((bookingId, patch) => {
+    if (!bookingId) return;
+    setLongTermEntryDrafts((prev) => ({
+      ...prev,
+      [bookingId]: {
+        type: 'charge',
+        title: '',
+        description: '',
+        amountVnd: '',
+        date: TODAY_STR,
+        ...(prev[bookingId] || {}),
+        ...patch,
+      },
+    }));
+  }, [TODAY_STR]);
+
   const updateLongTermOps = useCallback(async (booking, patch, successMessage) => {
     if (!booking?.id) return;
     const nowIso = new Date().toISOString();
@@ -4670,6 +4753,94 @@ export default function App() {
         laundryUpdatedAt: new Date().toISOString(),
       },
       `${booking?.guestName || 'Guest'} laundry marked done`
+    );
+  }, [updateLongTermOps]);
+
+  const handleAddLongTermLedgerEntry = useCallback(async (booking) => {
+    if (!booking?.id) return;
+    const draft = longTermEntryDrafts[booking.id] || {};
+    const title = (draft.title || '').trim();
+    const description = (draft.description || '').trim();
+    const amountVnd = Math.max(0, Math.round(Number(draft.amountVnd) || 0));
+    const date = formatDate(draft.date || TODAY_STR);
+    const kind = draft.type === 'credit' ? 'credit' : 'charge';
+
+    if (!title || !amountVnd || !date) {
+      pushAlert({ title: 'Ledger entry not saved', message: 'Title, amount, and date are required.', tone: 'error' });
+      return;
+    }
+
+    const nextLedger = [
+      ...(Array.isArray(booking.longTermOps?.extrasLedger) ? booking.longTermOps.extrasLedger : []),
+      {
+        id: randomId(),
+        kind,
+        title,
+        description,
+        amountVnd,
+        date,
+        status: 'unbilled',
+        createdAt: new Date().toISOString(),
+        createdBy: user?.uid || user?.email || 'unknown',
+      },
+    ];
+
+    await updateLongTermOps(
+      booking,
+      { extrasLedger: nextLedger },
+      `${title} added for ${booking?.guestName || 'guest'}`
+    );
+
+    setLongTermEntryDrafts((prev) => ({
+      ...prev,
+      [booking.id]: {
+        type: 'charge',
+        title: '',
+        description: '',
+        amountVnd: '',
+        date: TODAY_STR,
+      },
+    }));
+  }, [longTermEntryDrafts, TODAY_STR, pushAlert, updateLongTermOps, user]);
+
+  const handleCopyLongTermReceipt = useCallback(async (row) => {
+    if (!row?.booking?.id) return;
+    const message = buildLongTermReceiptMessage({ row, monthKey: row.currentMonthKey || getMonthKey(new Date()) });
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(message);
+      } else {
+        throw new Error('Clipboard unavailable');
+      }
+      setReceiptCopyState((prev) => ({ ...prev, [row.booking.id]: 'copied' }));
+      setTimeout(() => {
+        setReceiptCopyState((prev) => ({ ...prev, [row.booking.id]: 'idle' }));
+      }, 2000);
+    } catch (error) {
+      console.error('[long-term] receipt copy failed', error);
+      setReceiptCopyState((prev) => ({ ...prev, [row.booking.id]: 'failed' }));
+      setTimeout(() => {
+        setReceiptCopyState((prev) => ({ ...prev, [row.booking.id]: 'idle' }));
+      }, 2000);
+    }
+  }, []);
+
+  const handleSettleLongTermMonth = useCallback(async (row) => {
+    if (!row?.booking?.id) return;
+    const monthKey = row.currentMonthKey || getMonthKey(new Date());
+    const nextLedger = (Array.isArray(row.booking.longTermOps?.extrasLedger) ? row.booking.longTermOps.extrasLedger : []).map((entry) => {
+      if (getMonthKey(entry.date) !== monthKey) return entry;
+      return { ...entry, status: 'billed', settledMonthKey: monthKey };
+    });
+
+    await updateLongTermOps(
+      row.booking,
+      {
+        extrasLedger: nextLedger,
+        rentPaidThrough: monthKey,
+        rentLastPaidAt: new Date().toISOString(),
+      },
+      `${row.booking.guestName || 'Guest'} settled for ${monthKey}`
     );
   }, [updateLongTermOps]);
 
@@ -6338,6 +6509,14 @@ export default function App() {
                 ) : (
                   filteredLongTermRows.map((row) => {
                     const isExpanded = !!expandedLongTermRows[row.booking.id];
+                    const entryDraft = longTermEntryDrafts[row.booking.id] || {
+                      type: 'charge',
+                      title: '',
+                      description: '',
+                      amountVnd: '',
+                      date: TODAY_STR,
+                    };
+                    const receiptStatus = receiptCopyState[row.booking.id] || 'idle';
                     return (
                       <React.Fragment key={row.booking.id}>
                         <tr
@@ -6436,6 +6615,17 @@ export default function App() {
                                     <div className="text-base font-semibold text-slate-800 mt-1">{row.booking.monthlyRentVnd ? formatCurrencyVND(row.booking.monthlyRentVnd) : 'Not set'}</div>
                                   </div>
                                   <div>
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">This Month Total Due</div>
+                                    <div className="text-base font-semibold text-slate-800 mt-1">{formatCurrencyVND(row.currentMonthTotalDue)}</div>
+                                    <div className="text-xs text-slate-500 mt-1">Rent plus current month charges minus credits.</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Outstanding Ledger Balance</div>
+                                    <div className={`text-base font-semibold mt-1 ${row.outstandingLedgerBalance > 0 ? 'text-amber-700' : row.outstandingLedgerBalance < 0 ? 'text-emerald-700' : 'text-slate-800'}`}>
+                                      {formatCurrencyVND(row.outstandingLedgerBalance)}
+                                    </div>
+                                  </div>
+                                  <div>
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Special Notes</div>
                                     {row.specialNotes.length ? (
                                       <div className="space-y-2 mt-2">
@@ -6454,12 +6644,98 @@ export default function App() {
                                 <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 p-4">
                                   <div className="flex items-center justify-between gap-3 mb-3">
                                     <div>
-                                      <div className="text-xs uppercase tracking-[0.2em] font-bold text-slate-500">Laundry / Extras Log</div>
-                                      <div className="text-sm text-slate-500 mt-1">Current services are used as the fallback itemized log until dedicated extras are entered.</div>
+                                      <div className="text-xs uppercase tracking-[0.2em] font-bold text-slate-500">Guest Ledger</div>
+                                      <div className="text-sm text-slate-500 mt-1">Add charges for dinners, drinks, activities, laundry, or credits when the guest paid on your behalf.</div>
                                     </div>
                                     <div className="text-right">
-                                      <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Unbilled this month</div>
+                                      <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">This month extras</div>
                                       <div className="text-lg font-bold text-slate-800">{formatCurrencyVND(row.unbilledExtrasTotal)}</div>
+                                      <div className="text-xs text-slate-500 mt-1">Charges {formatCurrencyVND(row.currentMonthChargeTotal)} · Credits {formatCurrencyVND(row.currentMonthCreditTotal)}</div>
+                                    </div>
+                                  </div>
+
+                                  <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                                    <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                                      <select
+                                        value={entryDraft.type}
+                                        onChange={(e) => updateLongTermEntryDraft(row.booking.id, { type: e.target.value })}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+                                      >
+                                        <option value="charge">Charge to guest</option>
+                                        <option value="credit">Credit back to guest</option>
+                                      </select>
+                                      <input
+                                        type="text"
+                                        value={entryDraft.title}
+                                        onChange={(e) => updateLongTermEntryDraft(row.booking.id, { title: e.target.value })}
+                                        onClick={(e) => e.stopPropagation()}
+                                        placeholder="Title"
+                                        className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white md:col-span-2"
+                                      />
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        value={entryDraft.amountVnd}
+                                        onChange={(e) => updateLongTermEntryDraft(row.booking.id, { amountVnd: e.target.value })}
+                                        onClick={(e) => e.stopPropagation()}
+                                        placeholder="Amount (VND)"
+                                        className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+                                      />
+                                      <input
+                                        type="date"
+                                        value={entryDraft.date || TODAY_STR}
+                                        onChange={(e) => updateLongTermEntryDraft(row.booking.id, { date: e.target.value })}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+                                      />
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2 items-center">
+                                      <input
+                                        type="text"
+                                        value={entryDraft.description}
+                                        onChange={(e) => updateLongTermEntryDraft(row.booking.id, { description: e.target.value })}
+                                        onClick={(e) => e.stopPropagation()}
+                                        placeholder="Description or note"
+                                        className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleAddLongTermLedgerEntry(row.booking);
+                                        }}
+                                        className="px-4 py-2 rounded-full text-sm font-semibold border border-[#26402E] bg-[#E2F05D]/50 text-[#26402E] hover:bg-[#E2F05D]"
+                                      >
+                                        Add entry
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleCopyLongTermReceipt(row);
+                                        }}
+                                        className="px-4 py-2 rounded-full text-sm font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                      >
+                                        Copy receipt
+                                      </button>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-slate-500">
+                                      <span>Receipt month: {row.currentMonthKey}</span>
+                                      <div className="flex items-center gap-3">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleSettleLongTermMonth(row);
+                                          }}
+                                          className="px-3 py-1.5 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 font-semibold"
+                                        >
+                                          Mark month settled
+                                        </button>
+                                        {receiptStatus === 'copied' && <span className="text-emerald-700 font-semibold">Receipt copied</span>}
+                                        {receiptStatus === 'failed' && <span className="text-red-600 font-semibold">Copy failed</span>}
+                                      </div>
                                     </div>
                                   </div>
 
@@ -6469,29 +6745,37 @@ export default function App() {
                                         <tr>
                                           <th className="px-3 py-2 text-left">Date</th>
                                           <th className="px-3 py-2 text-left">Item</th>
+                                          <th className="px-3 py-2 text-left">Type</th>
                                           <th className="px-3 py-2 text-left">Status</th>
                                           <th className="px-3 py-2 text-right">Amount</th>
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-100">
-                                        {row.extrasLog.length === 0 ? (
+                                        {row.ledgerEntries.length === 0 ? (
                                           <tr>
-                                            <td colSpan="4" className="px-3 py-5 text-center text-slate-500">No extras logged.</td>
+                                            <td colSpan="5" className="px-3 py-5 text-center text-slate-500">No ledger entries yet.</td>
                                           </tr>
                                         ) : (
-                                          row.extrasLog.map((entry) => (
+                                          row.ledgerEntries.map((entry) => (
                                             <tr key={entry.id}>
                                               <td className="px-3 py-2 text-slate-600">{entry.date || '—'}</td>
                                               <td className="px-3 py-2">
-                                                <div className="font-semibold text-slate-800">{entry.label}</div>
-                                                {entry.notes && <div className="text-xs text-slate-500 mt-1">{entry.notes}</div>}
+                                                <div className="font-semibold text-slate-800">{entry.title}</div>
+                                                {entry.description && <div className="text-xs text-slate-500 mt-1">{entry.description}</div>}
+                                              </td>
+                                              <td className="px-3 py-2">
+                                                <span className={`px-2 py-1 rounded-full text-[11px] font-semibold border ${entry.kind === 'credit' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>
+                                                  {entry.kind === 'credit' ? 'Credit' : 'Charge'}
+                                                </span>
                                               </td>
                                               <td className="px-3 py-2">
                                                 <span className={`px-2 py-1 rounded-full text-[11px] font-semibold border ${entry.status === 'billed' ? 'border-slate-200 bg-slate-100 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
                                                   {entry.status === 'billed' ? 'Billed' : 'Unbilled'}
                                                 </span>
                                               </td>
-                                              <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatCurrencyVND(entry.amountVnd)}</td>
+                                              <td className={`px-3 py-2 text-right font-semibold ${entry.kind === 'credit' ? 'text-emerald-700' : 'text-slate-800'}`}>
+                                                {entry.kind === 'credit' ? '-' : '+'}{formatCurrencyVND(entry.amountVnd)}
+                                              </td>
                                             </tr>
                                           ))
                                         )}
