@@ -522,7 +522,7 @@ const buildLongTermLedgerEntries = (booking, fallbackDate = new Date()) => {
 
 const buildLongTermReceiptMessage = ({ row, monthKey }) => {
   if (!row) return '';
-  const rent = Math.max(0, Math.round(Number(row.booking?.monthlyRentVnd) || 0));
+  const rent = calculateLongTermRentForMonth(row.booking, monthKey);
   const monthEntries = (row.ledgerEntries || []).filter((entry) => getMonthKey(entry.date) === monthKey);
   const chargeTotal = monthEntries.filter((entry) => entry.kind === 'charge').reduce((sum, entry) => sum + entry.amountVnd, 0);
   const creditTotal = monthEntries.filter((entry) => entry.kind === 'credit').reduce((sum, entry) => sum + entry.amountVnd, 0);
@@ -572,6 +572,127 @@ const calculateNights = (checkInDateStr, checkOutDateStr) => {
   return diffDays;
 };
 
+const normalizeRoomMoves = (movesInput = [], { stayStart = '', stayEnd = '', fallbackRent = null } = {}) => {
+  if (!Array.isArray(movesInput)) return [];
+  return movesInput
+    .map((entry) => {
+      const moveDate = formatDate(entry?.moveDate || entry?.startDate || entry?.date || '');
+      const roomId = entry?.roomId || '';
+      const useDifferentMonthlyRent = !!entry?.useDifferentMonthlyRent;
+      const nextRent = Number(entry?.monthlyRentVnd);
+
+      if (!moveDate || !roomId) return null;
+      if (stayStart && moveDate <= stayStart) return null;
+      if (stayEnd && moveDate >= stayEnd) return null;
+      if (useDifferentMonthlyRent && (!Number.isFinite(nextRent) || nextRent < 0)) return null;
+
+      return {
+        id: entry?.id || randomId(),
+        moveDate,
+        roomId,
+        useDifferentMonthlyRent,
+        monthlyRentVnd: useDifferentMonthlyRent
+          ? Math.round(nextRent)
+          : (Number.isFinite(Number(fallbackRent)) ? Math.round(Number(fallbackRent)) : null),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(a.moveDate) - new Date(b.moveDate));
+};
+
+const getBookingRoomStays = (booking) => {
+  const checkIn = formatDate(booking?.checkIn || '');
+  const checkOut = formatDate(booking?.checkOut || '');
+  const primaryRoomId = booking?.roomId || '';
+  if (!checkIn || !checkOut || !primaryRoomId) return [];
+
+  const baseRent = Number(booking?.monthlyRentVnd);
+  let currentRent = Number.isFinite(baseRent) ? Math.round(baseRent) : null;
+  let currentRoomId = primaryRoomId;
+  let currentStart = checkIn;
+  const stays = [];
+  const roomMoves = normalizeRoomMoves(booking?.roomMoves || [], {
+    stayStart: checkIn,
+    stayEnd: checkOut,
+    fallbackRent: currentRent,
+  });
+
+  roomMoves.forEach((move, index) => {
+    if (move.moveDate <= currentStart || move.moveDate >= checkOut) return;
+    stays.push({
+      id: `${booking?.id || 'booking'}_stay_${index}`,
+      roomId: currentRoomId,
+      startDate: currentStart,
+      endDate: move.moveDate,
+      monthlyRentVnd: currentRent,
+    });
+    currentStart = move.moveDate;
+    currentRoomId = move.roomId;
+    if (move.useDifferentMonthlyRent && Number.isFinite(Number(move.monthlyRentVnd))) {
+      currentRent = Math.round(Number(move.monthlyRentVnd));
+    }
+  });
+
+  if (currentStart < checkOut) {
+    stays.push({
+      id: `${booking?.id || 'booking'}_stay_final`,
+      roomId: currentRoomId,
+      startDate: currentStart,
+      endDate: checkOut,
+      monthlyRentVnd: currentRent,
+    });
+  }
+
+  return stays.filter((stay) => stay.roomId && stay.startDate < stay.endDate);
+};
+
+const getBookingRoomIdForDate = (booking, dateStr) => {
+  const roomStay = getBookingRoomStays(booking).find((stay) => stay.startDate <= dateStr && stay.endDate > dateStr);
+  return roomStay?.roomId || booking?.roomId || '';
+};
+
+const expandBookingToRoomStays = (booking) => {
+  const roomStays = getBookingRoomStays(booking);
+  if (!roomStays.length) return [];
+  return roomStays.map((stay, index) => ({
+    ...booking,
+    id: `${booking?.id || 'booking'}__roomstay_${index}`,
+    sourceBookingId: booking?.id || null,
+    roomId: stay.roomId,
+    checkIn: stay.startDate,
+    checkOut: stay.endDate,
+    monthlyRentVnd: stay.monthlyRentVnd,
+    roomStayIndex: index,
+    isRoomStaySegment: true,
+  }));
+};
+
+const calculateLongTermRentForRange = (booking, startDate, endDate) => {
+  const rangeStart = formatDate(startDate);
+  const rangeEnd = formatDate(endDate);
+  if (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) return 0;
+
+  return getBookingRoomStays(booking).reduce((sum, stay) => {
+    const overlapStart = stay.startDate > rangeStart ? stay.startDate : rangeStart;
+    const overlapEnd = stay.endDate < rangeEnd ? stay.endDate : rangeEnd;
+    const overlapNights = calculateNights(overlapStart, overlapEnd);
+    const rent = Number(stay.monthlyRentVnd);
+    if (overlapNights <= 0 || !Number.isFinite(rent) || rent <= 0) return sum;
+    return sum + Math.round(rent * (overlapNights / 30));
+  }, 0);
+};
+
+const calculateLongTermRentForMonth = (booking, monthKey) => {
+  if (!monthKey) return 0;
+  const [yearStr, monthStr] = monthKey.split('-');
+  const year = Number(yearStr);
+  const monthIndex = Number(monthStr) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0) return 0;
+  const monthStart = formatDate(new Date(year, monthIndex, 1));
+  const monthEnd = formatDate(new Date(year, monthIndex + 1, 1));
+  return calculateLongTermRentForRange(booking, monthStart, monthEnd);
+};
+
 const normalizeBookingBreaks = (breaksInput = []) => {
   if (!Array.isArray(breaksInput)) return [];
   const normalized = breaksInput
@@ -597,13 +718,14 @@ const isDateOnBookingBreak = (booking, dateStr) => {
   return breaks.some((brk) => dateStr >= brk.startDate && dateStr <= brk.endDate);
 };
 
-const bookingOccupiesDate = (booking, dateStr) => {
+const bookingOccupiesDate = (booking, dateStr, roomId = null) => {
   if (!booking || !dateStr) return false;
   if (!(booking.checkIn <= dateStr && booking.checkOut > dateStr)) return false;
+  if (roomId && getBookingRoomIdForDate(booking, dateStr) !== roomId) return false;
   return !isDateOnBookingBreak(booking, dateStr);
 };
 
-const getBookingOccupiedDates = (booking) => {
+const getBookingOccupiedDates = (booking, roomId = null) => {
   const occupied = [];
   if (!booking?.checkIn || !booking?.checkOut) return occupied;
   const startTs = new Date(booking.checkIn).getTime();
@@ -612,12 +734,12 @@ const getBookingOccupiedDates = (booking) => {
 
   for (let ts = startTs; ts < endTs; ts += 86_400_000) {
     const dateStr = formatDate(new Date(ts));
-    if (bookingOccupiesDate(booking, dateStr)) occupied.push(dateStr);
+    if (bookingOccupiesDate(booking, dateStr, roomId)) occupied.push(dateStr);
   }
   return occupied;
 };
 
-const bookingsOverlapConsideringBreaks = (bookingA, bookingB) => {
+const bookingsOverlapConsideringBreaks = (bookingA, bookingB, roomId = null) => {
   if (!bookingA || !bookingB) return false;
   const overlapStartTs = Math.max(new Date(bookingA.checkIn).getTime(), new Date(bookingB.checkIn).getTime());
   const overlapEndTs = Math.min(new Date(bookingA.checkOut).getTime(), new Date(bookingB.checkOut).getTime());
@@ -625,7 +747,7 @@ const bookingsOverlapConsideringBreaks = (bookingA, bookingB) => {
 
   for (let ts = overlapStartTs; ts < overlapEndTs; ts += 86_400_000) {
     const dateStr = formatDate(new Date(ts));
-    if (bookingOccupiesDate(bookingA, dateStr) && bookingOccupiesDate(bookingB, dateStr)) return true;
+    if (bookingOccupiesDate(bookingA, dateStr, roomId) && bookingOccupiesDate(bookingB, dateStr, roomId)) return true;
   }
   return false;
 };
@@ -720,29 +842,30 @@ const getDaysArray = (start, end) => {
 const getOccupiedDates = (bookings, roomId, excludeBookingId) => {
   const occupied = new Set();
   bookings.forEach((b) => {
-    if (b.roomId !== roomId || isCancelledStatus(b.status) || b.id === excludeBookingId) return;
-    getBookingOccupiedDates(b).forEach((dateStr) => occupied.add(dateStr));
+    if (isCancelledStatus(b.status) || b.id === excludeBookingId) return;
+    getBookingOccupiedDates(b, roomId).forEach((dateStr) => occupied.add(dateStr));
   });
   return occupied;
 };
 
 const getDaySummaryForDate = (dateStr, bookings) => {
-  const dayCheckIns = bookings.filter(
+  const occupancyBookings = bookings.flatMap((booking) => expandBookingToRoomStays(booking));
+  const dayCheckIns = occupancyBookings.filter(
     (b) => !isCancelledStatus(b.status) && b.checkIn === dateStr
   );
-  const dayCheckOuts = bookings.filter(
+  const dayCheckOuts = occupancyBookings.filter(
     (b) => !isCancelledStatus(b.status) && b.checkOut === dateStr
   );
 
   const earlyCheckIns = dayCheckIns.filter((b) => !!b.earlyCheckIn);
 
   const weekdayKey = getWeekdayKey(dateStr);
-  const longTermCleans = bookings.filter((b) => {
+  const longTermCleans = occupancyBookings.filter((b) => {
     if (!b.isLongTerm) return false;
     if (isCancelledStatus(b.status)) return false;
     if (!b.weeklyCleaningDay) return false;
     if (b.weeklyCleaningDay !== weekdayKey) return false;
-    return bookingOccupiesDate(b, dateStr);
+    return bookingOccupiesDate(b, dateStr, b.roomId);
   });
 
   const roomsToClean = dayCheckOuts.length + longTermCleans.length;
@@ -758,21 +881,22 @@ const getDaySummaryForDate = (dateStr, bookings) => {
 
 // Builds cleaning tasks for a specific date based on room status, check-outs, and long-stay weekly cleans.
 function buildCleaningTasksForDate(targetDateStr, bookings, roomStatuses) {
-  const checkoutsForDate = bookings
+  const occupancyBookings = bookings.flatMap((booking) => expandBookingToRoomStays(booking));
+  const checkoutsForDate = occupancyBookings
     .filter((b) => b.checkOut === targetDateStr && !isCancelledStatus(b.status) && b.status !== 'checked-out');
 
   const checkoutRoomIds = checkoutsForDate.map((b) => b.roomId);
   const weekdayKey = getWeekdayKey(targetDateStr);
 
   const longTermCleaningRooms = new Set(
-    bookings
+    occupancyBookings
       .filter((b) => {
         if (!b.isLongTerm) return false;
         if (isCancelledStatus(b.status)) return false;
         if (!b.weeklyCleaningDay) return false;
         if (b.weeklyCleaningDay !== weekdayKey) return false;
         // Only treat as weekly clean when guest is already in-house before target date.
-        return b.checkIn < targetDateStr && bookingOccupiesDate(b, targetDateStr);
+        return b.checkIn < targetDateStr && bookingOccupiesDate(b, targetDateStr, b.roomId);
       })
       .map((b) => b.roomId)
   );
@@ -1169,6 +1293,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     netEarningsFromEmail: '',
     airbnbBaseEarningsVnd: '',
     monthlyRentVnd: '',
+    hasMultipleRoomStay: false,
+    roomMoves: [],
     hasGuestBreaks: false,
     guestBreakPeriods: [],
   });
@@ -1211,18 +1337,26 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   );
 
   const longStayEstimatedTotal = useMemo(() => {
-    const rent = Number(formData.monthlyRentVnd);
-    if (!Number.isFinite(rent) || rent <= 0 || !nights) return 0;
-    return Math.round(rent * (nights / 30));
-  }, [formData.monthlyRentVnd, nights]);
+    if (formData.stayCategory !== 'long' || !nights) return 0;
+    return calculateLongTermRentForRange(
+      {
+        checkIn: formData.checkIn,
+        checkOut: formData.checkOut,
+        roomId: formData.roomId,
+        monthlyRentVnd: formData.monthlyRentVnd,
+        roomMoves: formData.hasMultipleRoomStay ? formData.roomMoves : [],
+      },
+      formData.checkIn,
+      formData.checkOut
+    );
+  }, [formData.checkIn, formData.checkOut, formData.hasMultipleRoomStay, formData.monthlyRentVnd, formData.roomId, formData.roomMoves, formData.stayCategory, nights]);
 
   const bookingBaseAmount = useMemo(() => {
     if (['long'].includes(formData.stayCategory)) {
-      const rent = Number(formData.monthlyRentVnd);
-      return Number.isFinite(rent) ? rent : 0;
+      return longStayEstimatedTotal;
     }
     return Number(formData.price) || 0;
-  }, [formData.monthlyRentVnd, formData.price, formData.stayCategory]);
+  }, [formData.price, formData.stayCategory, longStayEstimatedTotal]);
 
   const bookingTotalWithServices = useMemo(() => bookingBaseAmount + servicesTotal, [bookingBaseAmount, servicesTotal]);
 
@@ -1255,6 +1389,12 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         netEarningsFromEmail: booking.netEarningsFromEmail ?? '',
         airbnbBaseEarningsVnd: booking.airbnbBaseEarningsVnd ?? booking.netEarningsFromEmail ?? booking.price ?? '',
         monthlyRentVnd: booking.monthlyRentVnd ?? booking.price ?? '',
+        hasMultipleRoomStay: !!booking.hasMultipleRoomStay || (Array.isArray(booking.roomMoves) && booking.roomMoves.length > 0),
+        roomMoves: normalizeRoomMoves(booking.roomMoves || [], {
+          stayStart: booking.checkIn,
+          stayEnd: booking.checkOut,
+          fallbackRent: booking.monthlyRentVnd ?? booking.price ?? null,
+        }),
         hasGuestBreaks: !!booking.hasGuestBreaks || normalizeBookingBreaks(booking.guestBreakPeriods || booking.breakPeriods || []).length > 0,
         guestBreakPeriods: normalizeBookingBreaks(booking.guestBreakPeriods || booking.breakPeriods || []),
       });
@@ -1290,6 +1430,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         netEarningsFromEmail: '',
         airbnbBaseEarningsVnd: '',
         monthlyRentVnd: '',
+        hasMultipleRoomStay: false,
+        roomMoves: [],
         hasGuestBreaks: false,
         guestBreakPeriods: [],
       });
@@ -1383,10 +1525,10 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     const checkInBlocked = new Set();
     const checkOutBlocked = new Set();
 
-    allBookings.forEach((b) => {
+    allBookings.flatMap((entry) => expandBookingToRoomStays(entry)).forEach((b) => {
       if (b.roomId !== formData.roomId) return;
       if (!isBlockingStatus(b.status)) return;
-      if (booking && b.id === booking.id) return;
+      if (booking && (b.sourceBookingId || b.id) === booking.id) return;
       const occupiedDates = getBookingOccupiedDates(b);
       const occupiedSet = new Set(occupiedDates);
       occupiedDates.forEach((dateStr) => {
@@ -1402,7 +1544,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   }, [allBookings, formData.roomId, booking]);
 
   const availableRoomOptions = useMemo(() => {
-    const roomBookings = allBookings.reduce((acc, b) => {
+    const roomBookings = allBookings.flatMap((entry) => expandBookingToRoomStays(entry)).reduce((acc, b) => {
       if (isBlockingStatus(b.status)) {
         if (!acc[b.roomId]) acc[b.roomId] = [];
         acc[b.roomId].push(b);
@@ -1415,7 +1557,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     return rooms.map(room => {
       const bookingsForRoom = roomBookings[room.id] || [];
       const isOccupiedToday = bookingsForRoom.some(b => 
-        bookingOccupiesDate(b, today) && (!booking || b.id !== booking.id)
+        bookingOccupiesDate(b, today, room.id) && (!booking || (b.sourceBookingId || b.id) !== booking.id)
       );
 
       let displayStatus = '';
@@ -1458,8 +1600,46 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       }
     }
 
+    const isLongStay = formData.stayCategory === 'long';
+    const rawRoomMoves = isLongStay && formData.hasMultipleRoomStay ? (Array.isArray(formData.roomMoves) ? formData.roomMoves : []) : [];
+    if (isLongStay && formData.hasMultipleRoomStay && rawRoomMoves.length === 0) {
+      setConflictError('Add at least one room move or untick multiple room stay.');
+      return;
+    }
+    if (rawRoomMoves.some((move) => !move?.moveDate || !move?.roomId)) {
+      setConflictError('Each room move needs both a move date and destination room.');
+      return;
+    }
+    if (rawRoomMoves.some((move) => move?.useDifferentMonthlyRent && (move.monthlyRentVnd === '' || move.monthlyRentVnd === null || Number(move.monthlyRentVnd) < 0))) {
+      setConflictError('Each rent change needs a valid new monthly rent.');
+      return;
+    }
+
+    const rawRoomMovesWithIds = rawRoomMoves.map((move) => ({ ...move, id: move.id || randomId() }));
+    const normalizedRoomMoves = normalizeRoomMoves(rawRoomMovesWithIds, {
+      stayStart: formData.checkIn,
+      stayEnd: formData.checkOut,
+      fallbackRent: formData.monthlyRentVnd,
+    });
+    if (rawRoomMovesWithIds.length !== normalizedRoomMoves.length) {
+      setConflictError(`Room move dates must be inside the stay (${formData.checkIn} → ${addDays(formData.checkOut, -1)}), with valid rooms and rent changes.`);
+      return;
+    }
+    for (let i = 1; i < normalizedRoomMoves.length; i += 1) {
+      if (normalizedRoomMoves[i - 1].moveDate === normalizedRoomMoves[i].moveDate) {
+        setConflictError('Room move dates must be unique.');
+        return;
+      }
+    }
+
     const conflictResult = checkBookingConflict(
-      { ...formData, hasGuestBreaks: formData.hasGuestBreaks, guestBreakPeriods: rawBreaks },
+      {
+        ...formData,
+        hasGuestBreaks: formData.hasGuestBreaks,
+        guestBreakPeriods: rawBreaks,
+        hasMultipleRoomStay: isLongStay && normalizedRoomMoves.length > 0,
+        roomMoves: normalizedRoomMoves,
+      },
       booking ? booking.id : null
     );
 
@@ -1507,6 +1687,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       airbnbBaseEarningsVnd,
       netEarningsFromEmail,
       monthlyRentVnd,
+      hasMultipleRoomStay: isLongStay && normalizedRoomMoves.length > 0,
+      roomMoves: isLongStay ? normalizedRoomMoves : [],
       hasGuestBreaks: !!formData.hasGuestBreaks && rawBreaks.length > 0,
       guestBreakPeriods: rawBreaks,
     });
@@ -1529,6 +1711,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         stayCategory: nextCategory,
         isLongTerm: isLongTermCategory,
         weeklyCleaningDay: isLongTermCategory ? prev.weeklyCleaningDay || 'monday' : '',
+        hasMultipleRoomStay: nextCategory === 'long' ? prev.hasMultipleRoomStay : false,
+        roomMoves: nextCategory === 'long' ? prev.roomMoves : [],
       }));
       setPaymentStatusError(null);
     } else if (name === 'channel') {
@@ -1548,6 +1732,12 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     } else if (name === 'bikeCount') {
       const numeric = Math.max(1, Math.min(5, Number(value) || 1));
       setFormData((prev) => ({ ...prev, bikeCount: numeric }));
+    } else if (name === 'hasMultipleRoomStay') {
+      setFormData((prev) => ({
+        ...prev,
+        hasMultipleRoomStay: checked,
+        roomMoves: checked ? prev.roomMoves : [],
+      }));
     } else {
       setFormData(prev => ({ 
           ...prev, 
@@ -1580,6 +1770,39 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     setFormData((prev) => ({
       ...prev,
       guestBreakPeriods: (Array.isArray(prev.guestBreakPeriods) ? prev.guestBreakPeriods : []).filter((period) => period.id !== id),
+    }));
+  };
+
+  const addRoomMove = () => {
+    setFormData((prev) => ({
+      ...prev,
+      hasMultipleRoomStay: true,
+      roomMoves: [
+        ...(Array.isArray(prev.roomMoves) ? prev.roomMoves : []),
+        {
+          id: randomId(),
+          moveDate: '',
+          roomId: '',
+          useDifferentMonthlyRent: false,
+          monthlyRentVnd: prev.monthlyRentVnd || '',
+        },
+      ],
+    }));
+  };
+
+  const updateRoomMove = (id, patch) => {
+    setFormData((prev) => ({
+      ...prev,
+      roomMoves: (Array.isArray(prev.roomMoves) ? prev.roomMoves : []).map((move) => (
+        move.id === id ? { ...move, ...patch } : move
+      )),
+    }));
+  };
+
+  const removeRoomMove = (id) => {
+    setFormData((prev) => ({
+      ...prev,
+      roomMoves: (Array.isArray(prev.roomMoves) ? prev.roomMoves : []).filter((move) => move.id !== id),
     }));
   };
 
@@ -2147,6 +2370,121 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 {formData.channel === 'airbnb' && (
                   <p className="text-xs text-slate-500 mt-1">Auto-calculated: Imported earnings minus VAT (5%) and income tax (2%).</p>
                 )}
+            </div>
+          )}
+
+          {formData.stayCategory === 'long' && (
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Multiple Room Stay</div>
+                  <div className="text-xs text-slate-500 mt-1">Keep one booking ID and plan any room changes during the guest’s long stay.</div>
+                </div>
+                <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    name="hasMultipleRoomStay"
+                    checked={!!formData.hasMultipleRoomStay}
+                    onChange={handleChange}
+                    className="h-4 w-4 rounded border-slate-300"
+                    style={{ accentColor: COLORS.darkGreen }}
+                  />
+                  Enable
+                </label>
+              </div>
+
+              {formData.hasMultipleRoomStay && (
+                <div className="space-y-3">
+                  {(formData.roomMoves || []).length === 0 ? (
+                    <div className="text-xs text-slate-500">No room changes added yet.</div>
+                  ) : (
+                    (formData.roomMoves || []).map((move, idx) => (
+                      <div key={move.id || idx} className="rounded-xl border border-slate-200 p-3 bg-slate-50 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Move #{idx + 1}</div>
+                          <button
+                            type="button"
+                            onClick={() => removeRoomMove(move.id)}
+                            className="px-3 py-1.5 rounded-full border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Move date</label>
+                            <input
+                              type="date"
+                              value={move.moveDate || ''}
+                              min={formData.checkIn ? addDays(formData.checkIn, 1) : undefined}
+                              max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
+                              onChange={(e) => updateRoomMove(move.id, { moveDate: e.target.value })}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">New room</label>
+                            <select
+                              value={move.roomId || ''}
+                              onChange={(e) => updateRoomMove(move.id, { roomId: e.target.value })}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                            >
+                              <option value="">Select room</option>
+                              {PROPERTIES.map((prop) => (
+                                <optgroup key={prop.id} label={prop.name}>
+                                  {availableRoomOptions
+                                    .filter((room) => room.propertyId === prop.id)
+                                    .map((room) => (
+                                      <option key={room.id} value={room.id}>
+                                        {room.name}{room.displayStatus}
+                                      </option>
+                                    ))}
+                                </optgroup>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={!!move.useDifferentMonthlyRent}
+                            onChange={(e) => updateRoomMove(move.id, {
+                              useDifferentMonthlyRent: e.target.checked,
+                              monthlyRentVnd: e.target.checked ? (move.monthlyRentVnd || formData.monthlyRentVnd || '') : (formData.monthlyRentVnd || ''),
+                            })}
+                            className="h-4 w-4 rounded border-slate-300"
+                            style={{ accentColor: COLORS.darkGreen }}
+                          />
+                          Different monthly rent from this date
+                        </label>
+
+                        {move.useDifferentMonthlyRent && (
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">New monthly rent (VND)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={move.monthlyRentVnd ?? ''}
+                              onChange={(e) => updateRoomMove(move.id, { monthlyRentVnd: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={addRoomMove}
+                    className="px-3 py-2 rounded-full border border-slate-200 text-xs font-semibold bg-white hover:bg-slate-50"
+                  >
+                    + Add room change
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -3785,6 +4123,7 @@ export default function App() {
   const calendarBookings = useMemo(() => {
     try {
       return bookings
+        .flatMap((b) => expandBookingToRoomStays(b))
         .map((b) => {
           const normalizedCheckIn = formatDate(b.checkIn);
           const normalizedCheckOut = formatDate(b.checkOut);
@@ -3831,7 +4170,7 @@ export default function App() {
       return calendarBookings.reduce((sum, booking) => {
         if (!booking || booking.status === 'cancelled') return sum;
         if (!roomsForProperty.has(booking.roomId)) return sum;
-        if (!bookingOccupiesDate(booking, dateStr)) return sum;
+        if (!bookingOccupiesDate(booking, dateStr, booking.roomId)) return sum;
 
         if (!booking.bikeParkingNeeded) return sum;
         const bikes = Number(booking.bikeCount);
@@ -3863,7 +4202,7 @@ export default function App() {
   const bookingsForDate = useMemo(() => {
     const dateStr = housekeepingDate || '';
     if (!dateStr) return [];
-    return (bookings || []).filter((b) => {
+    return (bookings || []).flatMap((booking) => expandBookingToRoomStays(booking)).filter((b) => {
       if (!b || b.status === 'cancelled') return false;
       const checkIn = formatDate(b.checkIn);
       const checkOut = formatDate(b.checkOut);
@@ -3872,12 +4211,12 @@ export default function App() {
   }, [bookings, housekeepingDate]);
 
   const checkoutsForDate = useMemo(
-    () => (bookings || []).filter((b) => b && isBlockingStatus(b.status) && formatDate(b.checkOut) === housekeepingDate),
+    () => (bookings || []).flatMap((booking) => expandBookingToRoomStays(booking)).filter((b) => b && isBlockingStatus(b.status) && formatDate(b.checkOut) === housekeepingDate),
     [bookings, housekeepingDate]
   );
 
   const checkinsForDate = useMemo(
-    () => (bookings || []).filter((b) => b && isBlockingStatus(b.status) && formatDate(b.checkIn) === housekeepingDate),
+    () => (bookings || []).flatMap((booking) => expandBookingToRoomStays(booking)).filter((b) => b && isBlockingStatus(b.status) && formatDate(b.checkIn) === housekeepingDate),
     [bookings, housekeepingDate]
   );
 
@@ -3889,7 +4228,7 @@ export default function App() {
   const bookingHousekeepingTasks = useMemo(
     () =>
       normalizeHousekeepingTasks({
-        bookings: (bookings || []).filter((b) => isBlockingStatus(b?.status)),
+        bookings: (bookings || []).filter((b) => isBlockingStatus(b?.status)).flatMap((booking) => expandBookingToRoomStays(booking)),
         rooms: ALL_ROOMS,
         targetDate: housekeepingDate,
         overrides: housekeepingOverrides,
@@ -3968,7 +4307,8 @@ export default function App() {
         return bookingOccupiesDate(booking, TODAY_STR);
       })
       .map((booking) => {
-        const room = ALL_ROOMS.find((entry) => entry.id === booking.roomId);
+        const activeRoomId = getBookingRoomIdForDate(booking, TODAY_STR);
+        const room = ALL_ROOMS.find((entry) => entry.id === activeRoomId);
         const guest = guests.find((entry) => entry.id === booking.guestId);
         const longTermOps = booking.longTermOps || {};
         const cleaningDayKey = longTermOps.cleaningDay || booking.weeklyCleaningDay || '';
@@ -3993,7 +4333,8 @@ export default function App() {
         const outstandingLedgerBalance = ledgerEntries
           .filter((entry) => entry.status !== 'billed')
           .reduce((sum, entry) => sum + entry.signedAmountVnd, 0);
-        const currentMonthTotalDue = Math.max(0, Math.round(Number(booking.monthlyRentVnd) || 0)) + unbilledExtrasTotal;
+        const currentMonthRent = calculateLongTermRentForMonth(booking, currentMonthKey);
+        const currentMonthTotalDue = currentMonthRent + unbilledExtrasTotal;
 
         const rawLaundryStatus = longTermOps.laundryStatus || 'pending';
         const laundryUpdatedAt = longTermOps.laundryUpdatedAt || '';
@@ -4024,13 +4365,14 @@ export default function App() {
           outstandingLedgerBalance,
           currentMonthTotalDue,
           currentMonthKey,
+          currentMonthRent,
           receiptMessage: '',
           leaseEndDate: longTermOps.leaseEndDate || booking.checkOut || '',
           specialNotes: [longTermOps.specialNotes, booking.notes, guest?.notes].filter(Boolean),
         };
       })
       .sort((a, b) => {
-        const roomDelta = (ROOM_SORT_PRIORITY[a.booking?.roomId] ?? Number.MAX_SAFE_INTEGER) - (ROOM_SORT_PRIORITY[b.booking?.roomId] ?? Number.MAX_SAFE_INTEGER);
+        const roomDelta = (ROOM_SORT_PRIORITY[a.room?.id || a.booking?.roomId] ?? Number.MAX_SAFE_INTEGER) - (ROOM_SORT_PRIORITY[b.room?.id || b.booking?.roomId] ?? Number.MAX_SAFE_INTEGER);
         if (roomDelta !== 0) return roomDelta;
         return (a.room?.name || a.booking?.roomId || '').localeCompare(b.room?.name || b.booking?.roomId || '');
       });
@@ -4137,11 +4479,19 @@ export default function App() {
       return { conflict: true, reason: "Check-out date must be strictly after the Check-in date." };
     }
 
-    const conflictingBooking = bookings.find(existingBooking => {
-      if (existingBooking.roomId !== newRoomId) return false;
+    const newRoomStays = getBookingRoomStays(newBookingData);
+    const conflictingBooking = bookings.find((existingBooking) => {
       if (existingBooking.id === excludeBookingId) return false;
       if (!isBlockingStatus(existingBooking.status)) return false;
-      return bookingsOverlapConsideringBreaks(existingBooking, newBookingData);
+
+      return newRoomStays.some((newStay) => (
+        bookingsOverlapConsideringBreaks(existingBooking, {
+          ...newBookingData,
+          roomId: newStay.roomId,
+          checkIn: newStay.startDate,
+          checkOut: newStay.endDate,
+        }, newStay.roomId)
+      ));
     });
 
     if (conflictingBooking) {
@@ -4571,7 +4921,20 @@ export default function App() {
       });
       const isLongTermCategory = ['long'].includes(bookingData.stayCategory) || bookingData.isLongTerm;
       const monthlyRentVnd = isLongTermCategory && Number.isFinite(Number(bookingData.monthlyRentVnd)) ? Number(bookingData.monthlyRentVnd) : null;
-      const estimatedLongTotal = isLongTermCategory && monthlyRentVnd ? Math.round(monthlyRentVnd * (Math.max(1, calculateNights(bookingData.checkIn, bookingData.checkOut)) / 30)) : null;
+      const roomMoves = isLongTermCategory
+        ? normalizeRoomMoves(bookingData.roomMoves || [], {
+            stayStart: bookingData.checkIn,
+            stayEnd: bookingData.checkOut,
+            fallbackRent: monthlyRentVnd,
+          })
+        : [];
+      const estimatedLongTotal = isLongTermCategory
+        ? calculateLongTermRentForRange({
+            ...bookingData,
+            monthlyRentVnd,
+            roomMoves,
+          }, bookingData.checkIn, bookingData.checkOut)
+        : null;
 
       const priceForBooking = (() => {
         if (isLongTermCategory && estimatedLongTotal !== null) return estimatedLongTotal;
@@ -4607,6 +4970,8 @@ export default function App() {
         airbnbBaseEarningsVnd: normalizedAirbnbBase,
         netEarningsFromEmail: normalizedAirbnbBase,
         monthlyRentVnd: monthlyRentVnd,
+        hasMultipleRoomStay: isLongTermCategory && roomMoves.length > 0,
+        roomMoves,
         vatWithheld: withholding.vatWithheld,
         incomeTaxWithheld: withholding.incomeTaxWithheld,
         totalWithheld: withholding.totalWithheld,
@@ -5174,11 +5539,9 @@ export default function App() {
   // --- STATISTICS CALCULATIONS ---
   const calculateStats = (rangeKey, customStart, customEnd) => {
     const netForBooking = (booking) => {
-      const overlapNights = booking._overlapNights || 0;
       const isLong = (booking.stayCategory || '').toLowerCase() === 'long' || booking.isLongTerm;
-      const monthlyRent = Number(booking.monthlyRentVnd);
-      if (isLong && Number.isFinite(monthlyRent) && monthlyRent > 0 && overlapNights > 0) {
-        return Math.round(monthlyRent * (overlapNights / 30));
+      if (isLong) {
+        return calculateLongTermRentForRange(booking, rangeStart, rangeEnd);
       }
       const w = booking._withholding || {};
       if (w.status === 'computed' && Number.isFinite(w.finalCountedIncome)) return w.finalCountedIncome;
@@ -5434,10 +5797,14 @@ export default function App() {
         if (overlap <= 0) return;
         nights += overlap;
         const totalNights = b.nights || calculateNights(b.checkIn, b.checkOut) || 1;
-        const netValue = netForBooking(b);
+        const netValue = ((b.stayCategory || '').toLowerCase() === 'long' || b.isLongTerm)
+          ? calculateLongTermRentForRange(b, mStart, mEnd)
+          : netForBooking(b);
         const withheldValue = b._withholding?.status === 'computed' ? (b._withholding.totalWithheld || 0) : 0;
         const prorateFactor = overlap / totalNights;
-        revenueMonth += netValue * prorateFactor;
+        revenueMonth += ((b.stayCategory || '').toLowerCase() === 'long' || b.isLongTerm)
+          ? netValue
+          : (netValue * prorateFactor);
         withheldMonth += withheldValue * prorateFactor;
       });
 
@@ -5564,11 +5931,12 @@ export default function App() {
   // --- View Renderers ---
 
   const renderDashboard = () => {
-    const activeBookings = bookings.filter((b) => !isCancelledStatus(b.status) && bookingOccupiesDate(b, TODAY_STR));
-    const checkingIn = bookings.filter(b => b.checkIn === TODAY_STR && b.status !== 'cancelled');
-    const checkingOutToday = bookings.filter(b => b.checkOut === TODAY_STR && b.status !== 'cancelled');
-    const checkingInTomorrow = bookings.filter(b => b.checkIn === TOMORROW_STR && b.status !== 'cancelled');
-    const checkingOutTomorrow = bookings.filter(b => b.checkOut === TOMORROW_STR && b.status !== 'cancelled');
+    const occupancyBookings = bookings.flatMap((booking) => expandBookingToRoomStays(booking));
+    const activeBookings = occupancyBookings.filter((b) => !isCancelledStatus(b.status) && bookingOccupiesDate(b, TODAY_STR, b.roomId));
+    const checkingIn = occupancyBookings.filter((b) => b.checkIn === TODAY_STR && b.status !== 'cancelled');
+    const checkingOutToday = occupancyBookings.filter((b) => b.checkOut === TODAY_STR && b.status !== 'cancelled');
+    const checkingInTomorrow = occupancyBookings.filter((b) => b.checkIn === TOMORROW_STR && b.status !== 'cancelled');
+    const checkingOutTomorrow = occupancyBookings.filter((b) => b.checkOut === TOMORROW_STR && b.status !== 'cancelled');
     
     const occupancyRate = ALL_ROOMS.length > 0 ? Math.round((activeBookings.length / ALL_ROOMS.length) * 100) : 0;
     const tasksTodayCount = cleaningTasks ? cleaningTasks.length : 0;
@@ -5580,12 +5948,12 @@ export default function App() {
       low: todayLowPriorityRooms,
     } = splitCleaningByPriority(cleaningTasks);
 
-    const findIncomingForDate = (roomId, targetDate) => bookings.find(
+    const findIncomingForDate = (roomId, targetDate) => occupancyBookings.find(
       (b) => b.roomId === roomId && b.checkIn === targetDate && !isCancelledStatus(b.status)
     );
 
-    const findInHouseForDate = (roomId, targetDate) => bookings.find(
-      (b) => b.roomId === roomId && !isCancelledStatus(b.status) && bookingOccupiesDate(b, targetDate)
+    const findInHouseForDate = (roomId, targetDate) => occupancyBookings.find(
+      (b) => b.roomId === roomId && !isCancelledStatus(b.status) && bookingOccupiesDate(b, targetDate, roomId)
     );
 
     const getRoomTagClasses = (roomId, { highlightPriority, highlightWeekly } = {}) => {
@@ -5627,7 +5995,7 @@ export default function App() {
             const startLabel = task.earliestLabel || '—';
             const endLabel = task.latestLabel || '—';
             const conflict = task.hasScheduleConflict;
-            const targetBookingId = incoming?.id || inHouse?.id || null;
+            const targetBookingId = incoming?.sourceBookingId || incoming?.id || inHouse?.sourceBookingId || inHouse?.id || null;
             const interactive = targetBookingId ? interactiveHandlers(targetBookingId) : {};
             const clickClasses = targetBookingId ? 'cursor-pointer hover:bg-[#F9F8F2]' : 'cursor-default';
             return (
@@ -5691,7 +6059,7 @@ export default function App() {
                          <div
                            key={booking.id}
                            className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer hover:bg-white transition-colors"
-                           {...interactiveHandlers(booking.id)}
+                           {...interactiveHandlers(booking.sourceBookingId || booking.id)}
                          >
                            <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('⬅️')}<span>{booking.guestName}</span></div>
                            <span className={getRoomTagClasses(booking.roomId)}>
@@ -5720,7 +6088,7 @@ export default function App() {
                              className={`flex items-center justify-between p-3 rounded-xl border shadow-sm cursor-pointer hover:brightness-[0.98] transition-all ${
                                booking.earlyCheckIn ? 'bg-yellow-50/70 border-yellow-200' : 'bg-[#E2F05D]/40 border-[#E2F05D]'
                              }`}
-                             {...interactiveHandlers(booking.id)}
+                             {...interactiveHandlers(booking.sourceBookingId || booking.id)}
                            >
                              <div className="flex items-center text-sm font-bold text-slate-800">
                                {rowIcon('👤')}
@@ -5799,7 +6167,7 @@ export default function App() {
                           <div
                             key={booking.id}
                             className="flex items-center justify-between p-3 rounded-xl border shadow-sm bg-slate-50 cursor-pointer hover:bg-white transition-colors"
-                            {...interactiveHandlers(booking.id)}
+                            {...interactiveHandlers(booking.sourceBookingId || booking.id)}
                           >
                             <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('👤')}<span>{booking.guestName}</span></div>
                             <div className="flex items-center gap-2">
@@ -5833,7 +6201,7 @@ export default function App() {
                          <div
                            key={booking.id}
                            className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer hover:bg-white transition-colors"
-                           {...interactiveHandlers(booking.id)}
+                           {...interactiveHandlers(booking.sourceBookingId || booking.id)}
                          >
                            <div className="flex items-center text-sm font-bold text-slate-800">{rowIcon('➡️')}<span>{booking.guestName}</span></div>
                            <span className={getRoomTagClasses(booking.roomId)}>
@@ -5896,7 +6264,7 @@ export default function App() {
 
     const getBookingForCell = (roomId, date) => {
       const dateStr = formatDate(date);
-      return calendarBookings.find((b) => b.roomId === roomId && !isCancelledStatus(b.status) && bookingOccupiesDate(b, dateStr));
+      return calendarBookings.find((b) => b.roomId === roomId && !isCancelledStatus(b.status) && bookingOccupiesDate(b, dateStr, roomId));
     };
       const dateIndexMap = new Map(dates.map((d, i) => [formatDate(d), i]));
     return (
@@ -5977,7 +6345,7 @@ export default function App() {
                     const isToday = date.toDateString() === new Date().toDateString();
                     const isSelected = dateStr === selectedCalendarDate;
                     const isHovered = dateStr === hoveredCalendarDate;
-                    const summary = getDaySummaryForDate(dateStr, calendarBookings);
+                    const summary = getDaySummaryForDate(dateStr, bookings);
                     return (
                       <div
                         key={dateStr}
@@ -6065,21 +6433,21 @@ export default function App() {
                           const booking = getBookingForCell(room.id, date);
                           const dateIndex = dateIndexMap.get(dateStr) ?? 0;
                           const previousDateStr = addDays(dateStr, -1);
-                          const isStart = !!booking && !bookingOccupiesDate(booking, previousDateStr);
-                          const isTruncatedAtStart = !!booking && dateIndex === 0 && bookingOccupiesDate(booking, previousDateStr);
+                          const isStart = !!booking && !bookingOccupiesDate(booking, previousDateStr, room.id);
+                          const isTruncatedAtStart = !!booking && dateIndex === 0 && bookingOccupiesDate(booking, previousDateStr, room.id);
                           const lastDateStr = formatDate(dates[dates.length - 1]);
                           const hasLongTermCleaningToday = calendarBookings.some((b) => {
                             if (!b.isLongTerm) return false;
                             if (isCancelledStatus(b.status)) return false;
                             if (b.roomId !== room.id) return false;
-                            return bookingOccupiesDate(b, dateStr) && b.weeklyCleaningDay === weekdayKey;
+                            return bookingOccupiesDate(b, dateStr, room.id) && b.weeklyCleaningDay === weekdayKey;
                           });
                           let colSpan = 0;
                           if (booking) {
                             if (isStart || isTruncatedAtStart) {
                               for (let idx = dateIndex; idx < dates.length; idx += 1) {
                                 const segmentDateStr = formatDate(dates[idx]);
-                                if (!bookingOccupiesDate(booking, segmentDateStr)) break;
+                                if (!bookingOccupiesDate(booking, segmentDateStr, room.id)) break;
                                 colSpan += 1;
                               }
                             }
@@ -6096,7 +6464,7 @@ export default function App() {
                               }
                             : undefined;
                           return (
-                            <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''}`} style={todayCellHighlight} onClick={() => { if (booking) setEditingBooking(booking); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
+                            <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''}`} style={todayCellHighlight} onClick={() => { if (booking) openBookingDetails(booking.sourceBookingId || booking.id); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
                               {isTodayCol && <div className="absolute inset-y-1 left-0 w-[3px] bg-[#d9a25c] rounded-full pointer-events-none" />}
                               {booking && shouldRenderBlock && (
                                 (() => {
@@ -6114,7 +6482,7 @@ export default function App() {
                                         zIndex: 10,
                                         outline: '1px solid rgba(255,255,255,0.35)',
                                       }}
-                                      onClick={(e) => { e.stopPropagation(); setEditingBooking(booking); setIsModalOpen(true); }}
+                                      onClick={(e) => { e.stopPropagation(); openBookingDetails(booking.sourceBookingId || booking.id); }}
                                     >
                                       {booking.isLongTerm && hasLongTermCleaningToday && (
                                         <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block mr-1.5" title="Weekly cleaning today"></span>
@@ -6325,6 +6693,9 @@ export default function App() {
                   const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
                   const perNight = bookingNights > 0 ? Math.round(Number(booking.price) / bookingNights) : 0;
                   const stayCat = getBookingStayCategory(booking);
+                  const displayRoomDate = bookingTimeFilter === 'current' ? TODAY_STR : (bookingTimeFilter === 'past' ? addDays(booking.checkOut, -1) : booking.checkIn);
+                  const displayRoomId = getBookingRoomIdForDate(booking, displayRoomDate);
+                  const displayRoom = ALL_ROOMS.find((r) => r.id === displayRoomId) || ALL_ROOMS.find((r) => r.id === booking.roomId);
                   const channelValue = booking.channel || 'airbnb';
                   const isPastContext = bookingTimeFilter === 'past';
                   const rowTone = isPastContext ? 'text-slate-500' : 'text-slate-700';
@@ -6352,8 +6723,11 @@ export default function App() {
                     </span>
                   </td>
                   <td className={`px-6 py-4 font-semibold ${isPastContext ? 'text-slate-600' : 'text-slate-800'}`}>
-                    {(ALL_ROOMS.find(r => r.id === booking.roomId)?.name) || 'Unknown room'}
-                    <div className="text-xs opacity-60">{ALL_ROOMS.find(r => r.id === booking.roomId)?.propertyName || 'Unknown property'}</div>
+                    {displayRoom?.name || 'Unknown room'}
+                    <div className="text-xs opacity-60">{displayRoom?.propertyName || 'Unknown property'}</div>
+                    {booking.hasMultipleRoomStay && (booking.roomMoves || []).length > 0 && (
+                      <div className="text-[11px] text-slate-500 mt-1">{(booking.roomMoves || []).length} room change{(booking.roomMoves || []).length === 1 ? '' : 's'}</div>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <span className={`px-3 py-1 rounded-full text-xs font-bold border ${statusBadgeClass}`}>
@@ -6612,7 +6986,10 @@ export default function App() {
                                   </div>
                                   <div>
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Monthly Rent</div>
-                                    <div className="text-base font-semibold text-slate-800 mt-1">{row.booking.monthlyRentVnd ? formatCurrencyVND(row.booking.monthlyRentVnd) : 'Not set'}</div>
+                                    <div className="text-base font-semibold text-slate-800 mt-1">{row.currentMonthRent ? formatCurrencyVND(row.currentMonthRent) : 'Not set'}</div>
+                                    {row.booking.hasMultipleRoomStay && (row.booking.roomMoves || []).length > 0 && (
+                                      <div className="text-xs text-slate-500 mt-1">{(row.booking.roomMoves || []).length} scheduled room change{(row.booking.roomMoves || []).length === 1 ? '' : 's'}</div>
+                                    )}
                                   </div>
                                   <div>
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">This Month Total Due</div>
