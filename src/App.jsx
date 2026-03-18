@@ -5210,21 +5210,60 @@ export default function App() {
   }, [updateLongTermOps]);
 
   const handleDeleteBooking = async (id) => {
-    if (!confirm('Cancel this booking? It will be marked as cancelled but kept in the list.')) return;
+    if (!id) return;
+    const action = window.prompt(
+      'Type DELETE to permanently remove this booking.\nType CANCEL to mark it as cancelled but keep it in the PMS.\nLeave blank to abort.'
+    );
+    const normalizedAction = (action || '').trim().toUpperCase();
+    if (!normalizedAction) return;
+
     setSavingBookingId(id);
     try {
-      const nowIso = new Date().toISOString();
-      const payload = { status: 'cancelled', cancelledAt: nowIso, updatedAt: nowIso };
-      await setDoc(doc(db, 'bookings', id), payload, { merge: true });
+      if (normalizedAction === 'DELETE') {
+        if (!confirm('Permanently delete this booking from the PMS? This cannot be undone.')) return;
 
-      setBookings((prev) =>
-        prev.map((b) => (b.id === id ? { ...b, ...payload } : b))
-      );
+        const result = await removeBooking({ db, id, timeoutMs: 6000 });
+        if (!result.ok) {
+          pushAlert({ title: 'Delete failed', message: result.message, code: result.code, raw: result.raw });
+          return;
+        }
 
-      pushAlert({ title: 'Booking cancelled', message: 'The booking remains in the list for history.', tone: 'success' });
+        setBookings((prev) => prev.filter((b) => b.id !== id));
+        if (editingBooking?.id === id) {
+          setEditingBooking(null);
+          setIsModalOpen(false);
+        }
+
+        pushAlert({ title: 'Booking deleted', message: 'The booking was permanently removed from the PMS.', tone: 'success' });
+        return;
+      }
+
+      if (normalizedAction === 'CANCEL') {
+        const nowIso = new Date().toISOString();
+        const payload = { status: 'cancelled', cancelledAt: nowIso, updatedAt: nowIso };
+        await setDoc(doc(db, 'bookings', id), payload, { merge: true });
+
+        setBookings((prev) =>
+          prev.map((b) => (b.id === id ? { ...b, ...payload } : b))
+        );
+
+        if (editingBooking?.id === id) {
+          setEditingBooking(null);
+          setIsModalOpen(false);
+        }
+
+        pushAlert({ title: 'Booking cancelled', message: 'The booking remains in the list for history.', tone: 'success' });
+        return;
+      }
+
+      pushAlert({
+        title: 'No action taken',
+        message: 'Use DELETE to remove permanently or CANCEL to keep it as cancelled.',
+        tone: 'error',
+      });
     } catch (error) {
-      console.error('Error cancelling booking:', error);
-      pushAlert({ title: 'Cancel failed', message: error?.message || 'Unknown error', code: error?.code, raw: error });
+      console.error('Error removing booking:', error);
+      pushAlert({ title: 'Remove failed', message: error?.message || 'Unknown error', code: error?.code, raw: error });
     } finally {
       setSavingBookingId(null);
     }
