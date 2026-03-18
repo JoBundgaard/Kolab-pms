@@ -580,17 +580,25 @@ const normalizeRoomMoves = (movesInput = [], { stayStart = '', stayEnd = '', fal
       const roomId = entry?.roomId || '';
       const useDifferentMonthlyRent = !!entry?.useDifferentMonthlyRent;
       const nextRent = Number(entry?.monthlyRentVnd);
+      const useDifferentChannel = !!entry?.useDifferentChannel;
+      const channel = entry?.channel || '';
+      const paymentStatus = entry?.paymentStatus || '';
 
       if (!moveDate || !roomId) return null;
       if (stayStart && moveDate <= stayStart) return null;
       if (stayEnd && moveDate >= stayEnd) return null;
       if (useDifferentMonthlyRent && (!Number.isFinite(nextRent) || nextRent < 0)) return null;
+      if (useDifferentChannel && !channel) return null;
+      if (useDifferentChannel && channel === 'direct' && !paymentStatus) return null;
 
       return {
         id: entry?.id || randomId(),
         moveDate,
         roomId,
         useDifferentMonthlyRent,
+        useDifferentChannel,
+        channel: useDifferentChannel ? channel : '',
+        paymentStatus: useDifferentChannel && channel === 'direct' ? paymentStatus : '',
         monthlyRentVnd: useDifferentMonthlyRent
           ? Math.round(nextRent)
           : (Number.isFinite(Number(fallbackRent)) ? Math.round(Number(fallbackRent)) : null),
@@ -600,7 +608,7 @@ const normalizeRoomMoves = (movesInput = [], { stayStart = '', stayEnd = '', fal
     .sort((a, b) => new Date(a.moveDate) - new Date(b.moveDate));
 };
 
-const getBookingRoomStays = (booking) => {
+const getBookingStaySegments = (booking) => {
   const checkIn = formatDate(booking?.checkIn || '');
   const checkOut = formatDate(booking?.checkOut || '');
   const primaryRoomId = booking?.roomId || '';
@@ -609,8 +617,10 @@ const getBookingRoomStays = (booking) => {
   const baseRent = Number(booking?.monthlyRentVnd);
   let currentRent = Number.isFinite(baseRent) ? Math.round(baseRent) : null;
   let currentRoomId = primaryRoomId;
+  let currentChannel = booking?.channel || 'airbnb';
+  let currentPaymentStatus = currentChannel === 'direct' ? (booking?.paymentStatus || '') : '';
   let currentStart = checkIn;
-  const stays = [];
+  const segments = [];
   const roomMoves = normalizeRoomMoves(booking?.roomMoves || [], {
     stayStart: checkIn,
     stayEnd: checkOut,
@@ -619,40 +629,76 @@ const getBookingRoomStays = (booking) => {
 
   roomMoves.forEach((move, index) => {
     if (move.moveDate <= currentStart || move.moveDate >= checkOut) return;
-    stays.push({
-      id: `${booking?.id || 'booking'}_stay_${index}`,
+    segments.push({
+      id: `${booking?.id || 'booking'}_segment_${index}`,
       roomId: currentRoomId,
       startDate: currentStart,
       endDate: move.moveDate,
       monthlyRentVnd: currentRent,
+      channel: currentChannel,
+      paymentStatus: currentPaymentStatus,
     });
     currentStart = move.moveDate;
     currentRoomId = move.roomId;
     if (move.useDifferentMonthlyRent && Number.isFinite(Number(move.monthlyRentVnd))) {
       currentRent = Math.round(Number(move.monthlyRentVnd));
     }
+    if (move.useDifferentChannel && move.channel) {
+      currentChannel = move.channel;
+      currentPaymentStatus = move.channel === 'direct' ? (move.paymentStatus || '') : '';
+    }
   });
 
   if (currentStart < checkOut) {
-    stays.push({
-      id: `${booking?.id || 'booking'}_stay_final`,
+    segments.push({
+      id: `${booking?.id || 'booking'}_segment_final`,
       roomId: currentRoomId,
       startDate: currentStart,
       endDate: checkOut,
       monthlyRentVnd: currentRent,
+      channel: currentChannel,
+      paymentStatus: currentPaymentStatus,
     });
   }
 
-  return stays.filter((stay) => stay.roomId && stay.startDate < stay.endDate);
+  return segments.filter((segment) => segment.roomId && segment.startDate < segment.endDate);
+};
+
+const getBookingRoomStays = (booking) => {
+  return getBookingStaySegments(booking).map((segment) => ({
+    id: segment.id,
+    roomId: segment.roomId,
+    startDate: segment.startDate,
+    endDate: segment.endDate,
+    monthlyRentVnd: segment.monthlyRentVnd,
+  }));
 };
 
 const getBookingRoomIdForDate = (booking, dateStr) => {
-  const roomStay = getBookingRoomStays(booking).find((stay) => stay.startDate <= dateStr && stay.endDate > dateStr);
-  return roomStay?.roomId || booking?.roomId || '';
+  const segment = getBookingStaySegments(booking).find((stay) => stay.startDate <= dateStr && stay.endDate > dateStr);
+  return segment?.roomId || booking?.roomId || '';
+};
+
+const getBookingSegmentForDate = (booking, dateStr) => {
+  return getBookingStaySegments(booking).find((segment) => segment.startDate <= dateStr && segment.endDate > dateStr) || null;
+};
+
+const getBookingChannelForDate = (booking, dateStr) => {
+  return getBookingSegmentForDate(booking, dateStr)?.channel || booking?.channel || 'airbnb';
+};
+
+const getBookingPaymentStatusForDate = (booking, dateStr) => {
+  return getBookingSegmentForDate(booking, dateStr)?.paymentStatus || ((booking?.channel || 'airbnb') === 'direct' ? (booking?.paymentStatus || '') : '');
+};
+
+const getBookingChannelSummary = (booking) => {
+  const channels = Array.from(new Set(getBookingStaySegments(booking).map((segment) => (segment.channel || '').toLowerCase()).filter(Boolean)));
+  if (channels.length > 1) return 'mixed';
+  return channels[0] || (booking?.channel || 'airbnb');
 };
 
 const expandBookingToRoomStays = (booking) => {
-  const roomStays = getBookingRoomStays(booking);
+  const roomStays = getBookingStaySegments(booking);
   if (!roomStays.length) return [];
   return roomStays.map((stay, index) => ({
     ...booking,
@@ -662,6 +708,8 @@ const expandBookingToRoomStays = (booking) => {
     checkIn: stay.startDate,
     checkOut: stay.endDate,
     monthlyRentVnd: stay.monthlyRentVnd,
+    channel: stay.channel,
+    paymentStatus: stay.paymentStatus,
     roomStayIndex: index,
     isRoomStaySegment: true,
   }));
@@ -1614,6 +1662,14 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       setConflictError('Each rent change needs a valid new monthly rent.');
       return;
     }
+    if (rawRoomMoves.some((move) => move?.useDifferentChannel && !move?.channel)) {
+      setConflictError('Each channel change needs a channel selected.');
+      return;
+    }
+    if (rawRoomMoves.some((move) => move?.useDifferentChannel && move.channel === 'direct' && !move?.paymentStatus)) {
+      setConflictError('Each direct channel change needs a paid or unpaid status.');
+      return;
+    }
 
     const rawRoomMovesWithIds = rawRoomMoves.map((move) => ({ ...move, id: move.id || randomId() }));
     const normalizedRoomMoves = normalizeRoomMoves(rawRoomMovesWithIds, {
@@ -1622,7 +1678,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       fallbackRent: formData.monthlyRentVnd,
     });
     if (rawRoomMovesWithIds.length !== normalizedRoomMoves.length) {
-      setConflictError(`Room move dates must be inside the stay (${formData.checkIn} → ${addDays(formData.checkOut, -1)}), with valid rooms and rent changes.`);
+      setConflictError(`Room move dates must be inside the stay (${formData.checkIn} → ${addDays(formData.checkOut, -1)}), with valid rooms, rent changes, and channel details.`);
       return;
     }
     for (let i = 1; i < normalizedRoomMoves.length; i += 1) {
@@ -1744,6 +1800,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                   moveDate: '',
                   roomId: '',
                   useDifferentMonthlyRent: false,
+                  useDifferentChannel: false,
+                  channel: '',
+                  paymentStatus: '',
                   monthlyRentVnd: prev.monthlyRentVnd || '',
                 }])
           : [],
@@ -1794,6 +1853,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
           moveDate: '',
           roomId: '',
           useDifferentMonthlyRent: false,
+          useDifferentChannel: false,
+          channel: '',
+          paymentStatus: '',
           monthlyRentVnd: prev.monthlyRentVnd || '',
         },
       ],
@@ -2172,6 +2234,61 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                         />
                         Different monthly rent from this move date
                       </label>
+
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={!!move.useDifferentChannel}
+                          onChange={(e) => updateRoomMove(move.id, {
+                            useDifferentChannel: e.target.checked,
+                            channel: e.target.checked ? (move.channel || formData.channel || 'airbnb') : '',
+                            paymentStatus: e.target.checked
+                              ? ((move.channel || formData.channel || 'airbnb') === 'direct' ? (move.paymentStatus || formData.paymentStatus || '') : '')
+                              : '',
+                          })}
+                          className="h-4 w-4 rounded border-slate-300"
+                          style={{ accentColor: COLORS.darkGreen }}
+                        />
+                        Different channel from this move date
+                      </label>
+
+                      {move.useDifferentChannel && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+                              {idx === 0 ? 'Channel Room 2' : `Channel Room ${idx + 2}`}
+                            </label>
+                            <select
+                              value={move.channel || ''}
+                              onChange={(e) => updateRoomMove(move.id, {
+                                channel: e.target.value,
+                                paymentStatus: e.target.value === 'direct' ? (move.paymentStatus || formData.paymentStatus || '') : '',
+                              })}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                            >
+                              <option value="airbnb">Airbnb</option>
+                              <option value="direct">Direct</option>
+                              <option value="coliving">Coliving.com</option>
+                            </select>
+                          </div>
+                          {move.channel === 'direct' && (
+                            <div>
+                              <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+                                Payment Status
+                              </label>
+                              <select
+                                value={move.paymentStatus || ''}
+                                onChange={(e) => updateRoomMove(move.id, { paymentStatus: e.target.value })}
+                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                              >
+                                <option value="">Select</option>
+                                <option value="paid">Paid</option>
+                                <option value="unpaid">Unpaid</option>
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
 
@@ -3400,6 +3517,7 @@ export default function App() {
   }, []);
 
   const formatChannelLabel = (channel) => {
+    if (channel === 'mixed') return 'Mixed';
     if (channel === 'direct') return 'Direct';
     if (channel === 'coliving') return 'Coliving.com';
     return 'Airbnb';
@@ -4339,7 +4457,9 @@ export default function App() {
         const dueDate = getRentCycleDueDate(booking, today);
         const rentPaidThrough = longTermOps.rentPaidThrough || '';
         const rentLastPaidAt = longTermOps.rentLastPaidAt || '';
-        const fallbackPaid = booking.channel === 'direct' && booking.paymentStatus === 'paid';
+        const activeChannel = getBookingChannelForDate(booking, TODAY_STR);
+        const activePaymentStatus = getBookingPaymentStatusForDate(booking, TODAY_STR);
+        const fallbackPaid = activeChannel === 'direct' && activePaymentStatus === 'paid';
         const rentIsPaid =
           fallbackPaid ||
           rentPaidThrough === currentMonthKey ||
@@ -6681,7 +6801,7 @@ export default function App() {
         const phone = (b.guestPhone || '').toLowerCase();
         const roomName = (ALL_ROOMS.find((r) => r.id === b.roomId)?.name || '').toLowerCase();
         const propertyName = (ALL_ROOMS.find((r) => r.id === b.roomId)?.propertyName || '').toLowerCase();
-        const channel = (b.channel || '').toLowerCase();
+        const channel = [getBookingChannelSummary(b), ...(b.roomMoves || []).map((move) => move.channel || '')].join(' ').toLowerCase();
         const dates = `${b.checkIn} ${b.checkOut}`.toLowerCase();
         return [guest, email, phone, roomName, propertyName, channel, dates].some((field) => field.includes(searchNorm));
       })
@@ -6759,7 +6879,8 @@ export default function App() {
                   const displayRoomDate = bookingTimeFilter === 'current' ? TODAY_STR : (bookingTimeFilter === 'past' ? addDays(booking.checkOut, -1) : booking.checkIn);
                   const displayRoomId = getBookingRoomIdForDate(booking, displayRoomDate);
                   const displayRoom = ALL_ROOMS.find((r) => r.id === displayRoomId) || ALL_ROOMS.find((r) => r.id === booking.roomId);
-                  const channelValue = booking.channel || 'airbnb';
+                  const channelValue = getBookingChannelForDate(booking, displayRoomDate);
+                  const paymentStatusValue = getBookingPaymentStatusForDate(booking, displayRoomDate);
                   const isPastContext = bookingTimeFilter === 'past';
                   const rowTone = isPastContext ? 'text-slate-500' : 'text-slate-700';
                   const rowBg = booking.status === 'checked-in' ? 'bg-lime-50' : booking.status === 'confirmed' ? 'bg-white' : 'bg-white';
@@ -6801,8 +6922,11 @@ export default function App() {
                     <span className={`text-[11px] px-2 py-0.5 rounded-full border ${channelValue === 'direct' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : channelValue === 'coliving' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
                       {formatChannelLabel(channelValue)}
                     </span>
-                    {channelValue === 'direct' && booking.paymentStatus && (
-                      <span className="ml-2 text-xs text-slate-500">{booking.paymentStatus === 'paid' ? 'Paid' : 'Unpaid'}</span>
+                    {getBookingChannelSummary(booking) === 'mixed' && (
+                      <span className="ml-2 text-xs text-slate-500">Segmented</span>
+                    )}
+                    {channelValue === 'direct' && paymentStatusValue && (
+                      <span className="ml-2 text-xs text-slate-500">{paymentStatusValue === 'paid' ? 'Paid' : 'Unpaid'}</span>
                     )}
                   </td>
                   <td className={`px-6 py-4 text-sm ${isPastContext ? 'text-slate-500' : 'text-slate-700'}`}>
@@ -7386,7 +7510,7 @@ export default function App() {
                             <tr key={b.id} className="hover:bg-slate-50">
                               <td className="px-4 py-2">{b.checkIn} → {b.checkOut}</td>
                               <td className="px-4 py-2">{room?.name || b.roomId} <span className="text-xs text-slate-500">{room?.propertyName}</span></td>
-                              <td className="px-4 py-2">{formatChannelLabel(b.channel)}</td>
+                              <td className="px-4 py-2">{formatChannelLabel(getBookingChannelSummary(b))}</td>
                               <td className="px-4 py-2 text-xs"><span className="px-2 py-1 rounded-full border bg-slate-100 text-slate-700">{b.status}</span></td>
                               <td className="px-4 py-2">{Number(b.price || 0).toLocaleString('vi-VN')} ₫</td>
                             </tr>
