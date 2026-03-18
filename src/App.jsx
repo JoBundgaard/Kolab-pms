@@ -1533,7 +1533,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       const occupiedSet = new Set(occupiedDates);
       occupiedDates.forEach((dateStr) => {
         checkInBlocked.add(dateStr);
-        if (occupiedSet.has(addDays(dateStr, -1))) {
+        if (!formData.hasMultipleRoomStay && occupiedSet.has(addDays(dateStr, -1))) {
           // For check-out selection, allow boundaries where occupancy starts.
           checkOutBlocked.add(dateStr);
         }
@@ -1541,7 +1541,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     });
 
     return { checkInBlocked, checkOutBlocked };
-  }, [allBookings, formData.roomId, booking]);
+  }, [allBookings, formData.hasMultipleRoomStay, formData.roomId, booking]);
 
   const availableRoomOptions = useMemo(() => {
     const roomBookings = allBookings.flatMap((entry) => expandBookingToRoomStays(entry)).reduce((acc, b) => {
@@ -1736,7 +1736,17 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       setFormData((prev) => ({
         ...prev,
         hasMultipleRoomStay: checked,
-        roomMoves: checked ? prev.roomMoves : [],
+        roomMoves: checked
+          ? ((Array.isArray(prev.roomMoves) && prev.roomMoves.length > 0)
+              ? prev.roomMoves
+              : [{
+                  id: randomId(),
+                  moveDate: '',
+                  roomId: '',
+                  useDifferentMonthlyRent: false,
+                  monthlyRentVnd: prev.monthlyRentVnd || '',
+                }])
+          : [],
       }));
     } else {
       setFormData(prev => ({ 
@@ -2070,6 +2080,113 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
             </div>
           )}
 
+          {formData.stayCategory === 'long' && (
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Multiple Room Stay</div>
+                  <div className="text-xs text-slate-500 mt-1">Turn this on before setting dates if the guest starts in one room and then continues the stay in another.</div>
+                </div>
+                <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    name="hasMultipleRoomStay"
+                    checked={!!formData.hasMultipleRoomStay}
+                    onChange={handleChange}
+                    className="h-4 w-4 rounded border-slate-300"
+                    style={{ accentColor: COLORS.darkGreen }}
+                  />
+                  Enable
+                </label>
+              </div>
+
+              {formData.hasMultipleRoomStay && (
+                <div className="space-y-3">
+                  <div className="text-xs text-slate-500">
+                    Set the full stay dates below. The room selected above is room 1. Each room change starts on its move date.
+                  </div>
+                  {(formData.roomMoves || []).map((move, idx) => (
+                    <div key={move.id || idx} className="rounded-xl border border-slate-200 p-3 bg-slate-50 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                          {idx === 0 ? 'Room 2' : `Room ${idx + 2}`}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeRoomMove(move.id)}
+                          className="px-3 py-1.5 rounded-full border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+                            {idx === 0 ? 'Room 2' : `Room ${idx + 2}`}
+                          </label>
+                          <select
+                            value={move.roomId || ''}
+                            onChange={(e) => updateRoomMove(move.id, { roomId: e.target.value })}
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                          >
+                            <option value="">Select room</option>
+                            {PROPERTIES.map((prop) => (
+                              <optgroup key={prop.id} label={prop.name}>
+                                {availableRoomOptions
+                                  .filter((room) => room.propertyId === prop.id)
+                                  .map((room) => (
+                                    <option key={room.id} value={room.id}>
+                                      {room.name}{room.displayStatus}
+                                    </option>
+                                  ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+                            {idx === 0 ? 'Move to room 2 on' : `Move to room ${idx + 2} on`}
+                          </label>
+                          <input
+                            type="date"
+                            value={move.moveDate || ''}
+                            min={formData.checkIn ? addDays(formData.checkIn, 1) : undefined}
+                            max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
+                            onChange={(e) => updateRoomMove(move.id, { moveDate: e.target.value })}
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={!!move.useDifferentMonthlyRent}
+                          onChange={(e) => updateRoomMove(move.id, {
+                            useDifferentMonthlyRent: e.target.checked,
+                            monthlyRentVnd: e.target.checked ? (move.monthlyRentVnd || formData.monthlyRentVnd || '') : (formData.monthlyRentVnd || ''),
+                          })}
+                          className="h-4 w-4 rounded border-slate-300"
+                          style={{ accentColor: COLORS.darkGreen }}
+                        />
+                        Different monthly rent from this move date
+                      </label>
+                    </div>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={addRoomMove}
+                    className="px-3 py-2 rounded-full border border-slate-200 text-xs font-semibold bg-white hover:bg-slate-50"
+                  >
+                    + Add another room change
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <CustomDatePicker 
@@ -2089,6 +2206,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 minDate={formData.checkIn}
                 boundaryRef={modalContentRef}
               />
+              {formData.hasMultipleRoomStay && (
+                <p className="text-xs text-slate-500 mt-1">Use the full stay end date here. Room changes above decide when the guest leaves room 1.</p>
+              )}
             </div>
           </div>
 
@@ -2341,7 +2461,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
             </div>
           )}
           {formData.stayCategory === 'long' ? (
-            <div>
+            <div className="space-y-3">
               <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Monthly Rent (VND)</label>
               <input
                 required
@@ -2353,6 +2473,25 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 min="0"
               />
               <p className="text-xs text-slate-500 mt-1">Estimated total for selected dates: {formatCurrencyVND(longStayEstimatedTotal)}</p>
+              {formData.hasMultipleRoomStay && (formData.roomMoves || []).map((move, idx) => (
+                move.useDifferentMonthlyRent ? (
+                  <div key={`${move.id || idx}_rent`}>
+                    <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>
+                      {idx === 0 ? 'Monthly Rent Room 2 (VND)' : `Monthly Rent Room ${idx + 2} (VND)`}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={move.monthlyRentVnd ?? ''}
+                      onChange={(e) => updateRoomMove(move.id, { monthlyRentVnd: e.target.value === '' ? '' : Number(e.target.value) })}
+                      className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">
+                      Applies from {move.moveDate || `the move into room ${idx + 2}`} onward.
+                    </p>
+                  </div>
+                ) : null
+              ))}
             </div>
           ) : (
             <div>
@@ -2370,121 +2509,6 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 {formData.channel === 'airbnb' && (
                   <p className="text-xs text-slate-500 mt-1">Auto-calculated: Imported earnings minus VAT (5%) and income tax (2%).</p>
                 )}
-            </div>
-          )}
-
-          {formData.stayCategory === 'long' && (
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Multiple Room Stay</div>
-                  <div className="text-xs text-slate-500 mt-1">Keep one booking ID and plan any room changes during the guest’s long stay.</div>
-                </div>
-                <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <input
-                    type="checkbox"
-                    name="hasMultipleRoomStay"
-                    checked={!!formData.hasMultipleRoomStay}
-                    onChange={handleChange}
-                    className="h-4 w-4 rounded border-slate-300"
-                    style={{ accentColor: COLORS.darkGreen }}
-                  />
-                  Enable
-                </label>
-              </div>
-
-              {formData.hasMultipleRoomStay && (
-                <div className="space-y-3">
-                  {(formData.roomMoves || []).length === 0 ? (
-                    <div className="text-xs text-slate-500">No room changes added yet.</div>
-                  ) : (
-                    (formData.roomMoves || []).map((move, idx) => (
-                      <div key={move.id || idx} className="rounded-xl border border-slate-200 p-3 bg-slate-50 space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Move #{idx + 1}</div>
-                          <button
-                            type="button"
-                            onClick={() => removeRoomMove(move.id)}
-                            className="px-3 py-1.5 rounded-full border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
-                          >
-                            Remove
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Move date</label>
-                            <input
-                              type="date"
-                              value={move.moveDate || ''}
-                              min={formData.checkIn ? addDays(formData.checkIn, 1) : undefined}
-                              max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
-                              onChange={(e) => updateRoomMove(move.id, { moveDate: e.target.value })}
-                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">New room</label>
-                            <select
-                              value={move.roomId || ''}
-                              onChange={(e) => updateRoomMove(move.id, { roomId: e.target.value })}
-                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                            >
-                              <option value="">Select room</option>
-                              {PROPERTIES.map((prop) => (
-                                <optgroup key={prop.id} label={prop.name}>
-                                  {availableRoomOptions
-                                    .filter((room) => room.propertyId === prop.id)
-                                    .map((room) => (
-                                      <option key={room.id} value={room.id}>
-                                        {room.name}{room.displayStatus}
-                                      </option>
-                                    ))}
-                                </optgroup>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                          <input
-                            type="checkbox"
-                            checked={!!move.useDifferentMonthlyRent}
-                            onChange={(e) => updateRoomMove(move.id, {
-                              useDifferentMonthlyRent: e.target.checked,
-                              monthlyRentVnd: e.target.checked ? (move.monthlyRentVnd || formData.monthlyRentVnd || '') : (formData.monthlyRentVnd || ''),
-                            })}
-                            className="h-4 w-4 rounded border-slate-300"
-                            style={{ accentColor: COLORS.darkGreen }}
-                          />
-                          Different monthly rent from this date
-                        </label>
-
-                        {move.useDifferentMonthlyRent && (
-                          <div>
-                            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">New monthly rent (VND)</label>
-                            <input
-                              type="number"
-                              min="0"
-                              value={move.monthlyRentVnd ?? ''}
-                              onChange={(e) => updateRoomMove(move.id, { monthlyRentVnd: e.target.value === '' ? '' : Number(e.target.value) })}
-                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={addRoomMove}
-                    className="px-3 py-2 rounded-full border border-slate-200 text-xs font-semibold bg-white hover:bg-slate-50"
-                  >
-                    + Add room change
-                  </button>
-                </div>
-              )}
             </div>
           )}
 
