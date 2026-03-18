@@ -343,6 +343,15 @@ class HousekeepingErrorBoundary extends React.Component {
 }
 
 const STAFF = ['Unassigned', 'Mai', 'Tuan', 'Linh', 'Dat', 'Thanh', 'Ngoc'];
+const WEEKDAY_LABELS = {
+  sunday: 'Sunday',
+  monday: 'Monday',
+  tuesday: 'Tuesday',
+  wednesday: 'Wednesday',
+  thursday: 'Thursday',
+  friday: 'Friday',
+  saturday: 'Saturday',
+};
 
 const severityMeta = (sev) => {
   const key = sev || 'normal';
@@ -352,6 +361,14 @@ const severityMeta = (sev) => {
 };
 
 const formatCurrencyVND = (value = 0) => `${(Number(value) || 0).toLocaleString('vi-VN')} ₫`;
+const formatCompactCurrencyVND = (value = 0) => {
+  const amount = Math.round(Number(value) || 0);
+  const abs = Math.abs(amount);
+  if (abs >= 1_000_000_000) return `${(amount / 1_000_000_000).toFixed(abs >= 10_000_000_000 ? 0 : 1).replace(/\.0$/, '')}B VND`;
+  if (abs >= 1_000_000) return `${(amount / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}M VND`;
+  if (abs >= 1_000) return `${(amount / 1_000).toFixed(abs >= 10_000 ? 0 : 1).replace(/\.0$/, '')}k VND`;
+  return `${amount.toLocaleString('vi-VN')} VND`;
+};
 
 const isCancelledStatus = (status) => {
   if (!status) return false;
@@ -408,6 +425,85 @@ function getWeekdayKey(dateStr) {
   const keys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   return keys[idx];
 }
+
+const formatWeekdayLabel = (weekdayKey) => WEEKDAY_LABELS[weekdayKey] || 'Not set';
+
+const getMonthKey = (dateInput = new Date()) => {
+  const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${`${d.getMonth() + 1}`.padStart(2, '0')}`;
+};
+
+const isSameOperationalWeek = (a, b) => {
+  const dateA = a instanceof Date ? new Date(a) : new Date(a);
+  const dateB = b instanceof Date ? new Date(b) : new Date(b);
+  if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return false;
+
+  const startOfWeek = (input) => {
+    const d = new Date(input);
+    const day = d.getDay();
+    const diff = (day + 6) % 7;
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - diff);
+    return d.getTime();
+  };
+
+  return startOfWeek(dateA) === startOfWeek(dateB);
+};
+
+const getRentCycleDueDate = (booking, todayInput = new Date()) => {
+  const today = todayInput instanceof Date ? todayInput : new Date(todayInput);
+  if (isNaN(today.getTime())) return '';
+  const configuredDay = Number(booking?.longTermOps?.rentDueDay);
+  const fallbackDay = new Date(booking?.checkIn || today).getDate();
+  const dueDay = Math.min(31, Math.max(1, Number.isFinite(configuredDay) && configuredDay > 0 ? configuredDay : fallbackDay || 1));
+  const year = today.getFullYear();
+  const monthIndex = today.getMonth();
+  const maxDay = new Date(year, monthIndex + 1, 0).getDate();
+  return formatDate(new Date(year, monthIndex, Math.min(dueDay, maxDay)));
+};
+
+const buildLongTermExtrasLog = (booking, fallbackDate = new Date()) => {
+  const explicitLog = Array.isArray(booking?.longTermOps?.extrasLog) ? booking.longTermOps.extrasLog : [];
+  const fallbackServices = Array.isArray(booking?.services)
+    ? booking.services.map((service) => ({
+        id: service.id || randomId(),
+        label: service.name || 'Extra charge',
+        amountVnd: Math.max(0, Math.round(Number(service.price) || 0)) * Math.max(1, parseInt(service.qty, 10) || 1),
+        qty: Math.max(1, parseInt(service.qty, 10) || 1),
+        date: formatDate(service.createdAt || booking?.updatedAt || booking?.createdAt || fallbackDate),
+        notes: service.notes || '',
+        status: service.billedAt ? 'billed' : 'unbilled',
+        source: 'services',
+      }))
+    : [];
+
+  const source = explicitLog.length ? explicitLog : fallbackServices;
+
+  return source
+    .map((entry) => {
+      const qty = Math.max(1, parseInt(entry?.qty, 10) || 1);
+      const unitAmount = Number(entry?.unitAmountVnd ?? entry?.price ?? entry?.amountVnd);
+      const explicitAmount = Number(entry?.amountVnd);
+      const amountVnd = Math.max(
+        0,
+        Math.round(Number.isFinite(explicitAmount) ? explicitAmount : (Number.isFinite(unitAmount) ? unitAmount * qty : 0))
+      );
+      const date = formatDate(entry?.date || entry?.createdAt || booking?.updatedAt || booking?.createdAt || fallbackDate);
+      return {
+        id: entry?.id || `${entry?.label || entry?.name || 'extra'}_${date}_${amountVnd}_${qty}`,
+        label: entry?.label || entry?.name || 'Extra charge',
+        amountVnd,
+        qty,
+        date,
+        notes: entry?.notes || '',
+        status: entry?.status || (entry?.billedAt ? 'billed' : 'unbilled'),
+        source: entry?.source || (explicitLog.length ? 'longTermOps' : 'services'),
+      };
+    })
+    .filter((entry) => entry.amountVnd > 0)
+    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+};
 
 const calculateNights = (checkInDateStr, checkOutDateStr) => {
   const checkInInput = checkInDateStr?.toDate ? checkInDateStr.toDate() : checkInDateStr;
@@ -908,6 +1004,7 @@ const Sidebar = ({ activeTab, setActiveTab, isOpen, setIsOpen }) => {
     { id: 'dashboard', label: 'Dashboard', icon: <Home size={20} /> },
     { id: 'calendar', label: 'Calendar', icon: <Calendar size={20} /> },
     { id: 'bookings', label: 'Bookings List', icon: <Users size={20} /> },
+    { id: 'longTerm', label: 'Long-Term', icon: <ListChecks size={20} /> },
     { id: 'crm', label: 'CRM', icon: <User size={20} /> },
     { id: 'stats', label: 'Statistics', icon: <BarChart2 size={20} /> },
     { id: 'invoices', label: 'Invoices', icon: <FileText size={20} /> }, 
@@ -2831,6 +2928,8 @@ export default function App() {
   const [guestSaving, setGuestSaving] = useState(false);
   const [guestNotesDraft, setGuestNotesDraft] = useState('');
   const [guestTagsDraft, setGuestTagsDraft] = useState('');
+  const [longTermAlertFilter, setLongTermAlertFilter] = useState('all');
+  const [expandedLongTermRows, setExpandedLongTermRows] = useState({});
   const [housekeepingDate, setHousekeepingDate] = useState(() => formatDate(new Date()));
   const [housekeepingStartTime, setHousekeepingStartTime] = useState(HOUSEKEEPING_START_TIME);
   const [housekeepingOverrides, setHousekeepingOverrides] = useState({});
@@ -3802,6 +3901,90 @@ export default function App() {
     [bookings, roomStatuses, TOMORROW_STR]
   );
 
+  const longTermRows = useMemo(() => {
+    const today = new Date(TODAY_STR);
+    const currentMonthKey = getMonthKey(today);
+    const todayWeekday = getWeekdayKey(TODAY_STR);
+
+    return (bookings || [])
+      .filter((booking) => {
+        if (!booking?.id || isCancelledStatus(booking.status)) return false;
+        if (getBookingStayCategory(booking) !== 'long') return false;
+        return bookingOccupiesDate(booking, TODAY_STR);
+      })
+      .map((booking) => {
+        const room = ALL_ROOMS.find((entry) => entry.id === booking.roomId);
+        const guest = guests.find((entry) => entry.id === booking.guestId);
+        const longTermOps = booking.longTermOps || {};
+        const cleaningDayKey = longTermOps.cleaningDay || booking.weeklyCleaningDay || '';
+        const dueDate = getRentCycleDueDate(booking, today);
+        const rentPaidThrough = longTermOps.rentPaidThrough || '';
+        const rentLastPaidAt = longTermOps.rentLastPaidAt || '';
+        const fallbackPaid = booking.channel === 'direct' && booking.paymentStatus === 'paid';
+        const rentIsPaid =
+          fallbackPaid ||
+          rentPaidThrough === currentMonthKey ||
+          (rentLastPaidAt && getMonthKey(rentLastPaidAt) === currentMonthKey);
+        const rentStatus = rentIsPaid ? 'paid' : (dueDate && TODAY_STR > dueDate ? 'overdue' : 'pending');
+        const extrasLog = buildLongTermExtrasLog(booking, today);
+        const unbilledExtrasTotal = extrasLog
+          .filter((entry) => entry.status !== 'billed' && getMonthKey(entry.date || today) === currentMonthKey)
+          .reduce((sum, entry) => sum + (Number(entry.amountVnd) || 0), 0);
+
+        const rawLaundryStatus = longTermOps.laundryStatus || 'pending';
+        const laundryUpdatedAt = longTermOps.laundryUpdatedAt || '';
+        const laundryStatus =
+          (rawLaundryStatus === 'done' || rawLaundryStatus === 'processing') && laundryUpdatedAt && !isSameOperationalWeek(laundryUpdatedAt, today)
+            ? 'pending'
+            : rawLaundryStatus;
+
+        return {
+          booking,
+          guest,
+          room,
+          longTermOps,
+          cleaningDayKey,
+          cleaningDayLabel: formatWeekdayLabel(cleaningDayKey),
+          dueDate,
+          rentStatus,
+          rentIsPaid,
+          rentPaidThrough,
+          laundryStatus,
+          laundryUpdatedAt,
+          isCleaningToday: !!cleaningDayKey && cleaningDayKey === todayWeekday,
+          extrasLog,
+          unbilledExtrasTotal,
+          leaseEndDate: longTermOps.leaseEndDate || booking.checkOut || '',
+          specialNotes: [longTermOps.specialNotes, booking.notes, guest?.notes].filter(Boolean),
+        };
+      })
+      .sort((a, b) => {
+        const rentPriority = { overdue: 0, pending: 1, paid: 2 };
+        const laundryPriority = { pending: 0, processing: 1, done: 2 };
+        const rentDelta = (rentPriority[a.rentStatus] ?? 9) - (rentPriority[b.rentStatus] ?? 9);
+        if (rentDelta !== 0) return rentDelta;
+        const cleaningDelta = Number(b.isCleaningToday) - Number(a.isCleaningToday);
+        if (cleaningDelta !== 0) return cleaningDelta;
+        const laundryDelta = (laundryPriority[a.laundryStatus] ?? 9) - (laundryPriority[b.laundryStatus] ?? 9);
+        if (laundryDelta !== 0) return laundryDelta;
+        return (a.room?.name || a.booking?.roomId || '').localeCompare(b.room?.name || b.booking?.roomId || '');
+      });
+  }, [bookings, guests, getBookingStayCategory, TODAY_STR]);
+
+  const filteredLongTermRows = useMemo(() => {
+    if (longTermAlertFilter === 'rentOverdue') return longTermRows.filter((row) => row.rentStatus === 'overdue');
+    if (longTermAlertFilter === 'cleaningToday') return longTermRows.filter((row) => row.isCleaningToday);
+    if (longTermAlertFilter === 'laundryPending') return longTermRows.filter((row) => row.laundryStatus === 'pending');
+    return longTermRows;
+  }, [longTermRows, longTermAlertFilter]);
+
+  const longTermSummary = useMemo(() => ({
+    total: longTermRows.length,
+    rentOverdue: longTermRows.filter((row) => row.rentStatus === 'overdue').length,
+    cleaningToday: longTermRows.filter((row) => row.isCleaningToday).length,
+    laundryPending: longTermRows.filter((row) => row.laundryStatus === 'pending').length,
+  }), [longTermRows]);
+
   const recurringCompletionMap = useMemo(() => {
     const map = {};
     maintenanceIssues.forEach((issue) => {
@@ -4426,6 +4609,71 @@ export default function App() {
     },
     [bookings]
   );
+
+  const toggleLongTermRow = useCallback((bookingId) => {
+    if (!bookingId) return;
+    setExpandedLongTermRows((prev) => ({ ...prev, [bookingId]: !prev[bookingId] }));
+  }, []);
+
+  const updateLongTermOps = useCallback(async (booking, patch, successMessage) => {
+    if (!booking?.id) return;
+    const nowIso = new Date().toISOString();
+    const nextOps = {
+      ...(booking.longTermOps || {}),
+      ...patch,
+      updatedAt: nowIso,
+      updatedBy: user?.uid || user?.email || 'unknown',
+    };
+
+    try {
+      await setDoc(
+        doc(db, 'bookings', booking.id),
+        {
+          longTermOps: nextOps,
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      );
+
+      setBookings((prev) =>
+        prev.map((entry) => (
+          entry.id === booking.id
+            ? { ...entry, longTermOps: nextOps, updatedAt: nowIso }
+            : entry
+        ))
+      );
+
+      if (successMessage) {
+        pushAlert({ title: 'Long-term stay updated', message: successMessage, tone: 'success' });
+      }
+    } catch (error) {
+      console.error('[long-term] update failed', error);
+      pushAlert({ title: 'Update failed', message: error?.message || 'Could not save long-term action', code: error?.code, raw: error });
+    }
+  }, [db, user, pushAlert]);
+
+  const handleMarkRentPaid = useCallback(async (booking) => {
+    const currentMonthKey = getMonthKey(new Date());
+    await updateLongTermOps(
+      booking,
+      {
+        rentPaidThrough: currentMonthKey,
+        rentLastPaidAt: new Date().toISOString(),
+      },
+      `${booking?.guestName || 'Guest'} marked paid for ${currentMonthKey}`
+    );
+  }, [updateLongTermOps]);
+
+  const handleMarkLaundryDone = useCallback(async (booking) => {
+    await updateLongTermOps(
+      booking,
+      {
+        laundryStatus: 'done',
+        laundryUpdatedAt: new Date().toISOString(),
+      },
+      `${booking?.guestName || 'Guest'} laundry marked done`
+    );
+  }, [updateLongTermOps]);
 
   const handleDeleteBooking = async (id) => {
     if (!confirm('Cancel this booking? It will be marked as cancelled but kept in the list.')) return;
@@ -5970,6 +6218,300 @@ export default function App() {
               )})}
             </tbody>
           </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderLongTermManagement = () => {
+    const alertWidgets = [
+      {
+        key: 'rentOverdue',
+        label: 'Rent Overdue',
+        count: longTermSummary.rentOverdue,
+        tone: 'border-red-200 bg-red-50 text-red-700',
+      },
+      {
+        key: 'cleaningToday',
+        label: 'Cleaning Today',
+        count: longTermSummary.cleaningToday,
+        tone: 'border-blue-200 bg-blue-50 text-blue-700',
+      },
+      {
+        key: 'laundryPending',
+        label: 'Laundry Pending',
+        count: longTermSummary.laundryPending,
+        tone: 'border-amber-200 bg-amber-50 text-amber-800',
+      },
+    ];
+
+    const rentBadgeClass = {
+      paid: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      pending: 'bg-amber-50 text-amber-800 border-amber-200',
+      overdue: 'bg-red-50 text-red-700 border-red-200',
+    };
+
+    const laundryBadgeClass = {
+      done: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      processing: 'bg-blue-50 text-blue-700 border-blue-200',
+      pending: 'bg-amber-50 text-amber-800 border-amber-200',
+    };
+
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Long-Term Guest Management</h2>
+            <p className="text-sm text-slate-500 mt-1">Operational view for in-house long stays: rent cadence, weekly service, laundry, and unbilled extras.</p>
+          </div>
+          <div className="text-xs text-slate-500">
+            Uses existing booking fields first. Extra operational metadata is stored on <span className="font-mono">booking.longTermOps</span> as actions are used.
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {alertWidgets.map((widget) => {
+            const isActive = longTermAlertFilter === widget.key;
+            return (
+              <button
+                key={widget.key}
+                type="button"
+                onClick={() => setLongTermAlertFilter((prev) => (prev === widget.key ? 'all' : widget.key))}
+                className={`text-left rounded-2xl border p-5 shadow-sm transition-all hover:shadow-md ${widget.tone} ${isActive ? 'ring-2 ring-[#26402E]/20' : ''}`}
+              >
+                <div className="text-xs uppercase tracking-[0.2em] font-bold opacity-70">{widget.label}</div>
+                <div className="mt-3 flex items-end justify-between gap-3">
+                  <div className="text-3xl font-serif font-bold">{widget.count}</div>
+                  <div className="text-xs font-semibold">{isActive ? 'Showing only these' : 'Click to filter'}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
+          <div className="p-6 border-b border-[#E5E7EB] bg-[#F9F8F2] flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Current Long-Stay Guests</div>
+              <div className="text-sm text-slate-500 mt-1">{filteredLongTermRows.length} shown · {longTermSummary.total} active long-term stay{longTermSummary.total === 1 ? '' : 's'}</div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {[
+                { key: 'all', label: 'All' },
+                { key: 'rentOverdue', label: 'Rent Overdue' },
+                { key: 'cleaningToday', label: 'Cleaning Today' },
+                { key: 'laundryPending', label: 'Laundry Pending' },
+              ].map((option) => {
+                const active = longTermAlertFilter === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => setLongTermAlertFilter(option.key)}
+                    className={`px-4 py-2 rounded-full text-sm font-semibold border transition-all ${active ? 'bg-[#26402E] text-[#E2F05D] border-[#26402E]' : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'}`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-[#26402E] text-white text-xs uppercase font-bold tracking-wider">
+                <tr>
+                  <th className="px-6 py-4 w-12"></th>
+                  <th className="px-6 py-4">Room & Guest</th>
+                  <th className="px-6 py-4">Rent Cycle & Status</th>
+                  <th className="px-6 py-4">Cleaning Schedule</th>
+                  <th className="px-6 py-4">Weekly Laundry</th>
+                  <th className="px-6 py-4 text-right">Unbilled Extras</th>
+                  <th className="px-6 py-4 text-right">Quick Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredLongTermRows.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="px-6 py-12 text-center text-slate-500">
+                      No long-term guests match this view.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredLongTermRows.map((row) => {
+                    const isExpanded = !!expandedLongTermRows[row.booking.id];
+                    return (
+                      <React.Fragment key={row.booking.id}>
+                        <tr
+                          onClick={() => toggleLongTermRow(row.booking.id)}
+                          className={`cursor-pointer transition-colors hover:bg-[#F9F8F2] ${row.rentStatus === 'overdue' ? 'bg-red-50/40' : row.isCleaningToday ? 'bg-blue-50/40' : 'bg-white'}`}
+                        >
+                          <td className="px-6 py-4 text-slate-400">
+                            <ChevronDown size={18} className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="font-bold text-slate-800">{row.room?.name || row.booking.roomId || 'Unknown room'}</div>
+                            <div className="text-xs text-slate-500">{row.room?.propertyName || 'Unknown property'}</div>
+                            <div className="mt-2 font-semibold text-slate-700">{row.booking.guestName || row.guest?.fullName || 'Unknown guest'}</div>
+                            {(row.guest?.email || row.booking.guestPhone) && (
+                              <div className="text-xs text-slate-500">{row.guest?.email || row.booking.guestPhone}</div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="text-sm font-semibold text-slate-800">Due {row.dueDate || 'Not set'}</div>
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                              <span className={`px-3 py-1 rounded-full text-xs font-bold border ${rentBadgeClass[row.rentStatus] || rentBadgeClass.pending}`}>
+                                {row.rentStatus === 'paid' ? 'Paid' : row.rentStatus === 'overdue' ? 'Overdue' : 'Pending'}
+                              </span>
+                              {row.rentPaidThrough && <span className="text-xs text-slate-500">Paid through {row.rentPaidThrough}</span>}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="font-semibold text-slate-800">{row.cleaningDayLabel}</div>
+                            <div className="text-xs mt-2">
+                              {row.isCleaningToday ? (
+                                <span className="px-2 py-1 rounded-full border border-blue-200 bg-blue-50 text-blue-700 font-semibold">Due today</span>
+                              ) : (
+                                <span className="text-slate-500">Next weekly service cadence</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-3 py-1 rounded-full text-xs font-bold border ${laundryBadgeClass[row.laundryStatus] || laundryBadgeClass.pending}`}>
+                              {row.laundryStatus === 'done' ? 'Done' : row.laundryStatus === 'processing' ? 'Processing' : 'Pending'}
+                            </span>
+                            {row.laundryUpdatedAt && (
+                              <div className="text-xs text-slate-500 mt-2">Updated {formatDate(row.laundryUpdatedAt)}</div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="font-bold text-slate-800">{formatCompactCurrencyVND(row.unbilledExtrasTotal)}</div>
+                            <div className="text-xs text-slate-500 mt-1">{formatCurrencyVND(row.unbilledExtrasTotal)}</div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center justify-end gap-2 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleMarkRentPaid(row.booking);
+                                }}
+                                className="px-3 py-2 rounded-full text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              >
+                                Rent Paid
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleMarkLaundryDone(row.booking);
+                                }}
+                                className="px-3 py-2 rounded-full text-xs font-semibold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                              >
+                                Laundry Done
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openBookingDetails(row.booking.id);
+                                }}
+                                className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="bg-slate-50/80">
+                            <td colSpan="7" className="px-6 py-5">
+                              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                                <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+                                  <div className="text-xs uppercase tracking-[0.2em] font-bold text-slate-500">Lease & Notes</div>
+                                  <div>
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Lease End Date</div>
+                                    <div className="text-base font-semibold text-slate-800 mt-1">{row.leaseEndDate || 'Not set'}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Monthly Rent</div>
+                                    <div className="text-base font-semibold text-slate-800 mt-1">{row.booking.monthlyRentVnd ? formatCurrencyVND(row.booking.monthlyRentVnd) : 'Not set'}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Special Notes</div>
+                                    {row.specialNotes.length ? (
+                                      <div className="space-y-2 mt-2">
+                                        {row.specialNotes.map((note, idx) => (
+                                          <div key={`${row.booking.id}_note_${idx}`} className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                                            {note}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="text-sm text-slate-500 mt-2">No special notes saved.</div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 p-4">
+                                  <div className="flex items-center justify-between gap-3 mb-3">
+                                    <div>
+                                      <div className="text-xs uppercase tracking-[0.2em] font-bold text-slate-500">Laundry / Extras Log</div>
+                                      <div className="text-sm text-slate-500 mt-1">Current services are used as the fallback itemized log until dedicated extras are entered.</div>
+                                    </div>
+                                    <div className="text-right">
+                                      <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Unbilled this month</div>
+                                      <div className="text-lg font-bold text-slate-800">{formatCurrencyVND(row.unbilledExtrasTotal)}</div>
+                                    </div>
+                                  </div>
+
+                                  <div className="overflow-hidden rounded-xl border border-slate-200">
+                                    <table className="w-full text-sm">
+                                      <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
+                                        <tr>
+                                          <th className="px-3 py-2 text-left">Date</th>
+                                          <th className="px-3 py-2 text-left">Item</th>
+                                          <th className="px-3 py-2 text-left">Status</th>
+                                          <th className="px-3 py-2 text-right">Amount</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100">
+                                        {row.extrasLog.length === 0 ? (
+                                          <tr>
+                                            <td colSpan="4" className="px-3 py-5 text-center text-slate-500">No extras logged.</td>
+                                          </tr>
+                                        ) : (
+                                          row.extrasLog.map((entry) => (
+                                            <tr key={entry.id}>
+                                              <td className="px-3 py-2 text-slate-600">{entry.date || '—'}</td>
+                                              <td className="px-3 py-2">
+                                                <div className="font-semibold text-slate-800">{entry.label}</div>
+                                                {entry.notes && <div className="text-xs text-slate-500 mt-1">{entry.notes}</div>}
+                                              </td>
+                                              <td className="px-3 py-2">
+                                                <span className={`px-2 py-1 rounded-full text-[11px] font-semibold border ${entry.status === 'billed' ? 'border-slate-200 bg-slate-100 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                                                  {entry.status === 'billed' ? 'Billed' : 'Unbilled'}
+                                                </span>
+                                              </td>
+                                              <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatCurrencyVND(entry.amountVnd)}</td>
+                                            </tr>
+                                          ))
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     );
@@ -7644,6 +8186,7 @@ export default function App() {
                {activeTab === 'dashboard' && renderDashboard()}
                {activeTab === 'calendar' && renderCalendar()}
                {activeTab === 'bookings' && renderBookingsList()}
+               {activeTab === 'longTerm' && renderLongTermManagement()}
                {activeTab === 'crm' && renderCRM()}
                {activeTab === 'stats' && renderStats()} 
                {activeTab === 'invoices' && renderInvoices()}
