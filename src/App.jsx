@@ -275,6 +275,10 @@ const PROPERTIES = [
 ];
 
 const ALL_ROOMS = PROPERTIES.flatMap(p => p.rooms.map(r => ({ ...r, propertyId: p.id, propertyName: p.name })));
+const ROOM_SORT_PRIORITY = ALL_ROOMS.reduce((acc, room, index) => {
+  acc[room.id] = index;
+  return acc;
+}, {});
 
 const ALL_LOCATIONS = PROPERTIES.flatMap(p => [
   ...p.rooms.map(r => ({ ...r, propertyId: p.id, propertyName: p.name, locationType: 'Room' })),
@@ -3959,14 +3963,8 @@ export default function App() {
         };
       })
       .sort((a, b) => {
-        const rentPriority = { overdue: 0, pending: 1, paid: 2 };
-        const laundryPriority = { pending: 0, processing: 1, done: 2 };
-        const rentDelta = (rentPriority[a.rentStatus] ?? 9) - (rentPriority[b.rentStatus] ?? 9);
-        if (rentDelta !== 0) return rentDelta;
-        const cleaningDelta = Number(b.isCleaningToday) - Number(a.isCleaningToday);
-        if (cleaningDelta !== 0) return cleaningDelta;
-        const laundryDelta = (laundryPriority[a.laundryStatus] ?? 9) - (laundryPriority[b.laundryStatus] ?? 9);
-        if (laundryDelta !== 0) return laundryDelta;
+        const roomDelta = (ROOM_SORT_PRIORITY[a.booking?.roomId] ?? Number.MAX_SAFE_INTEGER) - (ROOM_SORT_PRIORITY[b.booking?.roomId] ?? Number.MAX_SAFE_INTEGER);
+        if (roomDelta !== 0) return roomDelta;
         return (a.room?.name || a.booking?.roomId || '').localeCompare(b.room?.name || b.booking?.roomId || '');
       });
   }, [bookings, guests, getBookingStayCategory, TODAY_STR]);
