@@ -2043,8 +2043,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
           </button>
         </div>
         
-        <div className="p-6 space-y-5 overflow-y-auto overflow-x-hidden" style={{ backgroundColor: COLORS.cream, maxHeight: 'calc(90vh - 80px)' }}>
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="p-6 overflow-y-auto overflow-x-hidden" style={{ backgroundColor: COLORS.cream, maxHeight: 'calc(90vh - 80px)' }}>
+        <form onSubmit={handleSubmit} className="space-y-6">
           
           {conflictError && (
             <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl relative flex items-start space-x-3">
@@ -2056,199 +2056,226 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
             </div>
           )}
 
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Guest Name</label>
-            <input 
-              required
-              type="text" 
-              name="guestName"
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none bg-white shadow-sm transition-all"
-              value={formData.guestName}
-              onChange={handleChange}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Email</label>
-              <input
-                type="email"
-                name="guestEmail"
-                placeholder="guest@email.com"
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none bg-white shadow-sm transition-all"
-                value={formData.guestEmail}
-                onChange={handleChange}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Phone</label>
-              <input
-                type="tel"
-                name="guestPhone"
-                placeholder="Digits only"
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none bg-white shadow-sm transition-all"
-                value={formData.guestPhone}
-                onChange={handleChange}
-              />
-            </div>
-          </div>
-
-          {(returningInfo?.isReturningGuest || returningError) && (
-            <div className={`rounded-xl border px-4 py-3 flex items-start gap-3 ${returningError ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
-              <AlertTriangle size={18} className="mt-0.5" />
-              <div>
-                <div className="font-semibold text-sm">
-                  {returningError ? 'Lookup issue' : 'Returning guest detected'}
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,0.95fr)] gap-5 items-start">
+            <div className="space-y-5">
+              <section className="rounded-[28px] border border-[#d8dfd2] bg-white/88 shadow-[0_14px_32px_rgba(38,64,46,0.08)] backdrop-blur-sm">
+                <div className="px-5 pt-5 pb-4 border-b border-slate-100">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Guest Details</div>
+                  <p className="mt-1 text-sm text-slate-500">Keep the essential guest and reservation identity fields together.</p>
                 </div>
-                <div className="text-xs mt-1 text-slate-700">
-                  {returningError && returningError}
-                  {!returningError && (
-                    <>
-                      Stayed {returningInfo?.guest?.stayCount ?? 1} time{(returningInfo?.guest?.stayCount || 1) !== 1 ? 's' : ''}.{returningInfo?.guest?.lastStayEnd ? ` Last stay ended ${formatDate(returningInfo.guest.lastStayEnd)}.` : ''}
-                    </>
+                <div className="p-5 space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider mb-1.5" style={{ color: COLORS.darkGreen }}>Guest Name</label>
+                    <input 
+                      required
+                      type="text" 
+                      name="guestName"
+                      className="w-full px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none bg-white shadow-sm transition-all"
+                      value={formData.guestName}
+                      onChange={handleChange}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider mb-1.5" style={{ color: COLORS.darkGreen }}>Email</label>
+                      <input
+                        type="email"
+                        name="guestEmail"
+                        placeholder="guest@email.com"
+                        className="w-full px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none bg-white shadow-sm transition-all"
+                        value={formData.guestEmail}
+                        onChange={handleChange}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider mb-1.5" style={{ color: COLORS.darkGreen }}>Phone</label>
+                      <input
+                        type="tel"
+                        name="guestPhone"
+                        placeholder="Digits only"
+                        className="w-full px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none bg-white shadow-sm transition-all"
+                        value={formData.guestPhone}
+                        onChange={handleChange}
+                      />
+                    </div>
+                  </div>
+
+                  {(returningInfo?.isReturningGuest || returningError) && (
+                    <div className={`rounded-2xl border px-4 py-3 flex items-start gap-3 ${returningError ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
+                      <AlertTriangle size={18} className="mt-0.5" />
+                      <div>
+                        <div className="font-semibold text-sm">
+                          {returningError ? 'Lookup issue' : 'Returning guest detected'}
+                        </div>
+                        <div className="text-xs mt-1 text-slate-700">
+                          {returningError && returningError}
+                          {!returningError && (
+                            <>
+                              Stayed {returningInfo?.guest?.stayCount ?? 1} time{(returningInfo?.guest?.stayCount || 1) !== 1 ? 's' : ''}.{(returningInfo?.guest?.lastStayEnd) ? ` Last stay ended ${formatDate(returningInfo.guest.lastStayEnd)}.` : ''}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {checkingReturning && !returningError && (
+                    <div className="text-xs text-slate-500">Checking returning guest…</div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider mb-1.5" style={{ color: COLORS.darkGreen }}>Room</label>
+                      <select 
+                        name="roomId"
+                        className="w-full px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                        value={formData.roomId}
+                        onChange={handleChange}
+                      >
+                        {PROPERTIES.map(prop => (
+                          <optgroup key={prop.id} label={prop.name}>
+                            {availableRoomOptions
+                               .filter(r => r.propertyId === prop.id)
+                               .map(room => (
+                              <option key={room.id} value={room.id}>
+                                {room.name}{room.displayStatus}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider mb-1.5" style={{ color: COLORS.darkGreen }}>Status</label>
+                      <select 
+                        name="status"
+                        className="w-full px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                        value={formData.status}
+                        onChange={handleChange}
+                      >
+                        <option value="confirmed">Confirmed</option>
+                        <option value="pending">Pending</option>
+                        <option value="checked-in">Checked In</option>
+                        <option value="checked-out">Checked Out</option>
+                        <option value="cancelled">Cancelled</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="pt-1">
+                    <label className="block text-xs font-bold uppercase tracking-wider mb-2" style={{ color: COLORS.darkGreen }}>Channel</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {[
+                        { value: 'airbnb', label: 'Airbnb' },
+                        { value: 'direct', label: 'Direct' },
+                        { value: 'coliving', label: 'Coliving.com' },
+                      ].map((opt) => {
+                        const active = formData.channel === opt.value;
+                        return (
+                          <button
+                            type="button"
+                            key={opt.value}
+                            onClick={() => handleChange({ target: { name: 'channel', value: opt.value } })}
+                            className={`w-full text-left px-3.5 py-3 rounded-2xl border transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/25 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="font-semibold text-sm" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
+                              <span className={`w-3.5 h-3.5 rounded-full border ${active ? 'bg-[#26402E] border-[#26402E]' : 'border-slate-300'}`}></span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {formData.channel === 'direct' && (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 space-y-2">
+                      <label className="block text-xs font-bold uppercase tracking-wider" style={{ color: COLORS.darkGreen }}>Payment Status</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { value: 'paid', label: 'Paid' },
+                          { value: 'unpaid', label: 'Unpaid' },
+                        ].map((opt) => {
+                          const active = formData.paymentStatus === opt.value;
+                          return (
+                            <button
+                              type="button"
+                              key={opt.value}
+                              onClick={() => handleChange({ target: { name: 'paymentStatus', value: opt.value } })}
+                              className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/30 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-sm" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
+                                <span className={`w-3 h-3 rounded-full border ${active ? 'bg-[#26402E] border-[#26402E]' : 'border-slate-300'}`}></span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {paymentStatusError && (
+                        <p className="text-xs text-red-600">{paymentStatusError}</p>
+                      )}
+                    </div>
                   )}
                 </div>
-              </div>
-            </div>
-          )}
-          {checkingReturning && !returningError && (
-            <div className="text-xs text-slate-500">Checking returning guest…</div>
-          )}
+              </section>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Room</label>
-              <select 
-                name="roomId"
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
-                value={formData.roomId}
-                onChange={handleChange}
-              >
-                {PROPERTIES.map(prop => (
-                  <optgroup key={prop.id} label={prop.name}>
-                    {availableRoomOptions
-                       .filter(r => r.propertyId === prop.id)
-                       .map(room => (
-                      <option key={room.id} value={room.id}>
-                        {room.name}{room.displayStatus}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Status</label>
-              <select 
-                name="status"
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
-                value={formData.status}
-                onChange={handleChange}
-              >
-                <option value="confirmed">Confirmed</option>
-                <option value="pending">Pending</option>
-                <option value="checked-in">Checked In</option>
-                <option value="checked-out">Checked Out</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="pt-2">
-            <label className="block text-xs font-bold uppercase tracking-wider mb-2" style={{ color: COLORS.darkGreen }}>Channel</label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {[
-                { value: 'airbnb', label: 'Airbnb' },
-                { value: 'direct', label: 'Direct' },
-                { value: 'coliving', label: 'Coliving.com' },
-              ].map((opt) => {
-                const active = formData.channel === opt.value;
-                return (
-                  <button
-                    type="button"
-                    key={opt.value}
-                    onClick={() => handleChange({ target: { name: 'channel', value: opt.value } })}
-                    className={`w-full text-left px-3 py-3 rounded-xl border transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/30 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-sm" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
-                      <span className={`w-3 h-3 rounded-full border ${active ? 'bg-[#26402E] border-[#26402E]' : 'border-slate-300'}`}></span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {formData.channel === 'direct' && (
-            <div className="mt-3 space-y-2">
-              <label className="block text-xs font-bold uppercase tracking-wider" style={{ color: COLORS.darkGreen }}>Payment Status</label>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { value: 'paid', label: 'Paid' },
-                  { value: 'unpaid', label: 'Unpaid' },
-                ].map((opt) => {
-                  const active = formData.paymentStatus === opt.value;
-                  return (
-                    <button
-                      type="button"
-                      key={opt.value}
-                      onClick={() => handleChange({ target: { name: 'paymentStatus', value: opt.value } })}
-                      className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/40 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-sm" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
-                        <span className={`w-3 h-3 rounded-full border ${active ? 'bg-[#26402E] border-[#26402E]' : 'border-slate-300'}`}></span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              {paymentStatusError && (
-                <p className="text-xs text-red-600">{paymentStatusError}</p>
-              )}
-            </div>
-          )}
-
-          {formData.stayCategory === 'long' && (
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Multiple Room Stay</div>
-                  <div className="text-xs text-slate-500 mt-1">Turn this on before setting dates if the guest starts in one room and then continues the stay in another.</div>
-                </div>
-                <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <input
-                    type="checkbox"
-                    name="hasMultipleRoomStay"
-                    checked={!!formData.hasMultipleRoomStay}
-                    onChange={handleChange}
-                    className="h-4 w-4 rounded border-slate-300"
-                    style={{ accentColor: COLORS.darkGreen }}
-                  />
-                  Enable
-                </label>
-              </div>
-
-              {formData.hasMultipleRoomStay && (
-                <div className="space-y-3">
-                  <div className="text-xs text-slate-500">
-                    Set the full stay dates below. The room selected above is room 1. Each room change starts on its move date.
+              <section className="rounded-[28px] border border-[#d8dfd2] bg-white/88 shadow-[0_14px_32px_rgba(38,64,46,0.08)] backdrop-blur-sm">
+                <div className="px-5 pt-5 pb-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Stay Plan</div>
+                    <p className="mt-1 text-sm text-slate-500">Dates, timing, category, and operational flags that affect the stay.</p>
                   </div>
-                  {(formData.roomMoves || []).map((move, idx) => (
-                    <div key={move.id || idx} className="rounded-xl border border-slate-200 p-3 bg-slate-50 space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          {idx === 0 ? 'Room 2' : `Room ${idx + 2}`}
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 border ${nights > 0 ? 'border-slate-200 bg-slate-50' : 'border-red-200 bg-red-50 text-red-600'}`}>
+                      <Clock size={14} />
+                      {nights} night{nights !== 1 ? 's' : ''}
+                    </span>
+                    <span className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1.5">
+                      {formData.stayCategory === 'short' ? 'Short Term' : formData.stayCategory === 'medium' ? 'Medium Term' : 'Long Term'}
+                    </span>
+                  </div>
+                </div>
+                <div className="p-5 space-y-5">
+                  {formData.stayCategory === 'long' && (
+                    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Multiple Room Stay</div>
+                          <div className="text-xs text-slate-500 mt-1">Turn this on before setting dates if the guest starts in one room and then continues the stay in another.</div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => removeRoomMove(move.id)}
-                          className="px-3 py-1.5 rounded-full border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
-                        >
-                          Remove
-                        </button>
+                        <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                          <input
+                            type="checkbox"
+                            name="hasMultipleRoomStay"
+                            checked={!!formData.hasMultipleRoomStay}
+                            onChange={handleChange}
+                            className="h-4 w-4 rounded border-slate-300"
+                            style={{ accentColor: COLORS.darkGreen }}
+                          />
+                          Enable
+                        </label>
                       </div>
+
+                      {formData.hasMultipleRoomStay && (
+                        <div className="space-y-3">
+                          <div className="text-xs text-slate-500">
+                            Set the full stay dates below. The room selected above is room 1. Each room change starts on its move date.
+                          </div>
+                          {(formData.roomMoves || []).map((move, idx) => (
+                            <div key={move.id || idx} className="rounded-xl border border-slate-200 p-3 bg-slate-50 space-y-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                  {idx === 0 ? 'Room 2' : `Room ${idx + 2}`}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => removeRoomMove(move.id)}
+                                  className="px-3 py-1.5 rounded-full border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
+                                >
+                                  Remove
+                                </button>
+                              </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
@@ -2357,266 +2384,291 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                           )}
                         </div>
                       )}
+                            </div>
+                          ))}
+
+                          <button
+                            type="button"
+                            onClick={addRoomMove}
+                            className="px-3 py-2 rounded-full border border-slate-200 text-xs font-semibold bg-white hover:bg-slate-50"
+                          >
+                            + Add another room change
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  )}
 
-                  <button
-                    type="button"
-                    onClick={addRoomMove}
-                    className="px-3 py-2 rounded-full border border-slate-200 text-xs font-semibold bg-white hover:bg-slate-50"
-                  >
-                    + Add another room change
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <CustomDatePicker 
+                        label="Check In"
+                        value={formData.checkIn}
+                        onChange={(e) => handleDateChange('checkIn', e.target.value)}
+                        blockedDates={blockedDatesForRoom.checkInBlocked}
+                        boundaryRef={modalContentRef}
+                      />
+                    </div>
+                    <div>
+                      <CustomDatePicker 
+                        label="Check Out"
+                        value={formData.checkOut}
+                        onChange={(e) => handleDateChange('checkOut', e.target.value)}
+                        blockedDates={blockedDatesForRoom.checkOutBlocked} 
+                        minDate={formData.checkIn}
+                        boundaryRef={modalContentRef}
+                      />
+                      {formData.hasMultipleRoomStay && (
+                        <p className="text-xs text-slate-500 mt-1">Use the full stay end date here. Room changes above decide when the guest leaves room 1.</p>
+                      )}
+                    </div>
+                  </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <CustomDatePicker 
-                label="Check In"
-                value={formData.checkIn}
-                onChange={(e) => handleDateChange('checkIn', e.target.value)}
-                blockedDates={blockedDatesForRoom.checkInBlocked}
-                boundaryRef={modalContentRef}
-              />
-            </div>
-            <div>
-              <CustomDatePicker 
-                label="Check Out"
-                value={formData.checkOut}
-                onChange={(e) => handleDateChange('checkOut', e.target.value)}
-                blockedDates={blockedDatesForRoom.checkOutBlocked} 
-                minDate={formData.checkIn}
-                boundaryRef={modalContentRef}
-              />
-              {formData.hasMultipleRoomStay && (
-                <p className="text-xs text-slate-500 mt-1">Use the full stay end date here. Room changes above decide when the guest leaves room 1.</p>
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Expected Check-out Time <span className="text-[11px] font-normal text-slate-500">(optional)</span></label>
-              <input
-                type="time"
-                name="checkOutTime"
-                value={formData.checkOutTime || ''}
-                onChange={handleChange}
-                placeholder={DEFAULT_CHECKOUT_TIME}
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm bg-white shadow-sm"
-              />
-              <p className="text-xs text-slate-500 mt-1">Blank defaults to 12:00. Used for scheduling/housekeeping.</p>
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Expected Check-in Time <span className="text-[11px] font-normal text-slate-500">(optional)</span></label>
-              <input
-                type="time"
-                name="checkInTime"
-                value={formData.checkInTime || ''}
-                onChange={handleChange}
-                placeholder={DEFAULT_CHECKIN_TIME}
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm bg-white shadow-sm"
-              />
-              <p className="text-xs text-slate-500 mt-1">Blank defaults to 15:00. Helpful for housekeeping timing.</p>
-            </div>
-          </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Expected Check-out Time <span className="text-[11px] font-normal text-slate-500">(optional)</span></label>
+                      <input
+                        type="time"
+                        name="checkOutTime"
+                        value={formData.checkOutTime || ''}
+                        onChange={handleChange}
+                        placeholder={DEFAULT_CHECKOUT_TIME}
+                        className="w-full px-4 py-2.5 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm bg-white shadow-sm"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Blank defaults to 12:00. Used for scheduling/housekeeping.</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Expected Check-in Time <span className="text-[11px] font-normal text-slate-500">(optional)</span></label>
+                      <input
+                        type="time"
+                        name="checkInTime"
+                        value={formData.checkInTime || ''}
+                        onChange={handleChange}
+                        placeholder={DEFAULT_CHECKIN_TIME}
+                        className="w-full px-4 py-2.5 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm bg-white shadow-sm"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Blank defaults to 15:00. Helpful for housekeeping timing.</p>
+                    </div>
+                  </div>
           
-          <div className="flex items-center pt-2">
-            <input
-              type="checkbox"
-              id="earlyCheckIn"
-              name="earlyCheckIn"
-              checked={formData.earlyCheckIn}
-              onChange={handleChange}
-              className="h-5 w-5 rounded border-gray-300 text-lime focus:ring-lime"
-              style={{ color: COLORS.darkGreen, accentColor: COLORS.darkGreen }}
-            />
-            <label htmlFor="earlyCheckIn" className="ml-2 text-sm font-medium" style={{ color: COLORS.darkGreen }}>
-              Request Early Check-in <span className="text-xs text-slate-500">(Requires room priority)</span>
-            </label>
-          </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm">
+                      <input
+                        type="checkbox"
+                        id="earlyCheckIn"
+                        name="earlyCheckIn"
+                        checked={formData.earlyCheckIn}
+                        onChange={handleChange}
+                        className="mt-0.5 h-5 w-5 rounded border-gray-300 text-lime focus:ring-lime"
+                        style={{ color: COLORS.darkGreen, accentColor: COLORS.darkGreen }}
+                      />
+                      <span>
+                        <span className="font-semibold block" style={{ color: COLORS.darkGreen }}>Request Early Check-in</span>
+                        <span className="text-xs text-slate-500">Requires room priority.</span>
+                      </span>
+                    </label>
 
-          <div className="flex items-center pt-2 gap-3 flex-wrap">
-            <label className="inline-flex items-center gap-2 text-sm font-medium" style={{ color: COLORS.darkGreen }}>
-              <input
-                type="checkbox"
-                name="bikeParkingNeeded"
-                checked={!!formData.bikeParkingNeeded}
-                onChange={handleChange}
-                className="h-5 w-5 rounded border-gray-300 text-lime focus:ring-lime"
-                style={{ color: COLORS.darkGreen, accentColor: COLORS.darkGreen }}
-              />
-              Bike parking needed
-            </label>
-            <span className="text-xs text-slate-500">Tick if guest will park a bike at the house.</span>
-          </div>
+                    <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm">
+                      <input
+                        type="checkbox"
+                        name="bikeParkingNeeded"
+                        checked={!!formData.bikeParkingNeeded}
+                        onChange={handleChange}
+                        className="mt-0.5 h-5 w-5 rounded border-gray-300 text-lime focus:ring-lime"
+                        style={{ color: COLORS.darkGreen, accentColor: COLORS.darkGreen }}
+                      />
+                      <span>
+                        <span className="font-semibold block" style={{ color: COLORS.darkGreen }}>Bike parking needed</span>
+                        <span className="text-xs text-slate-500">Tick if the guest will park a bike at the house.</span>
+                      </span>
+                    </label>
+                  </div>
 
-          {formData.bikeParkingNeeded && (
-            <div className="pt-2 w-full sm:w-1/2">
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>How many bikes?</label>
-              <input
-                type="number"
-                name="bikeCount"
-                min="1"
-                max="5"
-                value={formData.bikeCount || 1}
-                onChange={handleChange}
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm"
-              />
-            </div>
-          )}
-
-          <div className="pt-2">
-            <label className="block text-xs font-bold uppercase tracking-wider mb-2" style={{ color: COLORS.darkGreen }}>Stay Category</label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {[
-                { value: 'short', label: 'Short Term', helper: '1-6 nights' },
-                { value: 'medium', label: 'Medium Term', helper: '7-30 nights' },
-                { value: 'long', label: 'Long Term', helper: '31+ nights' },
-              ].map((opt) => {
-                const active = formData.stayCategory === opt.value;
-                return (
-                  <button
-                    type="button"
-                    key={opt.value}
-                    onClick={(e) => handleChange({ target: { name: 'stayCategory', value: opt.value, type: 'radio' } })}
-                    className={`w-full text-left px-3 py-3 rounded-xl border transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/30 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-sm" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
-                      <span className={`w-3 h-3 rounded-full border ${active ? 'bg-[#26402E] border-[#26402E]' : 'border-slate-300'}`}></span>
+                  {formData.bikeParkingNeeded && (
+                    <div className="w-full sm:w-1/2">
+                      <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>How many bikes?</label>
+                      <input
+                        type="number"
+                        name="bikeCount"
+                        min="1"
+                        max="5"
+                        value={formData.bikeCount || 1}
+                        onChange={handleChange}
+                        className="w-full px-4 py-2.5 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm"
+                      />
                     </div>
-                    <div className="text-xs text-slate-500 mt-1">{opt.helper}</div>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="text-xs text-slate-500 mt-2">Medium & Long follow weekly cleaning + laundry, no turnover unless overlapping check-in/out.</div>
-          </div>
+                  )}
 
-          {formData.isLongTerm && (
-            <div className="mt-3">
-              <label
-                className="block text-xs font-bold uppercase tracking-wider mb-1"
-                style={{ color: COLORS.darkGreen }}
-              >
-                Weekly cleaning day
-              </label>
-              <select
-                name="weeklyCleaningDay"
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm text-sm"
-                value={formData.weeklyCleaningDay}
-                onChange={handleChange}
-              >
-                <option value="monday">Monday</option>
-                <option value="tuesday">Tuesday</option>
-                <option value="wednesday">Wednesday</option>
-                <option value="thursday">Thursday</option>
-                <option value="friday">Friday</option>
-                <option value="saturday">Saturday</option>
-                <option value="sunday">Sunday</option>
-              </select>
-            </div>
-          )}
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider mb-2" style={{ color: COLORS.darkGreen }}>Stay Category</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {[
+                        { value: 'short', label: 'Short Term', helper: '1-6 nights' },
+                        { value: 'medium', label: 'Medium Term', helper: '7-30 nights' },
+                        { value: 'long', label: 'Long Term', helper: '31+ nights' },
+                      ].map((opt) => {
+                        const active = formData.stayCategory === opt.value;
+                        return (
+                          <button
+                            type="button"
+                            key={opt.value}
+                            onClick={(e) => handleChange({ target: { name: 'stayCategory', value: opt.value, type: 'radio' } })}
+                            className={`w-full text-left px-3.5 py-3 rounded-2xl border transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/25 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-sm" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
+                              <span className={`w-3.5 h-3.5 rounded-full border ${active ? 'bg-[#26402E] border-[#26402E]' : 'border-slate-300'}`}></span>
+                            </div>
+                            <div className="text-xs text-slate-500 mt-1">{opt.helper}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-2">Medium & Long follow weekly cleaning + laundry, no turnover unless overlapping check-in/out.</div>
+                  </div>
 
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Guest Breaks</div>
-                <div className="text-xs text-slate-500 mt-1">If this guest leaves temporarily, mark the break dates so those days can be booked by someone else.</div>
-              </div>
-              <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
-                <input
-                  type="checkbox"
-                  name="hasGuestBreaks"
-                  checked={!!formData.hasGuestBreaks}
-                  onChange={handleChange}
-                  className="h-4 w-4 rounded border-slate-300"
-                  style={{ accentColor: COLORS.darkGreen }}
-                />
-                Enable
-              </label>
-            </div>
-
-            {formData.hasGuestBreaks && (
-              <div className="space-y-2">
-                <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    name="sellRoomDuringBreak"
-                    checked={!!formData.sellRoomDuringBreak}
-                    onChange={handleChange}
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300"
-                    style={{ accentColor: COLORS.darkGreen }}
-                  />
-                  <span>
-                    <span className="font-semibold text-slate-800">Guest wants to sell rooms during break</span>
-                    <span className="block text-xs text-slate-500 mt-1">When enabled, break days stay available to sell and the guest rent is automatically reduced by monthly rent / 30 for each break day.</span>
-                  </span>
-                </label>
-                {(formData.guestBreakPeriods || []).length === 0 ? (
-                  <div className="text-xs text-slate-500">No breaks added yet.</div>
-                ) : (
-                  (formData.guestBreakPeriods || []).map((period, idx) => (
-                    <div key={period.id || idx} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
-                      <div>
-                        <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Away from</label>
-                        <input
-                          type="date"
-                          value={period.startDate || ''}
-                          min={formData.checkIn || undefined}
-                          max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
-                          onChange={(e) => updateGuestBreakPeriod(period.id, 'startDate', e.target.value)}
-                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Until</label>
-                        <input
-                          type="date"
-                          value={period.endDate || ''}
-                          min={period.startDate || formData.checkIn || undefined}
-                          max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
-                          onChange={(e) => updateGuestBreakPeriod(period.id, 'endDate', e.target.value)}
-                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeGuestBreakPeriod(period.id)}
-                        className="px-3 py-2 rounded-lg border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
+                  {formData.isLongTerm && (
+                    <div className="mt-1">
+                      <label
+                        className="block text-xs font-bold uppercase tracking-wider mb-1"
+                        style={{ color: COLORS.darkGreen }}
                       >
-                        Remove
-                      </button>
+                        Weekly cleaning day
+                      </label>
+                      <select
+                        name="weeklyCleaningDay"
+                        className="w-full px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm text-sm"
+                        value={formData.weeklyCleaningDay}
+                        onChange={handleChange}
+                      >
+                        <option value="monday">Monday</option>
+                        <option value="tuesday">Tuesday</option>
+                        <option value="wednesday">Wednesday</option>
+                        <option value="thursday">Thursday</option>
+                        <option value="friday">Friday</option>
+                        <option value="saturday">Saturday</option>
+                        <option value="sunday">Sunday</option>
+                      </select>
                     </div>
-                  ))
-                )}
-                <button
-                  type="button"
-                  onClick={addGuestBreakPeriod}
-                  className="px-3 py-2 rounded-full border border-slate-200 text-xs font-semibold bg-white hover:bg-slate-50"
-                >
-                  + Add break dates
-                </button>
-              </div>
-            )}
-          </div>
-          
-          <div className="py-2 text-sm font-medium flex items-center justify-end">
-            <Clock size={16} className="text-slate-500 mr-2" />
-            <span className={nights > 0 ? "text-slate-700" : "text-red-500 font-bold"}>
-                {nights} night{nights !== 1 ? 's' : ''}
-            </span>
-            <span className="ml-3 px-3 py-1 rounded-full text-xs font-bold border border-slate-200 bg-white text-slate-700">
-              {formData.stayCategory === 'short' ? 'Short Term' : formData.stayCategory === 'medium' ? 'Medium Term' : 'Long Term'}
-            </span>
-          </div>
+                  )}
 
-          {formData.channel === 'airbnb' && (
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-3">
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Guest Breaks</div>
+                        <div className="text-xs text-slate-500 mt-1">If this guest leaves temporarily, mark the break dates so those days can be booked by someone else.</div>
+                      </div>
+                      <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                        <input
+                          type="checkbox"
+                          name="hasGuestBreaks"
+                          checked={!!formData.hasGuestBreaks}
+                          onChange={handleChange}
+                          className="h-4 w-4 rounded border-slate-300"
+                          style={{ accentColor: COLORS.darkGreen }}
+                        />
+                        Enable
+                      </label>
+                    </div>
+
+                    {formData.hasGuestBreaks && (
+                      <div className="space-y-2">
+                        <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            name="sellRoomDuringBreak"
+                            checked={!!formData.sellRoomDuringBreak}
+                            onChange={handleChange}
+                            className="mt-0.5 h-4 w-4 rounded border-slate-300"
+                            style={{ accentColor: COLORS.darkGreen }}
+                          />
+                          <span>
+                            <span className="font-semibold text-slate-800">Guest wants to sell rooms during break</span>
+                            <span className="block text-xs text-slate-500 mt-1">When enabled, break days stay available to sell and the guest rent is automatically reduced by monthly rent / 30 for each break day.</span>
+                          </span>
+                        </label>
+                        {(formData.guestBreakPeriods || []).length === 0 ? (
+                          <div className="text-xs text-slate-500">No breaks added yet.</div>
+                        ) : (
+                          (formData.guestBreakPeriods || []).map((period, idx) => (
+                            <div key={period.id || idx} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                              <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Away from</label>
+                                <input
+                                  type="date"
+                                  value={period.startDate || ''}
+                                  min={formData.checkIn || undefined}
+                                  max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
+                                  onChange={(e) => updateGuestBreakPeriod(period.id, 'startDate', e.target.value)}
+                                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Until</label>
+                                <input
+                                  type="date"
+                                  value={period.endDate || ''}
+                                  min={period.startDate || formData.checkIn || undefined}
+                                  max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
+                                  onChange={(e) => updateGuestBreakPeriod(period.id, 'endDate', e.target.value)}
+                                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeGuestBreakPeriod(period.id)}
+                                className="px-3 py-2 rounded-lg border border-red-200 text-red-700 text-xs font-semibold bg-white hover:bg-red-50"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))
+                        )}
+                        <button
+                          type="button"
+                          onClick={addGuestBreakPeriod}
+                          className="px-3 py-2 rounded-full border border-slate-200 text-xs font-semibold bg-white hover:bg-slate-50"
+                        >
+                          + Add break dates
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <aside className="space-y-5 xl:sticky xl:top-0">
+              <section className="rounded-[28px] border border-[#26402E] bg-[linear-gradient(180deg,rgba(38,64,46,0.98),rgba(46,75,55,0.96))] px-5 py-5 text-white shadow-[0_18px_40px_rgba(38,64,46,0.22)]">
+                <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-white/65">Booking Snapshot</div>
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <div className="text-white/65 text-xs uppercase tracking-[0.18em]">Guest</div>
+                    <div className="mt-1 text-lg font-semibold">{formData.guestName || 'New guest'}</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-2xl bg-white/8 px-3 py-3">
+                      <div className="text-white/60 text-[11px] uppercase tracking-wide">Channel</div>
+                      <div className="mt-1 font-semibold capitalize">{formData.channel === 'coliving' ? 'Coliving.com' : formData.channel || 'Not set'}</div>
+                    </div>
+                    <div className="rounded-2xl bg-white/8 px-3 py-3">
+                      <div className="text-white/60 text-[11px] uppercase tracking-wide">Status</div>
+                      <div className="mt-1 font-semibold capitalize">{formData.status?.replace('-', ' ') || 'Not set'}</div>
+                    </div>
+                    <div className="rounded-2xl bg-white/8 px-3 py-3">
+                      <div className="text-white/60 text-[11px] uppercase tracking-wide">Stay</div>
+                      <div className="mt-1 font-semibold">{nights > 0 ? `${nights} night${nights !== 1 ? 's' : ''}` : 'Select dates'}</div>
+                    </div>
+                    <div className="rounded-2xl bg-white/8 px-3 py-3">
+                      <div className="text-white/60 text-[11px] uppercase tracking-wide">Category</div>
+                      <div className="mt-1 font-semibold">{formData.stayCategory === 'short' ? 'Short Term' : formData.stayCategory === 'medium' ? 'Medium Term' : 'Long Term'}</div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {formData.channel === 'airbnb' && (
+                <div className="bg-white border border-slate-200 rounded-[28px] shadow-[0_14px_32px_rgba(38,64,46,0.08)] p-5 space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h4 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Airbnb Withholding (Vietnam)</h4>
@@ -2657,16 +2709,16 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 )}
                 <div className="text-[11px] text-slate-500 mt-2">Total Price uses Final earnings for Airbnb bookings.</div>
               </div>
-            </div>
-          )}
-          {formData.stayCategory === 'long' ? (
-            <div className="space-y-3">
+                </div>
+              )}
+              {formData.stayCategory === 'long' ? (
+                <div className="rounded-[28px] border border-[#d8dfd2] bg-white/88 shadow-[0_14px_32px_rgba(38,64,46,0.08)] p-5 space-y-3">
               <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Monthly Rent (VND)</label>
               <input
                 required
                 type="number"
                 name="monthlyRentVnd"
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                className="w-full px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
                 value={formData.monthlyRentVnd}
                 onChange={handleChange}
                 min="0"
@@ -2683,7 +2735,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                       min="0"
                       value={move.monthlyRentVnd ?? ''}
                       onChange={(e) => updateRoomMove(move.id, { monthlyRentVnd: e.target.value === '' ? '' : Number(e.target.value) })}
-                      className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                      className="w-full px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
                     />
                     <p className="text-xs text-slate-500 mt-1">
                       Applies from {move.moveDate || `the move into room ${idx + 2}`} onward.
@@ -2691,15 +2743,15 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                   </div>
                 ) : null
               ))}
-            </div>
-          ) : (
-            <div>
+                </div>
+              ) : (
+                <div className="rounded-[28px] border border-[#d8dfd2] bg-white/88 shadow-[0_14px_32px_rgba(38,64,46,0.08)] p-5">
                <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Total Price (VND)</label>
                <input 
                   required
                   type="number" 
                   name="price"
-                  className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                  className="w-full px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
                   value={formData.price}
                   onChange={handleChange}
                   readOnly={formData.channel === 'airbnb'}
@@ -2708,10 +2760,10 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 {formData.channel === 'airbnb' && (
                   <p className="text-xs text-slate-500 mt-1">Auto-calculated: Imported earnings minus VAT (5%) and income tax (2%).</p>
                 )}
-            </div>
-          )}
+                </div>
+              )}
 
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
+              <div className="bg-white border border-slate-200 rounded-[28px] shadow-[0_14px_32px_rgba(38,64,46,0.08)] p-5 space-y-4">
             <div className="flex flex-wrap items-start gap-3 min-w-0">
               <div className="min-w-0">
                 <h4 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Services</h4>
@@ -2781,8 +2833,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
               </div>
             </div>
 
-            <div className="overflow-hidden border border-slate-200 rounded-xl">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+              <table className="w-full min-w-[640px] text-sm">
                 <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-3 py-2 text-left">Service</th>
@@ -2823,9 +2875,11 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                 </tbody>
               </table>
             </div>
+              </div>
+            </aside>
           </div>
 
-          <div className="pt-4 flex justify-end space-x-3">
+          <div className="pt-2 flex justify-end space-x-3">
             <button 
               type="button"
               onClick={onClose}
