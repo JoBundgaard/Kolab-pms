@@ -537,6 +537,10 @@ const buildLongTermReceiptMessage = ({ row, monthKey }) => {
     `Monthly rent: ${formatCurrencyVND(rent)}`,
   ];
 
+  if (row.breakRentDeductionVnd > 0) {
+    lines.push(`Break deduction: -${formatCurrencyVND(row.breakRentDeductionVnd)} (${row.breakNightsThisMonth} day${row.breakNightsThisMonth === 1 ? '' : 's'} on sellable break)`);
+  }
+
   if (monthEntries.length) {
     lines.push('Extras and credits:');
     monthEntries
@@ -724,9 +728,11 @@ const calculateLongTermRentForRange = (booking, startDate, endDate) => {
     const overlapStart = stay.startDate > rangeStart ? stay.startDate : rangeStart;
     const overlapEnd = stay.endDate < rangeEnd ? stay.endDate : rangeEnd;
     const overlapNights = calculateNights(overlapStart, overlapEnd);
+    const deductedBreakNights = countBookingBreakNightsForRange(booking, overlapStart, overlapEnd);
+    const billableNights = Math.max(0, overlapNights - deductedBreakNights);
     const rent = Number(stay.monthlyRentVnd);
-    if (overlapNights <= 0 || !Number.isFinite(rent) || rent <= 0) return sum;
-    return sum + Math.round(rent * (overlapNights / 30));
+    if (billableNights <= 0 || !Number.isFinite(rent) || rent <= 0) return sum;
+    return sum + Math.round(rent * (billableNights / 30));
   }, 0);
 };
 
@@ -758,6 +764,53 @@ const normalizeBookingBreaks = (breaksInput = []) => {
     .filter(Boolean)
     .sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
   return normalized;
+};
+
+const countBookingBreakNightsForRange = (booking, startDate, endDate) => {
+  if (!booking?.sellRoomDuringBreak) return 0;
+  const rangeStart = formatDate(startDate);
+  const rangeEnd = formatDate(endDate);
+  if (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) return 0;
+
+  const breaks = normalizeBookingBreaks(booking?.guestBreakPeriods || booking?.breakPeriods || booking?.breaks || []);
+  if (!breaks.length) return 0;
+
+  const coveredDates = new Set();
+  breaks.forEach((brk) => {
+    const overlapStart = brk.startDate > rangeStart ? brk.startDate : rangeStart;
+    const breakEndExclusive = addDays(brk.endDate, 1);
+    const overlapEnd = breakEndExclusive < rangeEnd ? breakEndExclusive : rangeEnd;
+    if (overlapStart >= overlapEnd) return;
+    for (let ts = new Date(overlapStart).getTime(); ts < new Date(overlapEnd).getTime(); ts += 86_400_000) {
+      coveredDates.add(formatDate(new Date(ts)));
+    }
+  });
+
+  return coveredDates.size;
+};
+
+const getBookingBreakSummaryForMonth = (booking, monthKey) => {
+  if (!monthKey) return { breakNights: 0, deductionVnd: 0 };
+  const [yearStr, monthStr] = monthKey.split('-');
+  const year = Number(yearStr);
+  const monthIndex = Number(monthStr) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0) {
+    return { breakNights: 0, deductionVnd: 0 };
+  }
+
+  const monthStart = formatDate(new Date(year, monthIndex, 1));
+  const monthEnd = formatDate(new Date(year, monthIndex + 1, 1));
+  const breakNights = countBookingBreakNightsForRange(booking, monthStart, monthEnd);
+  const deductionVnd = getBookingRoomStays(booking).reduce((sum, stay) => {
+    const overlapStart = stay.startDate > monthStart ? stay.startDate : monthStart;
+    const overlapEnd = stay.endDate < monthEnd ? stay.endDate : monthEnd;
+    const breakNightsInStay = countBookingBreakNightsForRange(booking, overlapStart, overlapEnd);
+    const rent = Number(stay.monthlyRentVnd);
+    if (breakNightsInStay <= 0 || !Number.isFinite(rent) || rent <= 0) return sum;
+    return sum + Math.round(rent * (breakNightsInStay / 30));
+  }, 0);
+
+  return { breakNights, deductionVnd };
 };
 
 const isDateOnBookingBreak = (booking, dateStr) => {
@@ -1345,6 +1398,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     roomMoves: [],
     hasGuestBreaks: false,
     guestBreakPeriods: [],
+    sellRoomDuringBreak: false,
   });
   
   const [nights, setNights] = useState(0);
@@ -1393,11 +1447,13 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         roomId: formData.roomId,
         monthlyRentVnd: formData.monthlyRentVnd,
         roomMoves: formData.hasMultipleRoomStay ? formData.roomMoves : [],
+        guestBreakPeriods: formData.hasGuestBreaks ? formData.guestBreakPeriods : [],
+        sellRoomDuringBreak: !!formData.sellRoomDuringBreak,
       },
       formData.checkIn,
       formData.checkOut
     );
-  }, [formData.checkIn, formData.checkOut, formData.hasMultipleRoomStay, formData.monthlyRentVnd, formData.roomId, formData.roomMoves, formData.stayCategory, nights]);
+  }, [formData.checkIn, formData.checkOut, formData.guestBreakPeriods, formData.hasGuestBreaks, formData.hasMultipleRoomStay, formData.monthlyRentVnd, formData.roomId, formData.roomMoves, formData.sellRoomDuringBreak, formData.stayCategory, nights]);
 
   const bookingBaseAmount = useMemo(() => {
     if (['long'].includes(formData.stayCategory)) {
@@ -1445,6 +1501,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         }),
         hasGuestBreaks: !!booking.hasGuestBreaks || normalizeBookingBreaks(booking.guestBreakPeriods || booking.breakPeriods || []).length > 0,
         guestBreakPeriods: normalizeBookingBreaks(booking.guestBreakPeriods || booking.breakPeriods || []),
+        sellRoomDuringBreak: !!booking.sellRoomDuringBreak,
       });
       setCategoryManual(!!booking.stayCategory);
       const normalizedServices = Array.isArray(booking.services) ? booking.services.map(normalizeServiceEntry) : [];
@@ -1482,6 +1539,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         roomMoves: [],
         hasGuestBreaks: false,
         guestBreakPeriods: [],
+        sellRoomDuringBreak: false,
       });
       setCategoryManual(false);
       setServices([]);
@@ -1747,6 +1805,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       roomMoves: isLongStay ? normalizedRoomMoves : [],
       hasGuestBreaks: !!formData.hasGuestBreaks && rawBreaks.length > 0,
       guestBreakPeriods: rawBreaks,
+      sellRoomDuringBreak: !!formData.hasGuestBreaks && rawBreaks.length > 0 && !!formData.sellRoomDuringBreak,
     });
   };
 
@@ -1771,6 +1830,12 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         roomMoves: nextCategory === 'long' ? prev.roomMoves : [],
       }));
       setPaymentStatusError(null);
+    } else if (name === 'hasGuestBreaks') {
+      setFormData((prev) => ({
+        ...prev,
+        hasGuestBreaks: checked,
+        sellRoomDuringBreak: checked ? prev.sellRoomDuringBreak : false,
+      }));
     } else if (name === 'channel') {
       const nextChannel = value;
       setPaymentStatusError(null);
@@ -1839,6 +1904,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     setFormData((prev) => ({
       ...prev,
       guestBreakPeriods: (Array.isArray(prev.guestBreakPeriods) ? prev.guestBreakPeriods : []).filter((period) => period.id !== id),
+      sellRoomDuringBreak: (Array.isArray(prev.guestBreakPeriods) ? prev.guestBreakPeriods : []).filter((period) => period.id !== id).length > 0
+        ? prev.sellRoomDuringBreak
+        : false,
     }));
   };
 
@@ -2475,6 +2543,20 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
             {formData.hasGuestBreaks && (
               <div className="space-y-2">
+                <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    name="sellRoomDuringBreak"
+                    checked={!!formData.sellRoomDuringBreak}
+                    onChange={handleChange}
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300"
+                    style={{ accentColor: COLORS.darkGreen }}
+                  />
+                  <span>
+                    <span className="font-semibold text-slate-800">Guest wants to sell rooms during break</span>
+                    <span className="block text-xs text-slate-500 mt-1">When enabled, break days stay available to sell and the guest rent is automatically reduced by monthly rent / 30 for each break day.</span>
+                  </span>
+                </label>
                 {(formData.guestBreakPeriods || []).length === 0 ? (
                   <div className="text-xs text-slate-500">No breaks added yet.</div>
                 ) : (
@@ -4446,13 +4528,14 @@ export default function App() {
       .filter((booking) => {
         if (!booking?.id || isCancelledStatus(booking.status)) return false;
         if (getBookingStayCategory(booking) !== 'long') return false;
-        return bookingOccupiesDate(booking, TODAY_STR);
+        return booking.checkIn <= TODAY_STR && booking.checkOut > TODAY_STR;
       })
       .map((booking) => {
         const activeRoomId = getBookingRoomIdForDate(booking, TODAY_STR);
         const room = ALL_ROOMS.find((entry) => entry.id === activeRoomId);
         const guest = guests.find((entry) => entry.id === booking.guestId);
         const longTermOps = booking.longTermOps || {};
+        const isOnBreakToday = isDateOnBookingBreak(booking, TODAY_STR);
         const cleaningDayKey = longTermOps.cleaningDay || booking.weeklyCleaningDay || '';
         const dueDate = getRentCycleDueDate(booking, today);
         const rentPaidThrough = longTermOps.rentPaidThrough || '';
@@ -4478,6 +4561,7 @@ export default function App() {
           .filter((entry) => entry.status !== 'billed')
           .reduce((sum, entry) => sum + entry.signedAmountVnd, 0);
         const currentMonthRent = calculateLongTermRentForMonth(booking, currentMonthKey);
+        const breakSummary = getBookingBreakSummaryForMonth(booking, currentMonthKey);
         const currentMonthTotalDue = currentMonthRent + unbilledExtrasTotal;
 
         const rawLaundryStatus = longTermOps.laundryStatus || 'pending';
@@ -4495,12 +4579,13 @@ export default function App() {
           cleaningDayKey,
           cleaningDayLabel: formatWeekdayLabel(cleaningDayKey),
           dueDate,
+          isOnBreakToday,
           rentStatus,
           rentIsPaid,
           rentPaidThrough,
           laundryStatus,
           laundryUpdatedAt,
-          isCleaningToday: !!cleaningDayKey && cleaningDayKey === todayWeekday,
+          isCleaningToday: !isOnBreakToday && !!cleaningDayKey && cleaningDayKey === todayWeekday,
           ledgerEntries,
           monthLedgerEntries,
           currentMonthChargeTotal,
@@ -4510,9 +4595,20 @@ export default function App() {
           currentMonthTotalDue,
           currentMonthKey,
           currentMonthRent,
+          breakNightsThisMonth: breakSummary.breakNights,
+          breakRentDeductionVnd: breakSummary.deductionVnd,
           receiptMessage: '',
           leaseEndDate: longTermOps.leaseEndDate || booking.checkOut || '',
-          specialNotes: [longTermOps.specialNotes, booking.notes, guest?.notes].filter(Boolean),
+          specialNotes: [
+            booking.sellRoomDuringBreak && breakSummary.breakNights > 0
+              ? `Guest is selling room nights during break this month: ${breakSummary.breakNights} day${breakSummary.breakNights === 1 ? '' : 's'} deducted (${formatCurrencyVND(breakSummary.deductionVnd)}).`
+              : (booking.sellRoomDuringBreak
+                ? 'Guest wants room nights sold during break. Rent is auto-deducted for break days.'
+                : null),
+            longTermOps.specialNotes,
+            booking.notes,
+            guest?.notes,
+          ].filter(Boolean),
         };
       })
       .sort((a, b) => {
@@ -5077,6 +5173,8 @@ export default function App() {
             ...bookingData,
             monthlyRentVnd,
             roomMoves,
+            guestBreakPeriods: bookingData.hasGuestBreaks ? bookingData.guestBreakPeriods || [] : [],
+            sellRoomDuringBreak: !!bookingData.sellRoomDuringBreak,
           }, bookingData.checkIn, bookingData.checkOut)
         : null;
 
@@ -5116,6 +5214,9 @@ export default function App() {
         monthlyRentVnd: monthlyRentVnd,
         hasMultipleRoomStay: isLongTermCategory && roomMoves.length > 0,
         roomMoves,
+        hasGuestBreaks: !!bookingData.hasGuestBreaks,
+        guestBreakPeriods: bookingData.hasGuestBreaks ? normalizeBookingBreaks(bookingData.guestBreakPeriods || []) : [],
+        sellRoomDuringBreak: !!bookingData.hasGuestBreaks && !!bookingData.sellRoomDuringBreak,
         vatWithheld: withholding.vatWithheld,
         incomeTaxWithheld: withholding.incomeTaxWithheld,
         totalWithheld: withholding.totalWithheld,
@@ -7094,6 +7195,11 @@ export default function App() {
                             {(row.guest?.email || row.booking.guestPhone) && (
                               <div className="text-xs text-slate-500">{row.guest?.email || row.booking.guestPhone}</div>
                             )}
+                            {row.isOnBreakToday && (
+                              <div className="mt-2">
+                                <span className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700 text-xs font-semibold">On break</span>
+                              </div>
+                            )}
                           </td>
                           <td className="px-6 py-4">
                             <div className="text-sm font-semibold text-slate-800">Due {row.dueDate || 'Not set'}</div>
@@ -7173,11 +7279,25 @@ export default function App() {
                                   </div>
                                   <div>
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Monthly Rent</div>
-                                    <div className="text-base font-semibold text-slate-800 mt-1">{row.currentMonthRent ? formatCurrencyVND(row.currentMonthRent) : 'Not set'}</div>
+                                    <div className="text-base font-semibold text-slate-800 mt-1">{row.currentMonthRent != null ? formatCurrencyVND(row.currentMonthRent) : 'Not set'}</div>
+                                    {row.breakRentDeductionVnd > 0 && (
+                                      <div className="text-xs text-amber-700 mt-1">Includes break deduction of {formatCurrencyVND(row.breakRentDeductionVnd)} for {row.breakNightsThisMonth} day{row.breakNightsThisMonth === 1 ? '' : 's'} marked sellable.</div>
+                                    )}
                                     {row.booking.hasMultipleRoomStay && (row.booking.roomMoves || []).length > 0 && (
                                       <div className="text-xs text-slate-500 mt-1">{(row.booking.roomMoves || []).length} scheduled room change{(row.booking.roomMoves || []).length === 1 ? '' : 's'}</div>
                                     )}
                                   </div>
+                                  {row.booking.hasGuestBreaks && (
+                                    <div>
+                                      <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Break Status</div>
+                                      <div className="text-base font-semibold text-slate-800 mt-1">{row.isOnBreakToday ? 'On break today' : 'In stay'}</div>
+                                      <div className="text-xs text-slate-500 mt-1">
+                                        {row.booking.sellRoomDuringBreak
+                                          ? 'Room can be sold during break and rent is deducted automatically.'
+                                          : 'Break dates block occupancy only. Rent stays unchanged.'}
+                                      </div>
+                                    </div>
+                                  )}
                                   <div>
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">This Month Total Due</div>
                                     <div className="text-base font-semibold text-slate-800 mt-1">{formatCurrencyVND(row.currentMonthTotalDue)}</div>
