@@ -15,11 +15,7 @@ export function buildHousekeepingWhatsappMessage({ tasks = [], recurringDueByRoo
   const startTimeLabel = cleaningStartTime || 'Not set';
 
   const relevant = safeTasks.filter((t) => (t?.status || 'dirty') !== 'clean');
-  const recurringEntries = Object.entries(safeRecurringByRoom)
-    .map(([roomId, todos]) => [roomId, Array.isArray(todos) ? todos.filter((todo) => todo && (todo.status || 'dirty') !== 'clean') : []])
-    .filter(([, todos]) => todos.length > 0);
-
-  if (relevant.length === 0 && recurringEntries.length === 0) {
+  if (relevant.length === 0) {
     return `Housekeeping plan (${dateLabel})\nCleaning starts: ${startTimeLabel}\n\nAll clear.`;
   }
 
@@ -33,56 +29,25 @@ export function buildHousekeepingWhatsappMessage({ tasks = [], recurringDueByRoo
 
   const grouped = relevant.reduce((acc, task) => {
     const prop = task.propertyName || 'Property';
-    if (!acc[prop]) acc[prop] = {};
-    const roomKey = task.roomId || task.roomLabel || task.id;
-    if (!acc[prop][roomKey]) {
-      acc[prop][roomKey] = {
-        roomId: task.roomId || roomKey,
-        roomLabel: task.roomLabel || 'Room',
-        task,
-      };
-    } else if (!acc[prop][roomKey].task) {
-      acc[prop][roomKey].task = task;
-    }
+    if (!acc[prop]) acc[prop] = [];
+    acc[prop].push(task);
     return acc;
   }, {});
-
-  recurringEntries.forEach(([roomId, todos]) => {
-    const sample = todos[0];
-    const prop = sample?.propertyName || 'Property';
-    if (!grouped[prop]) grouped[prop] = {};
-    if (!grouped[prop][roomId]) {
-      grouped[prop][roomId] = {
-        roomId,
-        roomLabel: sample?.roomLabel || roomId || 'Room',
-        task: null,
-      };
-    }
-  });
 
   const propertyNames = Object.keys(grouped).sort();
   const lines = [`Housekeeping plan (${dateLabel})`, `Cleaning starts: ${startTimeLabel}`, ''];
 
   propertyNames.forEach((prop) => {
     lines.push(`${prop}:`);
-    Object.values(grouped[prop])
-      .sort((a, b) => (a.roomLabel || '').localeCompare(b.roomLabel || ''))
-      .forEach(({ roomId, roomLabel, task }) => {
-        if (task) {
-          const prio = task.priority ?? '-';
-          const staff = task.assignedTo || 'Unassigned';
-          const desc = task.description ? ` (${task.description})` : '';
-          lines.push(`• ${task.roomLabel || roomLabel || 'Room'} – ${typeLabel(task.type)}${desc} – Prio ${prio} – ${staff}`);
-        } else {
-          lines.push(`• ${roomLabel || 'Room'} – Recurring clean`);
-        }
-
-        const roomTodos = (safeRecurringByRoom[roomId] || []).filter((todo) => todo && (todo.status || 'dirty') !== 'clean');
-        roomTodos.forEach((todo) => {
-          const todoPrio = todo.priority ?? task?.priority ?? '-';
-          const todoStaff = todo.assignedTo || task?.assignedTo || 'Unassigned';
-          lines.push(`  - Todo: ${todo.description || 'Recurring cleaning task'} – Prio ${todoPrio} – ${todoStaff}`);
-        });
+    grouped[prop].forEach((task) => {
+      const prio = task.priority ?? '-';
+      const staff = task.assignedTo || 'Unassigned';
+      const desc = task.description ? ` (${task.description})` : '';
+      const roomTodos = (safeRecurringByRoom[task.roomId] || []).filter((todo) => todo && (todo.status || 'dirty') !== 'clean');
+      const todoSuffix = roomTodos.length > 0
+        ? ` | Todo: ${roomTodos.map((todo) => todo.description || 'Recurring cleaning task').join(', ')}`
+        : '';
+      lines.push(`• ${task.roomLabel || 'Room'} – ${typeLabel(task.type)}${desc} – Prio ${prio} – ${staff}${todoSuffix}`);
     });
     lines.push('');
   });
