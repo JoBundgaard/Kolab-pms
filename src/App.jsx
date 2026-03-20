@@ -720,20 +720,45 @@ const expandBookingToRoomStays = (booking) => {
 };
 
 const calculateLongTermRentForRange = (booking, startDate, endDate) => {
-  const rangeStart = formatDate(startDate);
-  const rangeEnd = formatDate(endDate);
-  if (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) return 0;
+  const rangeStart = new Date(startDate);
+  const rangeEnd = new Date(endDate);
+  if (isNaN(rangeStart.getTime()) || isNaN(rangeEnd.getTime()) || rangeStart >= rangeEnd) return 0;
 
-  return getBookingRoomStays(booking).reduce((sum, stay) => {
-    const overlapStart = stay.startDate > rangeStart ? stay.startDate : rangeStart;
-    const overlapEnd = stay.endDate < rangeEnd ? stay.endDate : rangeEnd;
-    const overlapNights = calculateNights(overlapStart, overlapEnd);
-    const deductedBreakNights = countBookingBreakNightsForRange(booking, overlapStart, overlapEnd);
-    const billableNights = Math.max(0, overlapNights - deductedBreakNights);
-    const rent = Number(stay.monthlyRentVnd);
-    if (billableNights <= 0 || !Number.isFinite(rent) || rent <= 0) return sum;
-    return sum + Math.round(rent * (billableNights / 30));
-  }, 0);
+  let totalRent = 0;
+
+  // Iterate over each month in the range
+  let currentMonthStart = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
+
+  while (currentMonthStart < rangeEnd) {
+    const currentMonthEnd = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 1);
+    const daysInMonth = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0).getDate();
+
+    const monthOverlapStart = currentMonthStart < rangeStart ? rangeStart : currentMonthStart;
+    const monthOverlapEnd = currentMonthEnd > rangeEnd ? rangeEnd : currentMonthEnd;
+
+    getBookingRoomStays(booking).forEach(stay => {
+      const stayStart = new Date(stay.startDate);
+      const stayEnd = new Date(stay.endDate);
+
+      const segmentOverlapStart = stayStart > monthOverlapStart ? stayStart : monthOverlapStart;
+      const segmentOverlapEnd = stayEnd < monthOverlapEnd ? stayEnd : monthOverlapEnd;
+
+      const overlapNights = calculateNights(segmentOverlapStart, segmentOverlapEnd);
+      if (overlapNights <= 0) return;
+
+      const deductedBreakNights = countBookingBreakNightsForRange(booking, segmentOverlapStart, segmentOverlapEnd);
+      const billableNights = Math.max(0, overlapNights - deductedBreakNights);
+      
+      const rent = Number(stay.monthlyRentVnd);
+      if (billableNights <= 0 || !Number.isFinite(rent) || rent <= 0) return;
+
+      totalRent += rent * (billableNights / daysInMonth);
+    });
+
+    currentMonthStart = currentMonthEnd;
+  }
+
+  return Math.round(totalRent);
 };
 
 const calculateLongTermRentForMonth = (booking, monthKey) => {
@@ -800,6 +825,7 @@ const getBookingBreakSummaryForMonth = (booking, monthKey) => {
 
   const monthStart = formatDate(new Date(year, monthIndex, 1));
   const monthEnd = formatDate(new Date(year, monthIndex + 1, 1));
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
   const breakNights = countBookingBreakNightsForRange(booking, monthStart, monthEnd);
   const deductionVnd = getBookingRoomStays(booking).reduce((sum, stay) => {
     const overlapStart = stay.startDate > monthStart ? stay.startDate : monthStart;
@@ -807,7 +833,7 @@ const getBookingBreakSummaryForMonth = (booking, monthKey) => {
     const breakNightsInStay = countBookingBreakNightsForRange(booking, overlapStart, overlapEnd);
     const rent = Number(stay.monthlyRentVnd);
     if (breakNightsInStay <= 0 || !Number.isFinite(rent) || rent <= 0) return sum;
-    return sum + Math.round(rent * (breakNightsInStay / 30));
+    return sum + Math.round(rent * (breakNightsInStay / daysInMonth));
   }, 0);
 
   return { breakNights, deductionVnd };
@@ -5952,7 +5978,20 @@ export default function App() {
 
     const roomNightsAvailable = Math.max(1, ALL_ROOMS.length * rangeDays);
     const roomNightsBooked = active.reduce((sum, b) => sum + (b._overlapNights || 0), 0);
-    const revenue = active.reduce((sum, b) => sum + netForBooking(b), 0);
+    const revenue = active.reduce((sum, b) => {
+    const isLong = (b.stayCategory || '').toLowerCase() === 'long' || b.isLongTerm;
+    if (isLong) {
+        return sum + calculateLongTermRentForRange(b, rangeStart, rangeEnd);
+    }
+    const totalNights = b.nights || calculateNights(b.checkIn, b.checkOut) || 1;
+    const prorateFactor = b._overlapNights / totalNights;
+    const w = b._withholding || {};
+    const bookingValue = (w.status === 'computed' && Number.isFinite(w.finalCountedIncome)) 
+        ? w.finalCountedIncome 
+        : (Number(b.price) || 0);
+
+    return sum + (bookingValue * prorateFactor);
+}, 0);
     const vatWithheldRange = withholdingComputedRange.reduce((sum, b) => sum + vatForBooking(b), 0);
     const incomeWithheldRange = withholdingComputedRange.reduce((sum, b) => sum + incomeForBooking(b), 0);
     const totalWithheldRange = vatWithheldRange + incomeWithheldRange;
