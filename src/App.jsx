@@ -6791,7 +6791,8 @@ export default function App() {
                             }
                           }
                           const shouldRenderBlock = booking && (isStart || (isTruncatedAtStart && dateIndex === 0));
-                          const widthCalc = `${colSpan * 100}%`;
+                          const gapPx = 4; // Small gap so adjacent bookings touch without overlap
+                          const widthCalc = `calc(${colSpan * 100}% - ${gapPx}px)`;
                           const leftOffset = '0%';
                           const isTodayCol = dateStr === TODAY_STR;
                           const todayCellHighlight = isTodayCol
