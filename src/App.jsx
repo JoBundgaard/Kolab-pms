@@ -52,6 +52,7 @@ import {
   Download,
 } from 'lucide-react';
 import HousekeepingTaskManager from './components/HousekeepingTaskManager';
+import Chatbot from './components/Chatbot';
 import { normalizeHousekeepingTasks } from './lib/housekeeping';
 
 // Firebase is initialized once in src/firebase.js and re-used here
@@ -3644,6 +3645,7 @@ export default function App() {
   const [statsRange, setStatsRange] = useState('this-week'); // 'this-week' | 'this-month' | 'last-30' | 'custom'
   const [customStatsStart, setCustomStatsStart] = useState(formatDate(new Date()));
   const [customStatsEnd, setCustomStatsEnd] = useState(formatDate(new Date()));
+  const [calendarView, setCalendarView] = useState('guestName');
 
   const deriveStayCategory = useCallback((nights) => {
     if (nights >= 31) return 'long';
@@ -6654,6 +6656,10 @@ export default function App() {
               <button onClick={() => { setSelectedCalendarDate(TODAY_STR); ensureDateVisible(TODAY_STR); }} className="px-4 py-1.5 text-sm font-medium hover:bg-white rounded-full border border-transparent hover:border-slate-200 transition-colors">Today</button>
               <button onClick={() => scrollTimelineByViewport(1)} className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-slate-200"><ChevronRight size={20} /></button>
             </div>
+            <div className="flex space-x-2">
+              <button onClick={() => setCalendarView('guestName')} className={`px-4 py-1.5 text-sm font-medium rounded-full border ${calendarView === 'guestName' ? 'bg-slate-200' : 'hover:bg-white'}`}>Guest Name</button>
+              <button onClick={() => setCalendarView('price')} className={`px-4 py-1.5 text-sm font-medium rounded-full border ${calendarView === 'price' ? 'bg-slate-200' : 'hover:bg-white'}`}>Price</button>
+            </div>
           </div>
           <div className="text-sm font-medium font-serif" style={{ color: COLORS.darkGreen }}>
              {`${formatDate(visibleStartDate)} – ${formatDate(visibleEndDate)}`}
@@ -6864,7 +6870,7 @@ export default function App() {
                                       {booking.isLongTerm && hasLongTermCleaningToday && (
                                         <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block mr-1.5" title="Weekly cleaning today"></span>
                                       )}
-                                      <span className="font-semibold truncate mr-1.5">{booking.guestName}</span>
+                                      <span className="font-semibold truncate mr-1.5">{calendarView === 'guestName' ? booking.guestName : formatCompactCurrencyVND(booking.price)}</span>
                                       {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
                                       {booking.bikeParkingNeeded && (
                                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-white/80 text-[#26402E] ml-1 border border-white/60">
@@ -9274,6 +9280,7 @@ export default function App() {
           defaultMode={recurringModalMode}
         />
         <InvoiceModal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} bookings={bookings} />
+        <Chatbot />
         <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
           {alerts.map((alert) => {
             const isSuccess = alert.tone === 'success';
