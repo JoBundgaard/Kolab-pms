@@ -6870,7 +6870,11 @@ export default function App() {
                                       {booking.isLongTerm && hasLongTermCleaningToday && (
                                         <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block mr-1.5" title="Weekly cleaning today"></span>
                                       )}
-                                      <span className="font-semibold truncate mr-1.5">{calendarView === 'guestName' ? booking.guestName : formatCompactCurrencyVND(booking.price)}</span>
+                                      <span className="font-semibold truncate mr-1.5">
+                                        {calendarView === 'guestName'
+                                          ? booking.guestName
+                                          : `${formatCompactCurrencyVND(booking.finalCountedIncome || booking.price)} for ${booking.nights} nights`}
+                                      </span>
                                       {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
                                       {booking.bikeParkingNeeded && (
                                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-white/80 text-[#26402E] ml-1 border border-white/60">
