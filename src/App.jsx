@@ -134,6 +134,18 @@ const computeAirbnbWithholding = (booking) => {
     airbnbBaseEarningsVnd: baseEarnings,
   };
 };
+
+const getDisplayPriceForBooking = (booking) => {
+  if (!booking) return 0;
+  const withholding = booking._withholding || computeAirbnbWithholding(booking);
+  if (withholding.status === 'computed' && Number.isFinite(withholding.finalCountedIncome)) {
+    return withholding.finalCountedIncome;
+  }
+  const explicitFinal = Number(booking.finalCountedIncome);
+  if (Number.isFinite(explicitFinal) && explicitFinal > 0) return explicitFinal;
+  return Number(booking.price) || 0;
+};
+
 const ENABLE_HOUSEKEEPING_V2 = true;
 
 // Baseline 2025 Townhouse financials (monthly, VND, VAT-inclusive)
@@ -4428,12 +4440,12 @@ export default function App() {
 
   const calendarBookings = useMemo(() => {
     try {
-      return bookings
+      return bookingsWithWithholding
         .flatMap((b) => expandBookingToRoomStays(b))
         .map((b) => {
           const normalizedCheckIn = formatDate(b.checkIn);
           const normalizedCheckOut = formatDate(b.checkOut);
-          return { ...b, checkIn: normalizedCheckIn, checkOut: normalizedCheckOut };
+          return { ...b, checkIn: normalizedCheckIn, checkOut: normalizedCheckOut, ...computeAirbnbWithholding(b) };
         })
         .filter((b) => {
           if (isCancelledStatus(b.status)) return false;
@@ -6873,7 +6885,7 @@ export default function App() {
                                       <span className="font-semibold truncate mr-1.5">
                                         {calendarView === 'guestName'
                                           ? booking.guestName
-                                          : `${formatCompactCurrencyVND(booking.finalCountedIncome || booking.price)} for ${booking.nights} nights`}
+                                          : `${formatCompactCurrencyVND(getDisplayPriceForBooking(booking))} for ${booking.nights} nights`}
                                       </span>
                                       {booking.earlyCheckIn && <Sunrise size={12} className="text-orange-600 ml-1"/>}
                                       {booking.bikeParkingNeeded && (
