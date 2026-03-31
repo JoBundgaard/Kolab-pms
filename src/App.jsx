@@ -4460,7 +4460,12 @@ export default function App() {
         .map((b) => {
           const normalizedCheckIn = formatDate(b.checkIn);
           const normalizedCheckOut = formatDate(b.checkOut);
-          return { ...b, checkIn: normalizedCheckIn, checkOut: normalizedCheckOut, ...computeAirbnbWithholding(b) };
+          return {
+            ...b,
+            checkIn: normalizedCheckIn,
+            checkOut: normalizedCheckOut,
+            _withholding: b._withholding || computeAirbnbWithholding(b),
+          };
         })
         .filter((b) => {
           if (isCancelledStatus(b.status)) return false;
