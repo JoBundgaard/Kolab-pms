@@ -381,9 +381,14 @@ const formatCurrencyVND = (value = 0) => `${(Number(value) || 0).toLocaleString(
 const formatCompactCurrencyVND = (value = 0) => {
   const amount = Math.round(Number(value) || 0);
   const abs = Math.abs(amount);
-  if (abs >= 1_000_000_000) return `${(amount / 1_000_000_000).toFixed(abs >= 10_000_000_000 ? 0 : 1).replace(/\.0$/, '')}B VND`;
-  if (abs >= 1_000_000) return `${(amount / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}M VND`;
-  if (abs >= 1_000) return `${(amount / 1_000).toFixed(abs >= 10_000 ? 0 : 1).replace(/\.0$/, '')}k VND`;
+  const formatCompact = (divisor) => {
+    const scaledAbs = abs / divisor;
+    const decimals = scaledAbs >= 100 ? 0 : scaledAbs >= 10 ? 1 : 2;
+    return (amount / divisor).toFixed(decimals).replace(/(\.\d*[1-9])0+$|\.0+$/, '$1');
+  };
+  if (abs >= 1_000_000_000) return `${formatCompact(1_000_000_000)}B VND`;
+  if (abs >= 1_000_000) return `${formatCompact(1_000_000)}M VND`;
+  if (abs >= 1_000) return `${formatCompact(1_000)}k VND`;
   return `${amount.toLocaleString('vi-VN')} VND`;
 };
 
@@ -391,6 +396,16 @@ const isCancelledStatus = (status) => {
   if (!status) return false;
   const s = String(status).toLowerCase();
   return s === 'cancelled' || s === 'canceled' || s.startsWith('cancel');
+};
+
+const getCalendarBlockStatusClass = (status) => {
+  const normalizedStatus = String(status || '').toLowerCase();
+  if (normalizedStatus === 'checked-in') return 'bg-[#26402E] text-[#E2F05D]';
+  if (normalizedStatus === 'confirmed') return 'bg-[#E2F05D] text-[#26402E]';
+  if (normalizedStatus === 'pending') return 'bg-amber-50 text-amber-700';
+  if (normalizedStatus === 'checked-out') return 'bg-slate-100 text-slate-600';
+  if (isCancelledStatus(normalizedStatus)) return 'bg-rose-100 text-rose-700';
+  return 'bg-slate-300 text-slate-600';
 };
 
 const isBlockingStatus = (status) => {
@@ -6870,7 +6885,7 @@ export default function App() {
                                       ? 'ring-2 ring-amber-200'
                                       : 'ring-1 ring-white/40';
                                   return (
-                                    <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-30 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-40 ${booking.status === 'checked-in' ? 'bg-[#26402E] text-[#E2F05D]' : booking.status === 'confirmed' ? 'bg-[#E2F05D] text-[#26402E]' : 'bg-slate-300 text-slate-600'} ${catBorder}`}
+                                    <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-30 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-40 ${getCalendarBlockStatusClass(booking.status)} ${catBorder}`}
                                       style={{
                                         width: widthCalc,
                                         left: leftOffset,
