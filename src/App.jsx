@@ -928,6 +928,220 @@ const addYears = (dateStr, years = 1) => {
   return formatDate(d);
 };
 
+const parseLocalDateString = (dateStr) => {
+  if (!dateStr) return new Date('');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [yearStr, monthStr, dayStr] = dateStr.split('-');
+    return new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr));
+  }
+  return new Date(dateStr);
+};
+
+const getMonthBounds = (monthValue) => {
+  if (!/^\d{4}-\d{2}$/.test(monthValue || '')) return { startDate: '', endDate: '' };
+  const [yearStr, monthStr] = monthValue.split('-');
+  const year = Number(yearStr);
+  const monthIndex = Number(monthStr) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0 || monthIndex > 11) {
+    return { startDate: '', endDate: '' };
+  }
+  return {
+    startDate: formatDate(new Date(year, monthIndex, 1)),
+    endDate: formatDate(new Date(year, monthIndex + 1, 0)),
+  };
+};
+
+const getDateRangeDays = (startDate, endDate) => {
+  if (!startDate || !endDate || startDate > endDate) return [];
+  const days = [];
+  let current = startDate;
+  let guard = 0;
+  while (current <= endDate && guard < 370) {
+    days.push(current);
+    const next = addDays(current, 1);
+    if (next === current) break;
+    current = next;
+    guard += 1;
+  }
+  return days;
+};
+
+const formatExportRangeLabel = (startDate, endDate) => {
+  const start = parseLocalDateString(startDate);
+  const end = parseLocalDateString(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'Room Nights';
+  if (start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth()) {
+    return start.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+  return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+};
+
+const getWeekdayLabel = (dateStr) => {
+  const date = parseLocalDateString(dateStr);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-US', { weekday: 'long' });
+};
+
+const escapeSpreadsheetXml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&apos;');
+
+const sanitizeWorksheetName = (name) => {
+  const sanitized = String(name || 'Sheet')
+    .replace(/[\\/*?:[\]]/g, ' ')
+    .trim()
+    .slice(0, 31);
+  return sanitized || 'Sheet';
+};
+
+const buildRoomNightWorkbookXml = ({ sheets = [] }) => {
+  const renderCell = (cell = {}) => {
+    const styleId = cell.styleId || 'Default';
+    if (cell.value === null || cell.value === undefined || cell.value === '') {
+      return `<Cell ss:StyleID="${styleId}"/>`;
+    }
+    const type = cell.type || (typeof cell.value === 'number' ? 'Number' : 'String');
+    return `<Cell ss:StyleID="${styleId}"><Data ss:Type="${type}">${escapeSpreadsheetXml(cell.value)}</Data></Cell>`;
+  };
+
+  const renderRow = (cells = []) => `<Row>${cells.map(renderCell).join('')}</Row>`;
+
+  const worksheetXml = sheets.map((sheet) => {
+    const titleRow = renderRow([
+      { value: sheet.title || sheet.name || 'Room Nights', styleId: 'Title' },
+      ...(sheet.days || []).map((dateStr) => ({ value: getWeekdayLabel(dateStr), styleId: 'Header' })),
+    ]);
+
+    const dayRow = renderRow([
+      { value: 'Day', styleId: 'Header' },
+      ...(sheet.days || []).map((dateStr) => ({ value: parseLocalDateString(dateStr).getDate(), type: 'Number', styleId: 'Header' })),
+    ]);
+
+    const roomRows = (sheet.rows || []).map((row) => renderRow([
+      { value: row.label, styleId: 'RowLabel' },
+      ...(row.values || []).map((value) => (
+        value === null || value === undefined
+          ? { value: '', styleId: 'BlankCell' }
+          : { value, type: 'Number', styleId: 'CurrencyCell' }
+      )),
+    ])).join('');
+
+    const occupancyRow = renderRow([
+      { value: 'Occ%', styleId: 'RowLabel' },
+      ...(sheet.occupancy || []).map((value) => ({ value, styleId: 'PercentCell' })),
+    ]);
+
+    const columns = [
+      '<Column ss:AutoFitWidth="0" ss:Width="120"/>',
+      ...(sheet.days || []).map(() => '<Column ss:AutoFitWidth="0" ss:Width="74"/>'),
+    ].join('');
+
+    return `
+      <Worksheet ss:Name="${escapeSpreadsheetXml(sanitizeWorksheetName(sheet.name || 'Sheet'))}">
+        <Table>
+          ${columns}
+          ${titleRow}
+          ${dayRow}
+          ${roomRows}
+          ${occupancyRow}
+        </Table>
+        <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+          <FreezePanes/>
+          <FrozenNoSplit/>
+          <SplitHorizontal>2</SplitHorizontal>
+          <TopRowBottomPane>2</TopRowBottomPane>
+          <SplitVertical>1</SplitVertical>
+          <LeftColumnRightPane>1</LeftColumnRightPane>
+        </WorksheetOptions>
+      </Worksheet>
+    `;
+  }).join('');
+
+  return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+  <Styles>
+    <Style ss:ID="Default" ss:Name="Normal">
+      <Alignment ss:Vertical="Center"/>
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+      </Borders>
+      <Font ss:FontName="Calibri" ss:Size="11"/>
+    </Style>
+    <Style ss:ID="Title">
+      <Font ss:FontName="Calibri" ss:Size="12" ss:Bold="1"/>
+      <Interior ss:Color="#EAF0E6" ss:Pattern="Solid"/>
+      <Alignment ss:Horizontal="Left" ss:Vertical="Center"/>
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+      </Borders>
+    </Style>
+    <Style ss:ID="Header">
+      <Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1"/>
+      <Interior ss:Color="#F4F4F5" ss:Pattern="Solid"/>
+      <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+      </Borders>
+    </Style>
+    <Style ss:ID="RowLabel">
+      <Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1"/>
+      <Alignment ss:Horizontal="Left" ss:Vertical="Center"/>
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+      </Borders>
+    </Style>
+    <Style ss:ID="CurrencyCell">
+      <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+      </Borders>
+      <NumberFormat ss:Format="#,##0"/>
+    </Style>
+    <Style ss:ID="BlankCell">
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+      </Borders>
+    </Style>
+    <Style ss:ID="PercentCell">
+      <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+      </Borders>
+    </Style>
+  </Styles>
+  ${worksheetXml}
+</Workbook>`;
+};
+
 const RECURRING_FREQUENCY_OPTIONS = [
   { value: 'weekly', label: 'Weekly' },
   { value: 'monthly', label: 'Monthly' },
@@ -3610,6 +3824,132 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
   );
 };
 
+const RoomNightExportModal = ({
+  isOpen,
+  onClose,
+  mode,
+  onModeChange,
+  monthValue,
+  onMonthChange,
+  startDate,
+  endDate,
+  onStartDateChange,
+  onEndDateChange,
+  onExport,
+}) => {
+  if (!isOpen) return null;
+
+  const resolvedRange = mode === 'month'
+    ? getMonthBounds(monthValue)
+    : { startDate, endDate };
+  const previewDays = resolvedRange.startDate && resolvedRange.endDate && resolvedRange.endDate >= resolvedRange.startDate
+    ? getDateRangeDays(resolvedRange.startDate, resolvedRange.endDate).length
+    : 0;
+  const canExport = previewDays > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+        <div className="px-6 py-5 border-b border-slate-200 bg-[#F9F8F2] flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Export Room Nights</h3>
+            <p className="text-sm text-slate-500 mt-1">Downloads one Excel-compatible worksheet per property in your room-night sheet format.</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-full text-slate-500 hover:text-slate-700 hover:bg-white" aria-label="Close export dialog">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => onModeChange('month')}
+              className={`px-4 py-2 rounded-full border text-sm font-semibold ${mode === 'month' ? 'bg-[#26402E] text-[#E2F05D] border-[#26402E]' : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'}`}
+            >
+              Month
+            </button>
+            <button
+              type="button"
+              onClick={() => onModeChange('custom')}
+              className={`px-4 py-2 rounded-full border text-sm font-semibold ${mode === 'custom' ? 'bg-[#26402E] text-[#E2F05D] border-[#26402E]' : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'}`}
+            >
+              Custom Dates
+            </button>
+          </div>
+
+          {mode === 'month' ? (
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Month</label>
+              <input
+                type="month"
+                value={monthValue}
+                onChange={(e) => onMonthChange(e.target.value)}
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+              />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Start Date</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => onStartDateChange(e.target.value)}
+                  className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>End Date</label>
+                <input
+                  type="date"
+                  value={endDate}
+                  min={startDate || undefined}
+                  onChange={(e) => onEndDateChange(e.target.value)}
+                  className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Preview</div>
+            {canExport ? (
+              <>
+                <div className="font-semibold text-slate-800">{formatExportRangeLabel(resolvedRange.startDate, resolvedRange.endDate)}</div>
+                <div className="text-sm text-slate-500 mt-1">
+                  {previewDays} day{previewDays === 1 ? '' : 's'} • separate sheets for Townhouse and Neighbours
+                </div>
+              </>
+            ) : (
+              <div className="text-sm text-red-600">Choose a valid date range to export.</div>
+            )}
+          </div>
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-200 bg-white flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={!canExport}
+            className={`px-5 py-2.5 rounded-full font-semibold flex items-center gap-2 ${canExport ? 'bg-[#26402E] text-[#E2F05D] hover:bg-[#1e3224]' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}
+          >
+            <Download size={16} />
+            Export XLS
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Main App Component ---
 
 export default function App() {
@@ -4136,6 +4476,11 @@ export default function App() {
   const [pendingRecurringPrefill, setPendingRecurringPrefill] = useState(null);
   
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [isRoomNightExportModalOpen, setIsRoomNightExportModalOpen] = useState(false);
+  const [roomNightExportMode, setRoomNightExportMode] = useState('month');
+  const [roomNightExportMonth, setRoomNightExportMonth] = useState(() => formatDate(new Date()).slice(0, 7));
+  const [roomNightExportStart, setRoomNightExportStart] = useState(() => formatDate(new Date()));
+  const [roomNightExportEnd, setRoomNightExportEnd] = useState(() => formatDate(new Date()));
 
   const bookingsWithWithholding = useMemo(
     () => bookings.map((b) => ({ ...b, _withholding: computeAirbnbWithholding(b) })),
@@ -4534,6 +4879,123 @@ export default function App() {
     if (activeTab !== 'calendar') return;
     logCalendar('data loaded', { bookings: calendarBookings.length, dates: dates.length, visibleRange: { start: formatDate(visibleStartDate), end: formatDate(visibleEndDate) } });
   }, [calendarBookings.length, dates.length, activeTab, logCalendar, visibleStartDate, visibleEndDate]);
+
+  const openRoomNightExportModal = useCallback(() => {
+    const focusDate = selectedCalendarDate || formatDate(visibleStartDate) || TODAY_STR;
+    const defaultMonth = (focusDate || TODAY_STR).slice(0, 7);
+    const { startDate, endDate } = getMonthBounds(defaultMonth);
+    setRoomNightExportMode('month');
+    setRoomNightExportMonth(defaultMonth);
+    setRoomNightExportStart(startDate || TODAY_STR);
+    setRoomNightExportEnd(endDate || TODAY_STR);
+    setIsRoomNightExportModalOpen(true);
+  }, [selectedCalendarDate, visibleStartDate, TODAY_STR]);
+
+  const getExportNightValueForBooking = useCallback((booking, dateStr) => {
+    if (!booking || !dateStr) return null;
+    if (getBookingStayCategory(booking) === 'long') {
+      return calculateLongTermRentForRange(booking, dateStr, addDays(dateStr, 1)) || null;
+    }
+
+    const occupiedDates = getBookingOccupiedDates(booking);
+    const occupiedIndex = occupiedDates.indexOf(dateStr);
+    if (occupiedIndex === -1 || occupiedDates.length === 0) return null;
+
+    const total = Math.round(getDisplayPriceForBooking(booking));
+    const baseNightValue = Math.floor(total / occupiedDates.length);
+    const remainder = total - (baseNightValue * occupiedDates.length);
+    return baseNightValue + (occupiedIndex < remainder ? 1 : 0);
+  }, [getBookingStayCategory]);
+
+  const handleExportRoomNights = useCallback(() => {
+    const resolvedRange = roomNightExportMode === 'month'
+      ? getMonthBounds(roomNightExportMonth)
+      : { startDate: roomNightExportStart, endDate: roomNightExportEnd };
+
+    const { startDate, endDate } = resolvedRange;
+    if (!startDate || !endDate || endDate < startDate) {
+      pushAlert({ title: 'Export failed', message: 'Choose a valid month or date range.', tone: 'error' });
+      return;
+    }
+
+    const dayKeys = getDateRangeDays(startDate, endDate);
+    if (!dayKeys.length) {
+      pushAlert({ title: 'Export failed', message: 'No days found in the selected range.', tone: 'error' });
+      return;
+    }
+
+    const bookingsById = new Map(bookingsWithWithholding.map((booking) => [booking.id, booking]));
+    const bookingsByRoomDate = new Map();
+
+    calendarBookings.forEach((segment) => {
+      if (!segment?.roomId || isCancelledStatus(segment.status)) return;
+      const sourceBooking = bookingsById.get(segment.sourceBookingId || segment.id) || segment;
+      getBookingOccupiedDates(sourceBooking, segment.roomId).forEach((dateStr) => {
+        if (dateStr < startDate || dateStr > endDate) return;
+        const key = `${segment.roomId}|${dateStr}`;
+        if (!bookingsByRoomDate.has(key)) {
+          bookingsByRoomDate.set(key, sourceBooking);
+        }
+      });
+    });
+
+    const sheets = PROPERTIES.map((property) => {
+      const roomRows = property.rooms.map((room) => ({
+        label: room.name,
+        values: dayKeys.map((dateStr) => {
+          const booking = bookingsByRoomDate.get(`${room.id}|${dateStr}`);
+          return booking ? getExportNightValueForBooking(booking, dateStr) : null;
+        }),
+      }));
+
+      const occupancy = dayKeys.map((dateStr) => {
+        const occupiedCount = property.rooms.reduce((sum, room) => (
+          bookingsByRoomDate.has(`${room.id}|${dateStr}`) ? sum + 1 : sum
+        ), 0);
+        const ratio = property.rooms.length > 0 ? Math.round((occupiedCount / property.rooms.length) * 100) : 0;
+        return `${ratio}%`;
+      });
+
+      return {
+        name: property.name,
+        title: `${property.name} - ${formatExportRangeLabel(startDate, endDate)}`,
+        days: dayKeys,
+        rows: roomRows,
+        occupancy,
+      };
+    });
+
+    const workbookXml = buildRoomNightWorkbookXml({ sheets });
+    const fileToken = roomNightExportMode === 'month' && roomNightExportMonth
+      ? roomNightExportMonth
+      : `${startDate}_to_${endDate}`;
+    const filename = `room-nights-${fileToken}.xls`;
+    const blob = new Blob([workbookXml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const objectUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(objectUrl);
+
+    setIsRoomNightExportModalOpen(false);
+    pushAlert({
+      title: 'Export ready',
+      message: `Downloaded ${filename} with ${dayKeys.length} day${dayKeys.length === 1 ? '' : 's'}.`,
+      tone: 'success',
+    });
+  }, [
+    bookingsWithWithholding,
+    calendarBookings,
+    getExportNightValueForBooking,
+    pushAlert,
+    roomNightExportEnd,
+    roomNightExportMode,
+    roomNightExportMonth,
+    roomNightExportStart,
+  ]);
 
   // --- Memoized Data for Dashboard and Housekeeping ---
 
@@ -6693,8 +7155,17 @@ export default function App() {
               <button onClick={() => setCalendarView('price')} className={`px-4 py-1.5 text-sm font-medium rounded-full border ${calendarView === 'price' ? 'bg-slate-200' : 'hover:bg-white'}`}>Price</button>
             </div>
           </div>
-          <div className="text-sm font-medium font-serif" style={{ color: COLORS.darkGreen }}>
-             {`${formatDate(visibleStartDate)} – ${formatDate(visibleEndDate)}`}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={openRoomNightExportModal}
+              className="px-4 py-2 rounded-full border border-[#26402E] bg-white text-[#26402E] hover:bg-[#EAF0E6] transition-colors text-sm font-semibold flex items-center gap-2"
+            >
+              <Download size={16} />
+              Export Room Nights
+            </button>
+            <div className="text-sm font-medium font-serif" style={{ color: COLORS.darkGreen }}>
+               {`${formatDate(visibleStartDate)} – ${formatDate(visibleEndDate)}`}
+            </div>
           </div>
         </div>
         <div className="flex-1 bg-slate-50 min-h-0 overflow-auto">
@@ -9297,6 +9768,26 @@ export default function App() {
           </div>
         </main>
         <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} currentUser={user} onLookupGuest={lookupReturningGuest} />
+        <RoomNightExportModal
+          isOpen={isRoomNightExportModalOpen}
+          onClose={() => setIsRoomNightExportModalOpen(false)}
+          mode={roomNightExportMode}
+          onModeChange={setRoomNightExportMode}
+          monthValue={roomNightExportMonth}
+          onMonthChange={(monthValue) => {
+            setRoomNightExportMonth(monthValue);
+            const { startDate, endDate } = getMonthBounds(monthValue);
+            if (startDate && endDate) {
+              setRoomNightExportStart(startDate);
+              setRoomNightExportEnd(endDate);
+            }
+          }}
+          startDate={roomNightExportStart}
+          endDate={roomNightExportEnd}
+          onStartDateChange={setRoomNightExportStart}
+          onEndDateChange={setRoomNightExportEnd}
+          onExport={handleExportRoomNights}
+        />
         <MaintenanceModal
           isOpen={isMaintenanceModalOpen}
           onClose={() => { setIsMaintenanceModalOpen(false); setPendingMaintenancePrefill(null); }}
