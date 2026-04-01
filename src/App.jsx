@@ -78,12 +78,14 @@ const DEFAULT_CHECKOUT_TIME = '12:00';
 const DEFAULT_CHECKIN_TIME = '15:00';
 const randomId = () => Math.random().toString(36).substr(2, 9);
 
-// Compute Vietnam withholding for Airbnb bookings.
-// Base = imported Airbnb earnings from Make.com email (after Airbnb host fee, before VN VAT/IT).
-// VAT withheld = 5% of base; Income tax = 2% of base; Final counted income = base − (VAT + income tax).
+// Compute Airbnb deductions from the guest-paid gross amount.
+// Legacy field names are preserved, but the input now represents the gross room fee before commission and taxes.
+// Commission = 15.5% of gross; VAT withheld = 5% of gross; Income tax = 2% of gross.
+// Final counted income = gross − (commission + VAT + income tax), rounded to whole VND.
 const computeAirbnbWithholding = (booking) => {
   const channel = (booking?.channel || '').toLowerCase();
   const hasWithholdingFields =
+    booking?.commissionWithheld != null ||
     booking?.vatWithheld != null ||
     booking?.incomeTaxWithheld != null ||
     booking?.totalWithheld != null ||
@@ -100,6 +102,7 @@ const computeAirbnbWithholding = (booking) => {
 
   const base = {
     status: 'not_applicable',
+    commissionWithheld: null,
     vatWithheld: null,
     incomeTaxWithheld: null,
     totalWithheld: null,
@@ -119,13 +122,15 @@ const computeAirbnbWithholding = (booking) => {
     };
   }
 
+  const commissionWithheld = Math.round(baseEarnings * 0.155);
   const vatWithheld = Math.round(baseEarnings * 0.05);
   const incomeTaxWithheld = Math.round(baseEarnings * 0.02);
-  const totalWithheld = vatWithheld + incomeTaxWithheld;
-  const finalCountedIncome = baseEarnings - totalWithheld;
+  const totalWithheld = commissionWithheld + vatWithheld + incomeTaxWithheld;
+  const finalCountedIncome = Math.round(baseEarnings - totalWithheld);
 
   return {
     status: 'computed',
+    commissionWithheld,
     vatWithheld,
     incomeTaxWithheld,
     totalWithheld,
@@ -2940,12 +2945,12 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h4 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Airbnb Withholding (Vietnam)</h4>
-                  <p className="text-xs text-slate-500">Imported earnings from Make.com/email (after Airbnb host fee, before VAT/IT). We auto-deduct 5% VAT + 2% income tax.</p>
+                  <p className="text-xs text-slate-500">Enter the guest-paid gross amount. We calculate 15.5% commission, 5% VAT, and 2% income tax from that top-down gross figure.</p>
                 </div>
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Imported earnings (from Make.com/email) (₫)</label>
+                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Gross amount (from Make.com/email) (₫)</label>
                 <input
                   type="number"
                   name="airbnbBaseEarningsVnd"
@@ -2954,28 +2959,29 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                   required
                   min="0"
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] bg-white"
-                  placeholder="Imported Airbnb earnings before VN withholding"
+                  placeholder="Guest-paid gross amount before commission and taxes"
                 />
-                <div className="text-[11px] text-slate-500 mt-1">Auto-filled from Total Price import; adjust if the Make.com scrape needs correction.</div>
+                <div className="text-[11px] text-slate-500 mt-1">Legacy field names are unchanged internally, but this input now represents the gross room fee.</div>
               </div>
 
               <div className="text-xs text-slate-600">
                 {withholdingPreview?.status === 'computed' ? (
                   <div className="space-y-1">
-                    <div className="font-semibold text-slate-800">Imported earnings: {formatCurrencyVND(withholdingPreview.airbnbBaseEarningsVnd || withholdingPreview.netEarningsFromEmail || 0)}</div>
+                    <div className="font-semibold text-slate-800">Gross amount: {formatCurrencyVND(withholdingPreview.airbnbBaseEarningsVnd || withholdingPreview.netEarningsFromEmail || 0)}</div>
                     <div className="flex flex-wrap gap-3">
+                      <span className="font-semibold text-slate-800">Commission 15.5%: {formatCurrencyVND(withholdingPreview.commissionWithheld)}</span>
                       <span className="font-semibold text-slate-800">VAT 5%: {formatCurrencyVND(withholdingPreview.vatWithheld)}</span>
                       <span className="font-semibold text-slate-800">Income tax 2%: {formatCurrencyVND(withholdingPreview.incomeTaxWithheld)}</span>
-                      <span className="font-semibold text-slate-800">Total withheld: {formatCurrencyVND(withholdingPreview.totalWithheld)}</span>
+                      <span className="font-semibold text-slate-800">Total deductions: {formatCurrencyVND(withholdingPreview.totalWithheld)}</span>
                       <span className="font-semibold text-slate-800">Final earnings (uses Total Price): {formatCurrencyVND(withholdingPreview.finalCountedIncome)}</span>
                     </div>
                   </div>
                 ) : (
                   <div className="text-slate-600">
-                    Enter the imported Airbnb earnings. Without it, the booking is marked withholding-unknown and excluded from totals.
+                    Enter the gross amount. Without it, the booking is marked withholding-unknown and excluded from totals.
                   </div>
                 )}
-                <div className="text-[11px] text-slate-500 mt-2">Total Price uses Final earnings for Airbnb bookings.</div>
+                <div className="text-[11px] text-slate-500 mt-2">Total Price uses Final earnings after commission, VAT, and income tax.</div>
               </div>
                 </div>
               )}
@@ -3026,7 +3032,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                   disabled={formData.channel === 'airbnb'}
                 />
                 {formData.channel === 'airbnb' && (
-                  <p className="text-xs text-slate-500 mt-1">Auto-calculated: Imported earnings minus VAT (5%) and income tax (2%).</p>
+                  <p className="text-xs text-slate-500 mt-1">Auto-calculated: Gross amount minus 15.5% commission, 5% VAT, and 2% income tax.</p>
                 )}
                 </div>
               )}
@@ -4497,6 +4503,7 @@ export default function App() {
       .filter((b) => (b.channel || '').toLowerCase() === 'airbnb')
       .map((b) => {
         const hasWithholdingFields =
+          b.commissionWithheld != null ||
           b.vatWithheld != null ||
           b.incomeTaxWithheld != null ||
           b.totalWithheld != null ||
@@ -4516,6 +4523,7 @@ export default function App() {
             : b.price;
         const differs =
           (b.withholdingStatus || 'not_applicable') !== (w.status || 'not_applicable') ||
+          (b.commissionWithheld ?? null) !== (w.commissionWithheld ?? null) ||
           (b.vatWithheld ?? null) !== (w.vatWithheld ?? null) ||
           (b.incomeTaxWithheld ?? null) !== (w.incomeTaxWithheld ?? null) ||
           (b.totalWithheld ?? null) !== (w.totalWithheld ?? null) ||
@@ -4531,6 +4539,7 @@ export default function App() {
           payload: {
             airbnbBaseEarningsVnd: normalizedBase,
             netEarningsFromEmail: normalizedBase,
+            commissionWithheld: w.commissionWithheld ?? null,
             vatWithheld: w.vatWithheld ?? null,
             incomeTaxWithheld: w.incomeTaxWithheld ?? null,
             totalWithheld: w.totalWithheld ?? null,
@@ -5712,6 +5721,7 @@ export default function App() {
       const normalizedChannel = bookingData.channel || 'airbnb';
       const normalizedPrice = Number(bookingData.price) || 0;
       const hasWithholdingFields =
+        bookingData.commissionWithheld != null ||
         bookingData.vatWithheld != null ||
         bookingData.incomeTaxWithheld != null ||
         bookingData.totalWithheld != null ||
@@ -5793,6 +5803,7 @@ export default function App() {
         hasGuestBreaks: !!bookingData.hasGuestBreaks,
         guestBreakPeriods: bookingData.hasGuestBreaks ? normalizeBookingBreaks(bookingData.guestBreakPeriods || []) : [],
         sellRoomDuringBreak: !!bookingData.hasGuestBreaks && !!bookingData.sellRoomDuringBreak,
+        commissionWithheld: withholding.commissionWithheld,
         vatWithheld: withholding.vatWithheld,
         incomeTaxWithheld: withholding.incomeTaxWithheld,
         totalWithheld: withholding.totalWithheld,
@@ -6408,6 +6419,7 @@ export default function App() {
       return Number(booking.price) || 0;
     };
 
+    const commissionForBooking = (booking) => (booking._withholding?.status === 'computed' ? booking._withholding.commissionWithheld || 0 : 0);
     const vatForBooking = (booking) => (booking._withholding?.status === 'computed' ? booking._withholding.vatWithheld || 0 : 0);
     const incomeForBooking = (booking) => (booking._withholding?.status === 'computed' ? booking._withholding.incomeTaxWithheld || 0 : 0);
 
@@ -6488,9 +6500,10 @@ export default function App() {
 
     return sum + (bookingValue * prorateFactor);
 }, 0);
+    const commissionWithheldRange = withholdingComputedRange.reduce((sum, b) => sum + commissionForBooking(b), 0);
     const vatWithheldRange = withholdingComputedRange.reduce((sum, b) => sum + vatForBooking(b), 0);
     const incomeWithheldRange = withholdingComputedRange.reduce((sum, b) => sum + incomeForBooking(b), 0);
-    const totalWithheldRange = vatWithheldRange + incomeWithheldRange;
+    const totalWithheldRange = commissionWithheldRange + vatWithheldRange + incomeWithheldRange;
     const withholdingUnknownCount = withholdingUnknownRange.length;
 
     const groupWithholdingByProperty = (list) => {
@@ -6498,10 +6511,11 @@ export default function App() {
       list.forEach((b) => {
         const room = ALL_ROOMS.find((r) => r.id === b.roomId);
         const key = room?.propertyName || 'Unknown';
-        if (!map[key]) map[key] = { property: key, vat: 0, income: 0, total: 0, computedCount: 0 };
+        if (!map[key]) map[key] = { property: key, commission: 0, vat: 0, income: 0, total: 0, computedCount: 0 };
+        map[key].commission += commissionForBooking(b);
         map[key].vat += vatForBooking(b);
         map[key].income += incomeForBooking(b);
-        map[key].total += vatForBooking(b) + incomeForBooking(b);
+        map[key].total += commissionForBooking(b) + vatForBooking(b) + incomeForBooking(b);
         map[key].computedCount += 1;
       });
       return Object.values(map).sort((a, b) => b.total - a.total);
@@ -6608,9 +6622,10 @@ export default function App() {
       });
     const ytdComputed = ytdBookings.filter((b) => b._withholding?.status === 'computed');
     const ytdUnknown = ytdBookings.filter((b) => b._withholding?.status === 'withholding_unknown');
+    const ytdCommission = ytdComputed.reduce((s, b) => s + commissionForBooking(b), 0);
     const ytdVat = ytdComputed.reduce((s, b) => s + vatForBooking(b), 0);
     const ytdIncome = ytdComputed.reduce((s, b) => s + incomeForBooking(b), 0);
-    const ytdTotalWithheld = ytdVat + ytdIncome;
+    const ytdTotalWithheld = ytdCommission + ytdVat + ytdIncome;
     const withholdingYtdByProperty = groupWithholdingByProperty(ytdComputed);
 
     const insights = [];
@@ -6750,6 +6765,7 @@ export default function App() {
       insights,
       withholding: {
         range: {
+          commission: commissionWithheldRange,
           vat: vatWithheldRange,
           income: incomeWithheldRange,
           total: totalWithheldRange,
@@ -6759,6 +6775,7 @@ export default function App() {
           byProperty: withholdingRangeByProperty,
         },
         ytd: {
+          commission: ytdCommission,
           vat: ytdVat,
           income: ytdIncome,
           total: ytdTotalWithheld,
@@ -9263,11 +9280,15 @@ export default function App() {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Withholding (Airbnb)</h3>
-                <p className="text-xs text-slate-500">5% VAT + 2% income tax applied to imported earnings from email (host fee already removed).</p>
+                <p className="text-xs text-slate-500">15.5% commission, 5% VAT, and 2% income tax calculated from the guest-paid gross amount.</p>
               </div>
               <div className="text-[11px] uppercase font-semibold text-slate-500">Range</div>
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="space-y-1">
+                <div className="text-slate-500 text-xs uppercase">Commission</div>
+                <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.range.commission)}</div>
+              </div>
               <div className="space-y-1">
                 <div className="text-slate-500 text-xs uppercase">VAT withheld</div>
                 <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.range.vat)}</div>
@@ -9297,6 +9318,10 @@ export default function App() {
               <div className="text-[11px] uppercase font-semibold text-slate-500">YTD</div>
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="space-y-1">
+                <div className="text-slate-500 text-xs uppercase">Commission</div>
+                <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.ytd.commission)}</div>
+              </div>
               <div className="space-y-1">
                 <div className="text-slate-500 text-xs uppercase">VAT withheld</div>
                 <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.ytd.vat)}</div>
@@ -9329,6 +9354,7 @@ export default function App() {
                 <thead className="text-xs uppercase text-slate-500 border-b">
                   <tr>
                     <th className="py-2 text-left">Property</th>
+                    <th className="py-2 text-right">Commission</th>
                     <th className="py-2 text-right">VAT</th>
                     <th className="py-2 text-right">Income</th>
                     <th className="py-2 text-right">Total</th>
@@ -9339,6 +9365,7 @@ export default function App() {
                   {stats.withholding.range.byProperty.map((p) => (
                     <tr key={p.property} className="border-b last:border-0">
                       <td className="py-2">{p.property}</td>
+                      <td className="py-2 text-right">{fmtVnd(p.commission)}</td>
                       <td className="py-2 text-right">{fmtVnd(p.vat)}</td>
                       <td className="py-2 text-right">{fmtVnd(p.income)}</td>
                       <td className="py-2 text-right font-semibold">{fmtVnd(p.total)}</td>
@@ -9348,7 +9375,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-            <div className="text-[11px] text-slate-500">Final earnings used in stats = imported earnings − VAT − income tax. Host fee already excluded by Make.com email.</div>
+            <div className="text-[11px] text-slate-500">Final earnings used in stats = gross amount − commission − VAT − income tax.</div>
           </div>
         ) : null}
 
