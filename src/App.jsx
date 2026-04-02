@@ -77,31 +77,38 @@ const HOUSEKEEPING_END_TIME = '18:00';
 const DEFAULT_CHECKOUT_TIME = '12:00';
 const DEFAULT_CHECKIN_TIME = '15:00';
 const randomId = () => Math.random().toString(36).substr(2, 9);
+const AIRBNB_COMMISSION_RATE = 0.155;
+const AIRBNB_PAYOUT_RATE = 1 - AIRBNB_COMMISSION_RATE;
+const AIRBNB_VAT_RATE = 0.05;
+const AIRBNB_INCOME_TAX_RATE = 0.02;
+
+const deriveAirbnbGrossAmount = (booking) => {
+  const explicitGross = Number(booking?.grossPrice);
+  if (Number.isFinite(explicitGross) && explicitGross > 0) return Math.round(explicitGross);
+
+  const legacyBase = Number(booking?.airbnbBaseEarningsVnd ?? booking?.netEarningsFromEmail);
+  if (Number.isFinite(legacyBase) && legacyBase > 0) return Math.round(legacyBase);
+
+  const payoutBeforeTax = Number(booking?.price);
+  if (Number.isFinite(payoutBeforeTax) && payoutBeforeTax > 0) {
+    return Math.round(payoutBeforeTax / AIRBNB_PAYOUT_RATE);
+  }
+
+  return null;
+};
 
 // Compute Airbnb deductions from the guest-paid gross amount.
-// Legacy field names are preserved, but the input now represents the gross room fee before commission and taxes.
+// `grossPrice` is preferred when available. Legacy field names are preserved as gross aliases.
 // Commission = 15.5% of gross; VAT withheld = 5% of gross; Income tax = 2% of gross.
 // Final counted income = gross − (commission + VAT + income tax), rounded to whole VND.
 const computeAirbnbWithholding = (booking) => {
   const channel = (booking?.channel || '').toLowerCase();
-  const hasWithholdingFields =
-    booking?.commissionWithheld != null ||
-    booking?.vatWithheld != null ||
-    booking?.incomeTaxWithheld != null ||
-    booking?.totalWithheld != null ||
-    booking?.finalCountedIncome != null ||
-    booking?.withholdingStatus != null;
-
-  const baseCandidate = booking?.airbnbBaseEarningsVnd ?? booking?.netEarningsFromEmail;
-  let baseEarnings = Number(baseCandidate);
-  if (!Number.isFinite(baseEarnings) || baseEarnings <= 0) {
-    const priceAsBase = !hasWithholdingFields ? Number(booking?.price) : NaN;
-    baseEarnings = priceAsBase;
-  }
+  const baseEarnings = deriveAirbnbGrossAmount(booking);
   const hasBaseEarnings = Number.isFinite(baseEarnings) && baseEarnings > 0;
 
   const base = {
     status: 'not_applicable',
+    grossPrice: booking?.grossPrice ?? null,
     commissionWithheld: null,
     vatWithheld: null,
     incomeTaxWithheld: null,
@@ -117,19 +124,23 @@ const computeAirbnbWithholding = (booking) => {
     return {
       ...base,
       status: 'withholding_unknown',
+      grossPrice: booking?.grossPrice ?? null,
       netEarningsFromEmail: booking?.netEarningsFromEmail ?? null,
       airbnbBaseEarningsVnd: booking?.airbnbBaseEarningsVnd ?? booking?.netEarningsFromEmail ?? null,
     };
   }
 
-  const commissionWithheld = Math.round(baseEarnings * 0.155);
-  const vatWithheld = Math.round(baseEarnings * 0.05);
-  const incomeTaxWithheld = Math.round(baseEarnings * 0.02);
+  const commissionWithheld = Math.round(baseEarnings * AIRBNB_COMMISSION_RATE);
+  const payoutBeforeTax = Math.round(baseEarnings - commissionWithheld);
+  const vatWithheld = Math.round(baseEarnings * AIRBNB_VAT_RATE);
+  const incomeTaxWithheld = Math.round(baseEarnings * AIRBNB_INCOME_TAX_RATE);
   const totalWithheld = commissionWithheld + vatWithheld + incomeTaxWithheld;
   const finalCountedIncome = Math.round(baseEarnings - totalWithheld);
 
   return {
     status: 'computed',
+    grossPrice: baseEarnings,
+    payoutBeforeTax,
     commissionWithheld,
     vatWithheld,
     incomeTaxWithheld,
@@ -148,6 +159,15 @@ const getDisplayPriceForBooking = (booking) => {
   }
   const explicitFinal = Number(booking.finalCountedIncome);
   if (Number.isFinite(explicitFinal) && explicitFinal > 0) return explicitFinal;
+  return Number(booking.price) || 0;
+};
+
+const getBookingInvoiceAmount = (booking) => {
+  if (!booking) return 0;
+  if ((booking.channel || '').toLowerCase() === 'airbnb') {
+    const grossAmount = deriveAirbnbGrossAmount(booking);
+    if (Number.isFinite(grossAmount) && grossAmount > 0) return grossAmount;
+  }
   return Number(booking.price) || 0;
 };
 
@@ -1664,6 +1684,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     weeklyCleaningDay: 'monday',
     channel: 'airbnb',
     paymentStatus: '',
+    grossPrice: '',
     netEarningsFromEmail: '',
     airbnbBaseEarningsVnd: '',
     monthlyRentVnd: '',
@@ -1732,8 +1753,19 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     if (['long'].includes(formData.stayCategory)) {
       return longStayEstimatedTotal;
     }
+    if (formData.channel === 'airbnb') {
+      const computed = computeAirbnbWithholding({
+        channel: formData.channel,
+        grossPrice: formData.grossPrice,
+        airbnbBaseEarningsVnd: formData.airbnbBaseEarningsVnd,
+        price: formData.price,
+      });
+      if (computed.status === 'computed' && Number.isFinite(computed.finalCountedIncome)) {
+        return computed.finalCountedIncome;
+      }
+    }
     return Number(formData.price) || 0;
-  }, [formData.price, formData.stayCategory, longStayEstimatedTotal]);
+  }, [formData.airbnbBaseEarningsVnd, formData.channel, formData.grossPrice, formData.price, formData.stayCategory, longStayEstimatedTotal]);
 
   const bookingTotalWithServices = useMemo(() => bookingBaseAmount + servicesTotal, [bookingBaseAmount, servicesTotal]);
 
@@ -1741,9 +1773,11 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     if (formData.channel !== 'airbnb') return null;
     return computeAirbnbWithholding({
       channel: formData.channel,
+      grossPrice: formData.grossPrice,
       airbnbBaseEarningsVnd: formData.airbnbBaseEarningsVnd,
+      price: formData.price,
     });
-  }, [formData.channel, formData.airbnbBaseEarningsVnd]);
+  }, [formData.channel, formData.grossPrice, formData.airbnbBaseEarningsVnd, formData.price]);
 
   useEffect(() => {
     if (booking) {
@@ -1763,8 +1797,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         weeklyCleaningDay: booking.weeklyCleaningDay || 'monday',
         channel: booking.channel || 'airbnb',
         paymentStatus: booking.channel === 'direct' ? (booking.paymentStatus || '') : '',
+        grossPrice: booking.grossPrice ?? deriveAirbnbGrossAmount(booking) ?? '',
         netEarningsFromEmail: booking.netEarningsFromEmail ?? '',
-        airbnbBaseEarningsVnd: booking.airbnbBaseEarningsVnd ?? booking.netEarningsFromEmail ?? booking.price ?? '',
+        airbnbBaseEarningsVnd: booking.grossPrice ?? booking.airbnbBaseEarningsVnd ?? booking.netEarningsFromEmail ?? deriveAirbnbGrossAmount(booking) ?? '',
         monthlyRentVnd: booking.monthlyRentVnd ?? booking.price ?? '',
         hasMultipleRoomStay: !!booking.hasMultipleRoomStay || (Array.isArray(booking.roomMoves) && booking.roomMoves.length > 0),
         roomMoves: normalizeRoomMoves(booking.roomMoves || [], {
@@ -1805,6 +1840,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         weeklyCleaningDay: 'monday',
         channel: 'airbnb',
         paymentStatus: '',
+        grossPrice: '',
         netEarningsFromEmail: '',
         airbnbBaseEarningsVnd: '',
         monthlyRentVnd: '',
@@ -1882,21 +1918,24 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   useEffect(() => {
     if (formData.channel !== 'airbnb') return;
     setFormData((prev) => {
-      const base = Number(prev.airbnbBaseEarningsVnd);
+      const base = Number(prev.grossPrice ?? prev.airbnbBaseEarningsVnd);
       const hasBase = Number.isFinite(base) && base > 0;
-      const computed = hasBase ? computeAirbnbWithholding({ channel: 'airbnb', airbnbBaseEarningsVnd: base }) : null;
+      const computed = hasBase ? computeAirbnbWithholding({ channel: 'airbnb', grossPrice: base, airbnbBaseEarningsVnd: base, price: prev.price }) : null;
       const nextNet = hasBase ? base : '';
+      const nextGross = hasBase ? base : '';
       const nextPrice = hasBase ? computed?.finalCountedIncome ?? '' : '';
-      if (prev.netEarningsFromEmail === nextNet && prev.price === nextPrice) return prev;
-      return { ...prev, netEarningsFromEmail: nextNet, price: nextPrice };
+      if (prev.netEarningsFromEmail === nextNet && prev.grossPrice === nextGross && prev.price === nextPrice) return prev;
+      return { ...prev, grossPrice: nextGross, netEarningsFromEmail: nextNet, price: nextPrice };
     });
-  }, [formData.channel, formData.airbnbBaseEarningsVnd]);
+  }, [formData.channel, formData.grossPrice, formData.airbnbBaseEarningsVnd]);
 
   useEffect(() => {
     if (formData.channel !== 'airbnb') return;
     setFormData((prev) => {
-      if (prev.airbnbBaseEarningsVnd || prev.price === '' || prev.price === null || prev.price === undefined) return prev;
-      return { ...prev, airbnbBaseEarningsVnd: prev.price };
+      if (prev.airbnbBaseEarningsVnd || prev.grossPrice) return prev;
+      const fallbackBase = deriveAirbnbGrossAmount(prev);
+      if (!Number.isFinite(fallbackBase) || fallbackBase <= 0) return prev;
+      return { ...prev, grossPrice: fallbackBase, airbnbBaseEarningsVnd: fallbackBase, netEarningsFromEmail: fallbackBase };
     });
   }, [formData.channel]);
 
@@ -2044,10 +2083,11 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     const finalCheckInTime = sanitizedCheckInTime || DEFAULT_CHECKIN_TIME;
     const finalCheckOutTime = sanitizedCheckOutTime || DEFAULT_CHECKOUT_TIME;
 
-    const airbnbBaseEarningsVnd = formData.channel === 'airbnb'
+    const grossPrice = formData.channel === 'airbnb'
       ? (formData.airbnbBaseEarningsVnd === '' ? null : Number(formData.airbnbBaseEarningsVnd))
       : null;
-    const netEarningsFromEmail = formData.channel === 'airbnb' ? airbnbBaseEarningsVnd : null;
+    const airbnbBaseEarningsVnd = grossPrice;
+    const netEarningsFromEmail = formData.channel === 'airbnb' ? grossPrice : null;
     const monthlyRentVnd = ['long'].includes(formData.stayCategory)
       ? (formData.monthlyRentVnd === '' ? null : Number(formData.monthlyRentVnd))
       : null;
@@ -2071,6 +2111,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       checkInTime: finalCheckInTime,
       checkOutTime: finalCheckOutTime,
       services: sanitizedServices,
+      grossPrice,
       airbnbBaseEarningsVnd,
       netEarningsFromEmail,
       monthlyRentVnd,
@@ -2085,7 +2126,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     
-    if (['price', 'netEarningsFromEmail', 'airbnbBaseEarningsVnd', 'monthlyRentVnd'].includes(name)) {
+    if (['price', 'grossPrice', 'netEarningsFromEmail', 'airbnbBaseEarningsVnd', 'monthlyRentVnd'].includes(name)) {
       setFormData(prev => ({ 
         ...prev, 
         [name]: value === '' ? '' : Number(value) 
@@ -3649,7 +3690,7 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           nights: booking.nights,
-          price: booking.price,
+          price: getBookingInvoiceAmount(booking),
           date: formatDate(new Date()),
           invoiceNumber: `INV-${Date.now().toString().slice(-6)}`
         });
@@ -4503,6 +4544,7 @@ export default function App() {
       .filter((b) => (b.channel || '').toLowerCase() === 'airbnb')
       .map((b) => {
         const hasWithholdingFields =
+          b.grossPrice != null ||
           b.commissionWithheld != null ||
           b.vatWithheld != null ||
           b.incomeTaxWithheld != null ||
@@ -4510,19 +4552,19 @@ export default function App() {
           b.finalCountedIncome != null ||
           b.withholdingStatus != null;
 
-        let base = Number(b.airbnbBaseEarningsVnd ?? b.netEarningsFromEmail);
-        if ((!Number.isFinite(base) || base <= 0) && !hasWithholdingFields) {
-          base = Number(b.price);
-        }
-
-        const normalizedBase = Number.isFinite(base) && base > 0 ? base : null;
-        const w = computeAirbnbWithholding({ ...b, airbnbBaseEarningsVnd: normalizedBase });
+        const normalizedBase = deriveAirbnbGrossAmount(b);
+        const w = computeAirbnbWithholding({
+          ...b,
+          grossPrice: normalizedBase,
+          airbnbBaseEarningsVnd: normalizedBase,
+        });
         const targetPrice =
-          w.status === 'computed' && Number.isFinite(w.finalCountedIncome)
-            ? w.finalCountedIncome
+          w.status === 'computed' && Number.isFinite(w.payoutBeforeTax)
+            ? w.payoutBeforeTax
             : b.price;
         const differs =
           (b.withholdingStatus || 'not_applicable') !== (w.status || 'not_applicable') ||
+          (b.grossPrice ?? null) !== (normalizedBase ?? null) ||
           (b.commissionWithheld ?? null) !== (w.commissionWithheld ?? null) ||
           (b.vatWithheld ?? null) !== (w.vatWithheld ?? null) ||
           (b.incomeTaxWithheld ?? null) !== (w.incomeTaxWithheld ?? null) ||
@@ -4537,6 +4579,7 @@ export default function App() {
         return {
           id: b.id,
           payload: {
+            grossPrice: normalizedBase,
             airbnbBaseEarningsVnd: normalizedBase,
             netEarningsFromEmail: normalizedBase,
             commissionWithheld: w.commissionWithheld ?? null,
@@ -5720,7 +5763,9 @@ export default function App() {
       const guestPhoneValue = bookingData.guestPhone?.trim?.() || '';
       const normalizedChannel = bookingData.channel || 'airbnb';
       const normalizedPrice = Number(bookingData.price) || 0;
+      const normalizedGrossPriceInput = Number(bookingData.grossPrice ?? bookingData.airbnbBaseEarningsVnd ?? bookingData.netEarningsFromEmail);
       const hasWithholdingFields =
+        bookingData.grossPrice != null ||
         bookingData.commissionWithheld != null ||
         bookingData.vatWithheld != null ||
         bookingData.incomeTaxWithheld != null ||
@@ -5731,17 +5776,20 @@ export default function App() {
       const normalizedAirbnbBase = normalizedChannel !== 'airbnb'
         ? null
         : (() => {
+            if (Number.isFinite(normalizedGrossPriceInput) && normalizedGrossPriceInput > 0) return Math.round(normalizedGrossPriceInput);
             const explicitBase = Number(bookingData.airbnbBaseEarningsVnd);
             if (Number.isFinite(explicitBase) && explicitBase > 0) return explicitBase;
             const emailBase = Number(bookingData.netEarningsFromEmail);
             if (Number.isFinite(emailBase) && emailBase > 0) return emailBase;
-            return hasWithholdingFields ? null : (normalizedPrice || null);
+            if (Number.isFinite(normalizedPrice) && normalizedPrice > 0) return Math.round(normalizedPrice / AIRBNB_PAYOUT_RATE);
+            return hasWithholdingFields ? null : null;
           })();
       const normalizedPaymentStatus = normalizedChannel === 'direct' ? (bookingData.paymentStatus || null) : null;
       const nowIso = new Date().toISOString();
       const withholding = computeAirbnbWithholding({
         ...bookingData,
         channel: normalizedChannel,
+        grossPrice: normalizedAirbnbBase,
         price: normalizedPrice,
         airbnbBaseEarningsVnd: normalizedAirbnbBase,
       });
@@ -5766,8 +5814,8 @@ export default function App() {
 
       const priceForBooking = (() => {
         if (isLongTermCategory && estimatedLongTotal !== null) return estimatedLongTotal;
-        if (normalizedChannel === 'airbnb' && withholding.status === 'computed' && Number.isFinite(withholding.finalCountedIncome)) {
-          return withholding.finalCountedIncome;
+        if (normalizedChannel === 'airbnb' && withholding.status === 'computed' && Number.isFinite(withholding.payoutBeforeTax)) {
+          return withholding.payoutBeforeTax;
         }
         return normalizedPrice;
       })();
@@ -5795,6 +5843,7 @@ export default function App() {
         nights: normalizedNights,
         channel: normalizedChannel,
         paymentStatus: normalizedPaymentStatus,
+        grossPrice: normalizedAirbnbBase,
         airbnbBaseEarningsVnd: normalizedAirbnbBase,
         netEarningsFromEmail: normalizedAirbnbBase,
         monthlyRentVnd: monthlyRentVnd,
@@ -7598,7 +7647,8 @@ export default function App() {
               {filteredBookings.length === 0 ? <tr><td colSpan="7" className="px-6 py-12 text-center text-slate-500">No bookings found for this view.</td></tr> : filteredBookings
               .map((booking) => {
                   const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
-                  const perNight = bookingNights > 0 ? Math.round(Number(booking.price) / bookingNights) : 0;
+                  const displayPrice = getDisplayPriceForBooking(booking);
+                  const perNight = bookingNights > 0 ? Math.round(displayPrice / bookingNights) : 0;
                   const stayCat = getBookingStayCategory(booking);
                   const displayRoomDate = bookingTimeFilter === 'current' ? TODAY_STR : (bookingTimeFilter === 'past' ? addDays(booking.checkOut, -1) : booking.checkIn);
                   const displayRoomId = getBookingRoomIdForDate(booking, displayRoomDate);
@@ -7659,7 +7709,7 @@ export default function App() {
                     <div className="text-xs text-slate-500 mt-1">{bookingNights} night{bookingNights !== 1 ? 's' : ''}</div>
                   </td>
                   <td className="px-6 py-4 text-sm font-medium text-slate-600">
-                      {Number(booking.price).toLocaleString('vi-VN')} ₫
+                      {displayPrice.toLocaleString('vi-VN')} ₫
                       <div className="text-xs font-normal text-slate-500 mt-1">
                           {bookingNights > 0 ? `${perNight.toLocaleString('vi-VN')} ₫ / night` : ''}
                       </div>
@@ -8249,13 +8299,14 @@ export default function App() {
                       ) : (
                         stayHistory.map((b) => {
                           const room = ALL_ROOMS.find((r) => r.id === b.roomId);
+                          const displayPrice = getDisplayPriceForBooking(b);
                           return (
                             <tr key={b.id} className="hover:bg-slate-50">
                               <td className="px-4 py-2">{b.checkIn} → {b.checkOut}</td>
                               <td className="px-4 py-2">{room?.name || b.roomId} <span className="text-xs text-slate-500">{room?.propertyName}</span></td>
                               <td className="px-4 py-2">{formatChannelLabel(getBookingChannelSummary(b))}</td>
                               <td className="px-4 py-2 text-xs"><span className="px-2 py-1 rounded-full border bg-slate-100 text-slate-700">{b.status}</span></td>
-                              <td className="px-4 py-2">{Number(b.price || 0).toLocaleString('vi-VN')} ₫</td>
+                              <td className="px-4 py-2">{displayPrice.toLocaleString('vi-VN')} ₫</td>
                             </tr>
                           );
                         })
