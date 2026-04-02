@@ -77,6 +77,14 @@ const HOUSEKEEPING_END_TIME = '18:00';
 const DEFAULT_CHECKOUT_TIME = '12:00';
 const DEFAULT_CHECKIN_TIME = '15:00';
 const randomId = () => Math.random().toString(36).substr(2, 9);
+const withTimeout = (promise, timeoutMs, message) => Promise.race([
+  promise,
+  new Promise((_, reject) => {
+    const err = new Error(message);
+    err.code = 'timeout';
+    setTimeout(() => reject(err), timeoutMs);
+  }),
+]);
 const AIRBNB_COMMISSION_RATE = 0.155;
 const AIRBNB_PAYOUT_RATE = 1 - AIRBNB_COMMISSION_RATE;
 const AIRBNB_VAT_RATE = 0.05;
@@ -5821,17 +5829,21 @@ export default function App() {
       })();
       const normalizedNights = calculateNights(bookingData.checkIn, bookingData.checkOut);
 
-      const guestResolution = await resolveGuestForBooking({
-        db,
-        bookingDraft: {
-          ...bookingData,
-          guestEmail: guestEmailValue || null,
-          guestPhone: guestPhoneValue || null,
-          startDate: bookingData.checkIn,
-          endDate: bookingData.checkOut,
-          channel: normalizedChannel,
-        },
-      });
+      const guestResolution = await withTimeout(
+        resolveGuestForBooking({
+          db,
+          bookingDraft: {
+            ...bookingData,
+            guestEmail: guestEmailValue || null,
+            guestPhone: guestPhoneValue || null,
+            startDate: bookingData.checkIn,
+            endDate: bookingData.checkOut,
+            channel: normalizedChannel,
+          },
+        }),
+        6000,
+        'Guest lookup timed out. Check Firestore/network and retry.'
+      );
 
       const normalizedData = {
         ...bookingData,
