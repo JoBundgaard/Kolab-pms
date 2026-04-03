@@ -85,7 +85,9 @@ const withTimeout = (promise, timeoutMs, message) => Promise.race([
     setTimeout(() => reject(err), timeoutMs);
   }),
 ]);
-const AIRBNB_COMMISSION_RATE = 0.155;
+const AIRBNB_COMMISSION_BASE_RATE = 0.155;
+const AIRBNB_COMMISSION_VAT_RATE = 0.10;
+const AIRBNB_COMMISSION_RATE = AIRBNB_COMMISSION_BASE_RATE * (1 + AIRBNB_COMMISSION_VAT_RATE);
 const AIRBNB_PAYOUT_RATE = 1 - AIRBNB_COMMISSION_RATE;
 const AIRBNB_VAT_RATE = 0.05;
 const AIRBNB_INCOME_TAX_RATE = 0.02;
@@ -107,8 +109,9 @@ const deriveAirbnbGrossAmount = (booking) => {
 
 // Compute Airbnb deductions from the guest-paid gross amount.
 // `grossPrice` is preferred when available. Legacy field names are preserved as gross aliases.
-// Commission = 15.5% of gross; VAT withheld = 5% of gross; Income tax = 2% of gross.
-// Final counted income = gross − (commission + VAT + income tax), rounded to whole VND.
+// The Airbnb host fee is 15.5% plus 10% VAT on that service fee, for an effective 17.05% of gross.
+// VN VAT withheld = 5% of gross; VN income tax withheld = 2% of gross.
+// Final counted income = gross − (host fee + VAT + income tax), rounded to whole VND.
 const computeAirbnbWithholding = (booking) => {
   const channel = (booking?.channel || '').toLowerCase();
   const baseEarnings = deriveAirbnbGrossAmount(booking);
@@ -3031,7 +3034,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h4 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Airbnb Withholding (Vietnam)</h4>
-                  <p className="text-xs text-slate-500">Enter the guest-paid gross amount. We calculate 15.5% commission, 5% VAT, and 2% income tax from that top-down gross figure.</p>
+                  <p className="text-xs text-slate-500">Enter the guest-paid gross amount. We calculate the Airbnb host fee as 15.5% plus VAT on that fee, then 5% VN VAT and 2% income tax from the same gross figure.</p>
                 </div>
               </div>
 
@@ -3045,7 +3048,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                   required
                   min="0"
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] bg-white"
-                  placeholder="Guest-paid gross amount before commission and taxes"
+                  placeholder="Guest-paid gross amount before Airbnb host fee and taxes"
                 />
                 <div className="text-[11px] text-slate-500 mt-1">Legacy field names are unchanged internally, but this input now represents the gross room fee.</div>
               </div>
@@ -3055,7 +3058,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                   <div className="space-y-1">
                     <div className="font-semibold text-slate-800">Gross amount: {formatCurrencyVND(withholdingPreview.airbnbBaseEarningsVnd || withholdingPreview.netEarningsFromEmail || 0)}</div>
                     <div className="flex flex-wrap gap-3">
-                      <span className="font-semibold text-slate-800">Commission 15.5%: {formatCurrencyVND(withholdingPreview.commissionWithheld)}</span>
+                      <span className="font-semibold text-slate-800">Host fee (15.5% + VAT): {formatCurrencyVND(withholdingPreview.commissionWithheld)}</span>
                       <span className="font-semibold text-slate-800">VAT 5%: {formatCurrencyVND(withholdingPreview.vatWithheld)}</span>
                       <span className="font-semibold text-slate-800">Income tax 2%: {formatCurrencyVND(withholdingPreview.incomeTaxWithheld)}</span>
                       <span className="font-semibold text-slate-800">Total deductions: {formatCurrencyVND(withholdingPreview.totalWithheld)}</span>
@@ -3067,7 +3070,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                     Enter the gross amount. Without it, the booking is marked withholding-unknown and excluded from totals.
                   </div>
                 )}
-                <div className="text-[11px] text-slate-500 mt-2">Total Price uses Final earnings after commission, VAT, and income tax.</div>
+                <div className="text-[11px] text-slate-500 mt-2">Total Price uses final earnings after Airbnb host fee, VN VAT, and income tax.</div>
               </div>
                 </div>
               )}
@@ -3118,7 +3121,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                   disabled={formData.channel === 'airbnb'}
                 />
                 {formData.channel === 'airbnb' && (
-                  <p className="text-xs text-slate-500 mt-1">Auto-calculated: Gross amount minus 15.5% commission, 5% VAT, and 2% income tax.</p>
+                  <p className="text-xs text-slate-500 mt-1">Auto-calculated: Gross amount minus Airbnb host fee (15.5% + VAT), 5% VN VAT, and 2% income tax.</p>
                 )}
                 </div>
               )}
@@ -9385,13 +9388,13 @@ export default function App() {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Withholding (Airbnb)</h3>
-                <p className="text-xs text-slate-500">15.5% commission, 5% VAT, and 2% income tax calculated from the guest-paid gross amount.</p>
+                <p className="text-xs text-slate-500">Airbnb host fee (15.5% + VAT), 5% VN VAT, and 2% income tax calculated from the guest-paid gross amount.</p>
               </div>
               <div className="text-[11px] uppercase font-semibold text-slate-500">Range</div>
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div className="space-y-1">
-                <div className="text-slate-500 text-xs uppercase">Commission</div>
+                <div className="text-slate-500 text-xs uppercase">Host Fee</div>
                 <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.range.commission)}</div>
               </div>
               <div className="space-y-1">
@@ -9424,7 +9427,7 @@ export default function App() {
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div className="space-y-1">
-                <div className="text-slate-500 text-xs uppercase">Commission</div>
+                <div className="text-slate-500 text-xs uppercase">Host Fee</div>
                 <div className="font-semibold text-slate-800">{fmtVnd(stats.withholding.ytd.commission)}</div>
               </div>
               <div className="space-y-1">
@@ -9459,7 +9462,7 @@ export default function App() {
                 <thead className="text-xs uppercase text-slate-500 border-b">
                   <tr>
                     <th className="py-2 text-left">Property</th>
-                    <th className="py-2 text-right">Commission</th>
+                    <th className="py-2 text-right">Host Fee</th>
                     <th className="py-2 text-right">VAT</th>
                     <th className="py-2 text-right">Income</th>
                     <th className="py-2 text-right">Total</th>
@@ -9480,7 +9483,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-            <div className="text-[11px] text-slate-500">Final earnings used in stats = gross amount − commission − VAT − income tax.</div>
+            <div className="text-[11px] text-slate-500">Final earnings used in stats = gross amount − Airbnb host fee − VN VAT − income tax.</div>
           </div>
         ) : null}
 
