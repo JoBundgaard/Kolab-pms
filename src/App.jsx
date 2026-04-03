@@ -2042,8 +2042,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     }
 
     const isLongStay = formData.stayCategory === 'long';
-    const rawRoomMoves = isLongStay && formData.hasMultipleRoomStay ? (Array.isArray(formData.roomMoves) ? formData.roomMoves : []) : [];
-    if (isLongStay && formData.hasMultipleRoomStay && rawRoomMoves.length === 0) {
+    const rawRoomMoves = formData.hasMultipleRoomStay ? (Array.isArray(formData.roomMoves) ? formData.roomMoves : []) : [];
+    if (formData.hasMultipleRoomStay && rawRoomMoves.length === 0) {
       setConflictError('Add at least one room move or untick multiple room stay.');
       return;
     }
@@ -2051,7 +2051,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       setConflictError('Each room move needs both a move date and destination room.');
       return;
     }
-    if (rawRoomMoves.some((move) => move?.useDifferentMonthlyRent && (move.monthlyRentVnd === '' || move.monthlyRentVnd === null || Number(move.monthlyRentVnd) < 0))) {
+    if (isLongStay && rawRoomMoves.some((move) => move?.useDifferentMonthlyRent && (move.monthlyRentVnd === '' || move.monthlyRentVnd === null || Number(move.monthlyRentVnd) < 0))) {
       setConflictError('Each rent change needs a valid new monthly rent.');
       return;
     }
@@ -2086,7 +2086,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         ...formData,
         hasGuestBreaks: formData.hasGuestBreaks,
         guestBreakPeriods: rawBreaks,
-        hasMultipleRoomStay: isLongStay && normalizedRoomMoves.length > 0,
+        hasMultipleRoomStay: normalizedRoomMoves.length > 0,
         roomMoves: normalizedRoomMoves,
       },
       booking ? booking.id : null
@@ -2138,8 +2138,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       airbnbBaseEarningsVnd,
       netEarningsFromEmail,
       monthlyRentVnd,
-      hasMultipleRoomStay: isLongStay && normalizedRoomMoves.length > 0,
-      roomMoves: isLongStay ? normalizedRoomMoves : [],
+      hasMultipleRoomStay: normalizedRoomMoves.length > 0,
+      roomMoves: normalizedRoomMoves,
       hasGuestBreaks: !!formData.hasGuestBreaks && rawBreaks.length > 0,
       guestBreakPeriods: rawBreaks,
       sellRoomDuringBreak: !!formData.hasGuestBreaks && rawBreaks.length > 0 && !!formData.sellRoomDuringBreak,
@@ -2173,8 +2173,6 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         stayCategory: nextCategory,
         isLongTerm: isLongTermCategory,
         weeklyCleaningDay: isLongTermCategory ? prev.weeklyCleaningDay || 'monday' : '',
-        hasMultipleRoomStay: nextCategory === 'long' ? prev.hasMultipleRoomStay : false,
-        roomMoves: nextCategory === 'long' ? prev.roomMoves : [],
       }));
       setPaymentStatusError(null);
     } else if (name === 'hasGuestBreaks') {
@@ -2584,8 +2582,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                   </div>
                 </div>
                 <div className="p-5 space-y-5">
-                  {formData.stayCategory === 'long' && (
-                    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-4">
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Multiple Room Stay</div>
@@ -2663,19 +2660,21 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                         </div>
                       </div>
 
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={!!move.useDifferentMonthlyRent}
-                          onChange={(e) => updateRoomMove(move.id, {
-                            useDifferentMonthlyRent: e.target.checked,
-                            monthlyRentVnd: e.target.checked ? (move.monthlyRentVnd || formData.monthlyRentVnd || '') : (formData.monthlyRentVnd || ''),
-                          })}
-                          className="h-4 w-4 rounded border-slate-300"
-                          style={{ accentColor: COLORS.darkGreen }}
-                        />
-                        Different monthly rent from this move date
-                      </label>
+                      {formData.stayCategory === 'long' && (
+                        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={!!move.useDifferentMonthlyRent}
+                            onChange={(e) => updateRoomMove(move.id, {
+                              useDifferentMonthlyRent: e.target.checked,
+                              monthlyRentVnd: e.target.checked ? (move.monthlyRentVnd || formData.monthlyRentVnd || '') : (formData.monthlyRentVnd || ''),
+                            })}
+                            className="h-4 w-4 rounded border-slate-300"
+                            style={{ accentColor: COLORS.darkGreen }}
+                          />
+                          Different monthly rent from this move date
+                        </label>
+                      )}
 
                       <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                         <input
@@ -2744,7 +2743,6 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                         </div>
                       )}
                     </div>
-                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
@@ -5837,16 +5835,17 @@ export default function App() {
         price: normalizedPrice,
         airbnbBaseEarningsVnd: normalizedAirbnbBase,
       });
-      const isLongTermCategory = ['long'].includes(bookingData.stayCategory) || bookingData.isLongTerm;
-      const monthlyRentVnd = isLongTermCategory && Number.isFinite(Number(bookingData.monthlyRentVnd)) ? Number(bookingData.monthlyRentVnd) : null;
-      const roomMoves = isLongTermCategory
+      const isLongStayCategory = ['long'].includes(bookingData.stayCategory);
+      const monthlyRentVnd = isLongStayCategory && Number.isFinite(Number(bookingData.monthlyRentVnd)) ? Number(bookingData.monthlyRentVnd) : null;
+      const hasMultipleRoomStay = !!bookingData.hasMultipleRoomStay || (Array.isArray(bookingData.roomMoves) && bookingData.roomMoves.length > 0);
+      const roomMoves = hasMultipleRoomStay
         ? normalizeRoomMoves(bookingData.roomMoves || [], {
             stayStart: bookingData.checkIn,
             stayEnd: bookingData.checkOut,
             fallbackRent: monthlyRentVnd,
           })
         : [];
-      const estimatedLongTotal = isLongTermCategory
+      const estimatedLongTotal = isLongStayCategory
         ? calculateLongTermRentForRange({
             ...bookingData,
             monthlyRentVnd,
@@ -5860,7 +5859,7 @@ export default function App() {
         : [];
 
       const priceForBooking = (() => {
-        if (isLongTermCategory && estimatedLongTotal !== null) return estimatedLongTotal;
+        if (isLongStayCategory && estimatedLongTotal !== null) return estimatedLongTotal;
         if (normalizedChannel === 'airbnb' && withholding.status === 'computed' && Number.isFinite(withholding.payoutBeforeTax)) {
           return withholding.payoutBeforeTax;
         }
@@ -5902,7 +5901,7 @@ export default function App() {
         airbnbBaseEarningsVnd: normalizedAirbnbBase,
         netEarningsFromEmail: normalizedAirbnbBase,
         monthlyRentVnd: monthlyRentVnd,
-        hasMultipleRoomStay: isLongTermCategory && roomMoves.length > 0,
+        hasMultipleRoomStay: roomMoves.length > 0,
         roomMoves,
         hasGuestBreaks: !!bookingData.hasGuestBreaks,
         guestBreakPeriods: normalizedGuestBreakPeriods,
