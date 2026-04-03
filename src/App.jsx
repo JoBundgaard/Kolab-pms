@@ -91,11 +91,11 @@ const AIRBNB_VAT_RATE = 0.05;
 const AIRBNB_INCOME_TAX_RATE = 0.02;
 
 const deriveAirbnbGrossAmount = (booking) => {
-  const explicitGross = Number(booking?.grossPrice);
-  if (Number.isFinite(explicitGross) && explicitGross > 0) return Math.round(explicitGross);
-
   const legacyBase = Number(booking?.airbnbBaseEarningsVnd ?? booking?.netEarningsFromEmail);
   if (Number.isFinite(legacyBase) && legacyBase > 0) return Math.round(legacyBase);
+
+  const explicitGross = Number(booking?.grossPrice);
+  if (Number.isFinite(explicitGross) && explicitGross > 0) return Math.round(explicitGross);
 
   const payoutBeforeTax = Number(booking?.price);
   if (Number.isFinite(payoutBeforeTax) && payoutBeforeTax > 0) {
@@ -2147,10 +2147,20 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     const { name, value, type, checked } = e.target;
     
     if (['price', 'grossPrice', 'netEarningsFromEmail', 'airbnbBaseEarningsVnd', 'monthlyRentVnd'].includes(name)) {
-      setFormData(prev => ({ 
-        ...prev, 
-        [name]: value === '' ? '' : Number(value) 
-      }));
+      const numericValue = value === '' ? '' : Number(value);
+      if (formData.channel === 'airbnb' && ['grossPrice', 'netEarningsFromEmail', 'airbnbBaseEarningsVnd'].includes(name)) {
+        setFormData(prev => ({
+          ...prev,
+          grossPrice: numericValue,
+          netEarningsFromEmail: numericValue,
+          airbnbBaseEarningsVnd: numericValue,
+        }));
+      } else {
+        setFormData(prev => ({ 
+          ...prev, 
+          [name]: numericValue,
+        }));
+      }
     } else if (name === 'stayCategory') {
       const nextCategory = value;
       const isLongTermCategory = ['medium', 'long'].includes(nextCategory);
@@ -2967,6 +2977,21 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                         </button>
                       </div>
                     )}
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-3">
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Booking Notes</div>
+                      <div className="text-xs text-slate-500 mt-1">Internal notes for preferences, issues, payment context, or anything staff should see later.</div>
+                    </div>
+                    <textarea
+                      name="notes"
+                      value={formData.notes || ''}
+                      onChange={handleChange}
+                      rows={4}
+                      placeholder="Add internal notes for this reservation..."
+                      className="w-full px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none bg-white shadow-sm transition-all resize-y min-h-[110px]"
+                    />
                   </div>
                 </div>
               </section>
@@ -5779,7 +5804,7 @@ export default function App() {
       const guestPhoneValue = bookingData.guestPhone?.trim?.() || '';
       const normalizedChannel = bookingData.channel || 'airbnb';
       const normalizedPrice = Number(bookingData.price) || 0;
-      const normalizedGrossPriceInput = Number(bookingData.grossPrice ?? bookingData.airbnbBaseEarningsVnd ?? bookingData.netEarningsFromEmail);
+      const normalizedGrossPriceInput = Number(bookingData.airbnbBaseEarningsVnd ?? bookingData.grossPrice ?? bookingData.netEarningsFromEmail);
       const hasWithholdingFields =
         bookingData.grossPrice != null ||
         bookingData.commissionWithheld != null ||
@@ -5827,6 +5852,9 @@ export default function App() {
             sellRoomDuringBreak: !!bookingData.sellRoomDuringBreak,
           }, bookingData.checkIn, bookingData.checkOut)
         : null;
+      const normalizedGuestBreakPeriods = bookingData.hasGuestBreaks
+        ? normalizeBookingBreaks(bookingData.guestBreakPeriods || [])
+        : [];
 
       const priceForBooking = (() => {
         if (isLongTermCategory && estimatedLongTotal !== null) return estimatedLongTotal;
@@ -5857,8 +5885,12 @@ export default function App() {
         ...bookingData,
         guestEmail: guestEmailValue || null,
         guestPhone: guestPhoneValue || null,
+        email: guestEmailValue || null,
+        phone: guestPhoneValue || null,
         guestEmailNorm: guestResolution?.normalized?.emailNorm || null,
         guestPhoneNorm: guestResolution?.normalized?.phoneNorm || null,
+        startDate: bookingData.checkIn,
+        endDate: bookingData.checkOut,
         price: priceForBooking,
         nights: normalizedNights,
         channel: normalizedChannel,
@@ -5870,7 +5902,9 @@ export default function App() {
         hasMultipleRoomStay: isLongTermCategory && roomMoves.length > 0,
         roomMoves,
         hasGuestBreaks: !!bookingData.hasGuestBreaks,
-        guestBreakPeriods: bookingData.hasGuestBreaks ? normalizeBookingBreaks(bookingData.guestBreakPeriods || []) : [],
+        guestBreakPeriods: normalizedGuestBreakPeriods,
+        breakPeriods: normalizedGuestBreakPeriods,
+        breaks: normalizedGuestBreakPeriods,
         sellRoomDuringBreak: !!bookingData.hasGuestBreaks && !!bookingData.sellRoomDuringBreak,
         commissionWithheld: withholding.commissionWithheld,
         vatWithheld: withholding.vatWithheld,
