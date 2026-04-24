@@ -1,5 +1,9 @@
-import React, { useState } from 'react';
-import { MessageSquare, Send } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { MessageSquare, Send, X } from 'lucide-react';
+
+// After deploying the Cloud Function, paste the URL shown in the deploy output here.
+// You can also set VITE_CHATBOT_URL in a .env.local file.
+const CHATBOT_URL = import.meta.env.VITE_CHATBOT_URL || '';
 
 const COLORS = {
   darkGreen: '#26402E',
@@ -7,44 +11,71 @@ const COLORS = {
   cream: '#F9F8F2',
 };
 
-const Chatbot = () => {
+const WELCOME = "Hi! I'm Kolab Assistant. Ask me anything about rooms, bookings, availability, or housekeeping.";
+
+export default function Chatbot() {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState([{ text: WELCOME, sender: 'bot' }]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isOpen]);
 
   const handleSend = async () => {
-    if (input.trim() === '') return;
+    const question = input.trim();
+    if (!question || isLoading) return;
 
-    const newMessages = [...messages, { text: input, sender: 'user' }];
+    if (!CHATBOT_URL) {
+      setMessages((prev) => [
+        ...prev,
+        { text: question, sender: 'user' },
+        { text: 'Chatbot URL not configured yet. Set VITE_CHATBOT_URL after deploying the Cloud Function.', sender: 'bot' },
+      ]);
+      setInput('');
+      return;
+    }
+
+    const newMessages = [...messages, { text: question, sender: 'user' }];
     setMessages(newMessages);
     setInput('');
     setIsLoading(true);
 
     try {
-      // TODO: Replace with the actual URL of your deployed chatbot function
-      const response = await fetch('YOUR_CHATBOT_FUNCTION_URL', {
+      const response = await fetch(CHATBOT_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ question: input }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          // Send last 6 messages as context (3 turns), excluding the welcome message
+          history: messages.filter((m) => m.text !== WELCOME).slice(-6),
+        }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        throw new Error('Network response was not ok');
+        throw new Error(data.error || 'Server error');
       }
 
-      const data = await response.text();
-      setMessages([...newMessages, { text: data, sender: 'bot' }]);
-    } catch (error) {
-      console.error('Error fetching chatbot response:', error);
+      setMessages([...newMessages, { text: data.answer, sender: 'bot' }]);
+    } catch (err) {
+      console.error('Chatbot error:', err);
       setMessages([
         ...newMessages,
-        { text: 'Sorry, I am having trouble connecting.', sender: 'bot' },
+        { text: 'Sorry, something went wrong. Please try again.', sender: 'bot' },
       ]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
     }
   };
 
@@ -52,74 +83,81 @@ const Chatbot = () => {
     <div className="fixed bottom-4 right-4 z-50">
       {isOpen ? (
         <div
-          className="bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col"
-          style={{ height: '500px' }}
+          className="rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+          style={{ width: '360px', height: '520px', backgroundColor: COLORS.cream }}
         >
+          {/* Header */}
           <div
-            className="px-6 py-4 border-b flex justify-between items-center"
-            style={{
-              backgroundColor: COLORS.darkGreen,
-              borderColor: COLORS.darkGreen,
-            }}
+            className="px-5 py-4 flex justify-between items-center flex-shrink-0"
+            style={{ backgroundColor: COLORS.darkGreen }}
           >
-            <h3 className="font-serif font-bold text-xl text-white">
-              Kolab Chatbot
-            </h3>
+            <div>
+              <h3 className="font-bold text-white text-base leading-tight">Kolab Assistant</h3>
+              <p className="text-white/60 text-xs mt-0.5">Ask about rooms, bookings & housekeeping</p>
+            </div>
             <button
               onClick={() => setIsOpen(false)}
-              className="text-white/70 hover:text-white transition-colors"
+              className="text-white/60 hover:text-white transition-colors p-1"
             >
-              <MessageSquare size={24} />
+              <X size={20} />
             </button>
           </div>
-          <div
-            className="flex-1 p-6 overflow-y-auto"
-            style={{ backgroundColor: COLORS.cream }}
-          >
-            <div className="space-y-4">
-              {messages.map((message, index) => (
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+            {messages.map((msg, i) => (
+              <div
+                key={i}
+                className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
                 <div
-                  key={index}
-                  className={`flex ${
-                    message.sender === 'user' ? 'justify-end' : 'justify-start'
-                  }`}
+                  className="rounded-2xl px-4 py-2.5 text-sm max-w-[85%] whitespace-pre-wrap leading-relaxed"
+                  style={
+                    msg.sender === 'user'
+                      ? { backgroundColor: COLORS.darkGreen, color: COLORS.lime }
+                      : { backgroundColor: '#E8E8E0', color: '#1a1a1a' }
+                  }
                 >
-                  <div
-                    className={`rounded-2xl px-4 py-2 ${
-                      message.sender === 'user' ?
-                        'bg-lime-200 text-gray-800' :
-                        'bg-gray-200 text-gray-800'
-                    }`}
-                  >
-                    {message.text}
-                  </div>
+                  {msg.text}
                 </div>
-              ))}
-              {isLoading && (
-                <div className="flex justify-start">
-                  <div className="rounded-2xl px-4 py-2 bg-gray-200 text-gray-800">
-                    ...
-                  </div>
+              </div>
+            ))}
+            {isLoading && (
+              <div className="flex justify-start">
+                <div
+                  className="rounded-2xl px-4 py-2.5 text-sm"
+                  style={{ backgroundColor: '#E8E8E0', color: '#666' }}
+                >
+                  <span className="animate-pulse">Thinking…</span>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
+            <div ref={bottomRef} />
           </div>
-          <div className="p-4 border-t" style={{ backgroundColor: COLORS.cream }}>
-            <div className="flex items-center">
+
+          {/* Input */}
+          <div
+            className="px-4 py-3 border-t flex-shrink-0"
+            style={{ backgroundColor: COLORS.cream, borderColor: '#ddd' }}
+          >
+            <div className="flex items-center gap-2">
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                placeholder="Ask a question..."
-                className="flex-1 px-4 py-2 border rounded-full focus:outline-none focus:ring-2 focus:ring-lime-500"
+                onKeyDown={handleKeyDown}
+                placeholder="Ask a question…"
+                disabled={isLoading}
+                className="flex-1 px-4 py-2 text-sm border rounded-full focus:outline-none focus:ring-2 bg-white disabled:opacity-50"
+                style={{ borderColor: '#ccc', '--tw-ring-color': COLORS.darkGreen }}
               />
               <button
                 onClick={handleSend}
-                className="ml-2 px-4 py-2 rounded-full text-white"
+                disabled={isLoading || !input.trim()}
+                className="p-2.5 rounded-full text-white flex-shrink-0 transition-opacity disabled:opacity-40"
                 style={{ backgroundColor: COLORS.darkGreen }}
               >
-                <Send size={20} />
+                <Send size={16} />
               </button>
             </div>
           </div>
@@ -127,14 +165,13 @@ const Chatbot = () => {
       ) : (
         <button
           onClick={() => setIsOpen(true)}
-          className="p-4 rounded-full text-white shadow-lg"
+          className="p-4 rounded-full text-white shadow-lg hover:opacity-90 transition-opacity"
           style={{ backgroundColor: COLORS.darkGreen }}
+          title="Kolab Assistant"
         >
           <MessageSquare size={24} />
         </button>
       )}
     </div>
   );
-};
-
-export default Chatbot;
+}
