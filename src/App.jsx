@@ -3747,131 +3747,177 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
   const [invoiceData, setInvoiceData] = useState(null);
 
   useEffect(() => {
-    if (selectedBookingId) {
-      const booking = bookings.find(b => b.id === selectedBookingId);
-      if (booking) {
-        const roomObj = ALL_ROOMS.find(r => r.id === booking.roomId);
-        const roomName = roomObj?.name || 'Unknown room';
-        const propertyName = roomObj?.propertyName || 'Unknown property';
-        setInvoiceData({
-          guestName: booking.guestName,
-          room: roomName,
-          propertyName, 
-          checkIn: booking.checkIn,
-          checkOut: booking.checkOut,
-          nights: booking.nights,
-          price: getBookingInvoiceAmount(booking),
-          date: formatDate(new Date()),
-          invoiceNumber: `INV-${Date.now().toString().slice(-6)}`
-        });
-      }
+    if (!selectedBookingId) { setInvoiceData(null); return; }
+    const booking = bookings.find(b => b.id === selectedBookingId);
+    if (!booking) return;
+
+    const roomObj = ALL_ROOMS.find(r => r.id === booking.roomId);
+    const roomId = roomObj?.name || booking.roomId || '';
+    const roomType = roomObj?.type || '';
+    const propertyName = roomObj?.propertyName || '';
+    const nights = Number(booking.nights) || 0;
+    const isLong = booking.isLongTerm || booking.stayCategory === 'long';
+
+    let duration;
+    if (isLong && nights >= 28) {
+      const months = Math.max(1, Math.round(nights / 30));
+      duration = months === 1 ? '1 MONTH' : `${months} MONTHS`;
     } else {
-      setInvoiceData(null);
+      duration = String(nights);
     }
+
+    const ci = (booking.checkIn || '').split('-');
+    const ref = ci.length === 3
+      ? `${ci[2]}${ci[1]}${roomId}`.toUpperCase()
+      : `INV-${Date.now().toString().slice(-6)}`;
+
+    setInvoiceData({
+      guestName: booking.guestName || '',
+      guestPhone: booking.guestPhone || booking.phone || '',
+      roomId,
+      roomType,
+      propertyName,
+      checkIn: booking.checkIn || '',
+      checkOut: booking.checkOut || '',
+      nights,
+      duration,
+      price: getBookingInvoiceAmount(booking),
+      invoiceNumber: ref,
+    });
   }, [selectedBookingId, bookings]);
 
   if (!isOpen) return null;
 
-  const handlePrint = () => {
-    window.print();
+  const fmtAmount = (amount) => {
+    const n = Number(amount);
+    if (!n) return '0';
+    return n >= 10000
+      ? `${n.toLocaleString('vi-VN')} ₫`
+      : `${n.toLocaleString('en-US')} USD`;
+  };
+
+  const fmtInvoiceDate = (dateStr, includeYear = false) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr + 'T00:00:00Z');
+    const opts = includeYear
+      ? { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }
+      : { month: 'long', day: 'numeric', timeZone: 'UTC' };
+    return d.toLocaleDateString('en-US', opts).toUpperCase();
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print:bg-white print:p-0">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden print:shadow-none print:w-full print:max-w-none">
-        {/* Screen-only Header */}
-        <div className="px-6 py-5 border-b flex justify-between items-center bg-slate-50 print:hidden">
-          <h3 className="font-serif font-bold text-xl text-slate-800">Create Invoice</h3>
-          <div className="flex items-center space-x-2">
-             {/* Close Button in Header */}
-             <button onClick={onClose} className="text-slate-500 hover:text-slate-700 p-1 rounded hover:bg-slate-100 transition-colors" title="Close">
-                <X size={24} />
-             </button>
-          </div>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden print:shadow-none print:rounded-none print:w-full print:max-w-none">
+
+        {/* Screen header */}
+        <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50 print:hidden">
+          <h3 className="font-bold text-lg text-slate-800">Create Invoice</h3>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-700 p-1 rounded hover:bg-slate-100">
+            <X size={22} />
+          </button>
         </div>
 
-        <div className="p-8 print:p-0">
-          {/* Booking Selector (Screen Only) */}
-          <div className="mb-8 print:hidden">
-            <label className="block text-xs font-bold uppercase tracking-wider mb-2 text-slate-500">Select Booking to Generate Invoice</label>
-            <select 
+        <div className="p-6 print:p-0">
+          {/* Booking selector */}
+          <div className="mb-6 print:hidden">
+            <label className="block text-xs font-bold uppercase tracking-wider mb-2 text-slate-500">Select Booking</label>
+            <select
               className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none"
               value={selectedBookingId}
-              onChange={(e) => setSelectedBookingId(e.target.value)}
+              onChange={e => setSelectedBookingId(e.target.value)}
             >
               <option value="">-- Select a Guest --</option>
               {bookings.map(b => (
-                <option key={b.id} value={b.id}>{b.guestName} - {b.checkIn}</option>
+                <option key={b.id} value={b.id}>{b.guestName} — {b.checkIn}</option>
               ))}
             </select>
           </div>
 
           {invoiceData ? (
-            <div className="invoice-content border border-slate-100 p-8 rounded-xl print:border-0 print:p-0">
-              {/* Header */}
-              <div className="flex justify-between items-start mb-12">
-                <div>
-                  <h1 className="text-4xl font-serif font-bold text-[#26402E] mb-2">Kolab Living</h1>
-                  {/* Dynamic Address based on Property */}
-                  {invoiceData.propertyName === 'Townhouse' ? (
-                    <p className="text-slate-500 text-sm max-w-xs">
-                      8/4B Đinh Tiên Hoàng, Đa Kao, Quận 1, Thành phố Hồ Chí Minh 70000, Vietnam
-                    </p>
-                  ) : invoiceData.propertyName === 'Neighbours' ? (
-                     <p className="text-slate-500 text-sm max-w-xs">
-                      250/9a, Hai Bà Trưng, Phường Tân Định, Quận 1, Thành phố Hồ Chí Minh 700000, Vietnam
-                    </p>
-                  ) : (
-                    <p className="text-slate-500 text-sm">Co-living spaces in Ho Chi Minh City</p>
-                  )}
-                  <p className="text-slate-500 text-sm mt-1">kolabliving@gmail.com</p>
+            <div className="invoice-content">
+
+              {/* ── Top banner ── */}
+              <div className="flex items-center justify-between px-8 py-5" style={{ backgroundColor: '#26402E' }}>
+                {/* Logo */}
+                <div className="flex items-center justify-center w-14 h-14 rounded-full border-2 border-[#c8d89a]" style={{ backgroundColor: '#F5F0DC' }}>
+                  <div className="text-center leading-none">
+                    <span className="block font-bold text-xl" style={{ color: '#26402E' }}>ko</span>
+                    <span className="block text-[7px] font-semibold tracking-widest uppercase" style={{ color: '#26402E' }}>living</span>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <h2 className="text-2xl font-bold text-slate-800 mb-1">INVOICE</h2>
-                  <p className="text-slate-500 font-mono">#{invoiceData.invoiceNumber}</p>
-                  <p className="text-slate-500 text-sm mt-1">Date: {invoiceData.date}</p>
-                </div>
+                <h1 className="text-5xl font-light tracking-wide" style={{ color: '#F5F0DC' }}>Invoice</h1>
               </div>
 
-              {/* Bill To */}
-              <div className="mb-12 border-b border-slate-100 pb-8">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4">Bill To</h3>
-                <h4 className="text-xl font-bold text-slate-800">{invoiceData.guestName}</h4>
-                <p className="text-slate-600">Room: {invoiceData.room}</p>
+              {/* ── Billed to ── */}
+              <div className="px-8 pt-7 pb-2">
+                <p className="text-xl font-bold text-slate-800 mb-3">BILLED TO:</p>
+                <hr className="border-slate-300 mb-3" />
+                <p className="text-sm text-slate-700 mb-1">
+                  <span className="font-semibold">GUEST NAME:</span> {invoiceData.guestName}
+                </p>
+                {invoiceData.guestPhone && (
+                  <p className="text-sm text-slate-700 mb-1">
+                    <span className="font-semibold">CONTACT INFO:</span> {invoiceData.guestPhone}
+                  </p>
+                )}
+                <p className="text-sm text-slate-700">
+                  <span className="font-semibold">INVOICE REF:</span> {invoiceData.invoiceNumber}
+                </p>
+                <hr className="border-slate-300 mt-3" />
               </div>
 
-              {/* Line Items */}
-              <table className="w-full text-left mb-12">
+              {/* ── Line items ── */}
+              <table className="w-full mt-2">
                 <thead>
-                  <tr className="border-b border-slate-200">
-                    <th className="py-3 text-xs font-bold uppercase text-slate-500">Description</th>
-                    <th className="py-3 text-xs font-bold uppercase text-slate-500 text-right">Quantity</th>
-                    <th className="py-3 text-xs font-bold uppercase text-slate-500 text-right">Amount</th>
+                  <tr style={{ backgroundColor: '#d4edaa' }}>
+                    <th className="px-8 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-700">Room Info</th>
+                    <th className="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-slate-700 w-36">Duration (Days)</th>
+                    <th className="px-8 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-700 w-28">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-b border-slate-100">
-                    <td className="py-4 text-slate-700">
-                      Accommodation ({invoiceData.room})<br/>
-                      <span className="text-xs text-slate-400">{invoiceData.checkIn} to {invoiceData.checkOut}</span>
+                  <tr>
+                    <td className="px-8 py-5 text-sm">
+                      <p className="font-bold text-slate-800">{invoiceData.roomType} ROOM {invoiceData.roomId}</p>
+                      <p className="text-slate-500 mt-1">
+                        {fmtInvoiceDate(invoiceData.checkIn)} – {fmtInvoiceDate(invoiceData.checkOut, true)}
+                      </p>
+                      <p className="text-slate-400 text-xs mt-1">Included all listed services as mentioned in the contract</p>
                     </td>
-                    <td className="py-4 text-right text-slate-700">{invoiceData.nights} nights</td>
-                    <td className="py-4 text-right text-slate-700 font-medium">{Number(invoiceData.price).toLocaleString('vi-VN')} ₫</td>
+                    <td className="px-4 py-5 text-center text-sm text-slate-700">{invoiceData.duration}</td>
+                    <td className="px-8 py-5 text-right text-sm text-slate-700">{fmtAmount(invoiceData.price)}</td>
                   </tr>
                 </tbody>
-                <tfoot>
-                  <tr>
-                    <td colSpan="2" className="py-4 text-right font-bold text-slate-800">Total</td>
-                    <td className="py-4 text-right font-bold text-xl text-[#26402E]">{Number(invoiceData.price).toLocaleString('vi-VN')} ₫</td>
-                  </tr>
-                </tfoot>
               </table>
 
-              {/* Footer */}
-              <div className="text-center text-slate-400 text-xs mt-16 pt-8 border-t border-slate-100">
-                <p>Thank you for staying with Kolab Living!</p>
-                <p className="mt-1">Payment due upon receipt.</p>
+              {/* ── Totals ── */}
+              <div className="px-8 pt-4 pb-8">
+                <table className="w-full text-sm">
+                  <tbody>
+                    <tr className="border-t border-slate-200">
+                      <td className="py-3 text-slate-700">TOTAL AMOUNT</td>
+                      <td className="py-3 text-right text-slate-700">{fmtAmount(invoiceData.price)}</td>
+                    </tr>
+                    <tr className="border-t border-slate-200">
+                      <td className="py-3 text-slate-700">VAT (8%)</td>
+                      <td className="py-3 text-right text-slate-700">0</td>
+                    </tr>
+                    <tr className="border-t border-slate-200">
+                      <td className="py-2" colSpan={2}>
+                        <table className="w-full" style={{ backgroundColor: '#d4edaa' }}>
+                          <tbody>
+                            <tr>
+                              <td className="px-3 py-3 font-bold text-slate-800">TOTAL</td>
+                              <td className="px-3 py-3 text-right font-bold text-slate-800">{fmtAmount(invoiceData.price)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
+
             </div>
           ) : (
             <div className="text-center py-12 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl print:hidden">
@@ -3880,61 +3926,36 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
           )}
         </div>
 
-        {/* Action Buttons (Screen Only) */}
-        <div className="px-6 py-5 bg-slate-50 border-t flex justify-end space-x-3 print:hidden">
-          <button 
-            onClick={onClose} 
-            className="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center transition-colors"
-          >
-            <X size={18} className="mr-2"/> Close Preview
+        {/* Action buttons */}
+        <div className="px-6 py-4 bg-slate-50 border-t flex justify-end space-x-3 print:hidden">
+          <button onClick={onClose} className="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center transition-colors">
+            <X size={16} className="mr-2" /> Close
           </button>
-          
-          <button 
-            onClick={handlePrint} 
+          <button
+            onClick={() => window.print()}
             disabled={!invoiceData}
             className={`px-6 py-2 rounded-lg flex items-center transition-colors ${
-              invoiceData 
-                ? 'bg-[#26402E] text-white hover:bg-[#1a2e20] shadow-md' 
-                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+              invoiceData ? 'bg-[#26402E] text-white hover:bg-[#1a2e20] shadow-md' : 'bg-slate-200 text-slate-400 cursor-not-allowed'
             }`}
           >
-            <Download size={18} className="mr-2" /> 
-            Download PDF
+            <Download size={16} className="mr-2" /> Download PDF
           </button>
         </div>
       </div>
-      
-      {/* Print Styles */}
+
       <style>{`
         @media print {
-          body * {
-            visibility: hidden;
-          }
-          .fixed.inset-0, .fixed.inset-0 * {
-            visibility: visible;
-          }
+          body * { visibility: hidden; }
+          .fixed.inset-0, .fixed.inset-0 * { visibility: visible; }
           .fixed.inset-0 {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background: white;
-            padding: 0;
+            position: absolute; left: 0; top: 0;
+            width: 100%; height: 100%;
+            background: white; padding: 0;
           }
-          .bg-slate-900\\/60 {
-            background: white !important;
-          }
-          .print\\:hidden {
-            display: none !important;
-          }
-          .print\\:shadow-none {
-            box-shadow: none !important;
-          }
-          .invoice-content {
-            border: none !important;
-            padding: 2rem !important;
-          }
+          .bg-slate-900\\/60 { background: white !important; }
+          .print\\:hidden { display: none !important; }
+          .print\\:shadow-none { box-shadow: none !important; }
+          .invoice-content { padding: 0 !important; }
         }
       `}</style>
     </div>
