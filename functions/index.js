@@ -395,13 +395,26 @@ exports.chatbot = onRequest(
         JSON.stringify(context, null, 2) +
         `\n\n---\nQuestion: ${question}`;
 
-      const result = await chat.sendMessage(prompt);
-      const answer = result.response.text();
-
-      res.status(200).json({ answer });
+      // Retry up to 3 times on 503 (model overloaded)
+      let lastErr;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const result = await chat.sendMessage(prompt);
+          const answer = result.response.text();
+          return res.status(200).json({ answer });
+        } catch (err) {
+          lastErr = err;
+          if (err.status !== 503) break;
+          await new Promise((r) => setTimeout(r, (attempt + 1) * 1500));
+        }
+      }
+      throw lastErr;
     } catch (err) {
       logger.error("Chatbot error:", err);
-      res.status(500).json({ error: "Failed to generate a response. Please try again." });
+      const msg = err.status === 503
+        ? "The AI is busy right now — please try again in a moment."
+        : "Failed to generate a response. Please try again.";
+      res.status(500).json({ error: msg });
     }
   }
 );
