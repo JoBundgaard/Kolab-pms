@@ -59,7 +59,7 @@ export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDa
       roomLabel: room?.name || booking.roomId || 'Room',
       priority: 1,
       assignedTo: null,
-      sourceBookingId: booking.id || null,
+      sourceBookingId: booking.sourceBookingId || booking.id || null,
       dueDate: dateStr,
     };
 

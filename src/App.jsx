@@ -52,6 +52,7 @@ import {
   Download,
 } from 'lucide-react';
 import HousekeepingTaskManager from './components/HousekeepingTaskManager';
+import WeeklyPlanningView from './components/WeeklyPlanningView';
 import Chatbot from './components/Chatbot';
 import { normalizeHousekeepingTasks } from './lib/housekeeping';
 
@@ -990,6 +991,16 @@ const addDays = (dateStr, days = 1) => {
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return dateStr;
   d.setDate(d.getDate() + days);
+  return formatDate(d);
+};
+
+// Returns the Monday (YYYY-MM-DD) of the week containing the given date
+const getWeekMonday = (date) => {
+  const d = new Date(typeof date === 'string' ? date + 'T00:00:00' : date);
+  if (isNaN(d.getTime())) return formatDate(new Date());
+  const day = d.getDay(); // 0 = Sun, 1 = Mon, ...
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
   return formatDate(d);
 };
 
@@ -4135,6 +4146,8 @@ export default function App() {
   const [receiptCopyState, setReceiptCopyState] = useState({});
   const [housekeepingDate, setHousekeepingDate] = useState(() => formatDate(new Date()));
   const [housekeepingStartTime, setHousekeepingStartTime] = useState(HOUSEKEEPING_START_TIME);
+  const [housekeepingView, setHousekeepingView] = useState('daily'); // 'daily' | 'weekly'
+  const [weekPlanningStart, setWeekPlanningStart] = useState(() => getWeekMonday(new Date()));
   const [housekeepingOverrides, setHousekeepingOverrides] = useState({});
   const [recurringCleaningDraft, setRecurringCleaningDraft] = useState(() => ({
     selectedRoomIds: ALL_ROOMS?.[0]?.id ? [ALL_ROOMS[0].id] : [],
@@ -5758,6 +5771,23 @@ export default function App() {
       pushAlert({ title: 'Housekeeping update failed', message: error?.message || 'Could not save housekeeping status', code: error?.code, raw: error });
     }
   }, [user, pushAlert, housekeepingTasks, recurringCleaningTasks, recurringDueByRoomId, housekeepingDate, findNextRoomCleaningDate]);
+
+  const handleChangeWeeklyCleaningDay = useCallback(async (sourceBookingId, newDayKey) => {
+    if (!sourceBookingId || !newDayKey) return;
+    const booking = bookings.find((b) => b.id === sourceBookingId);
+    if (!booking) return;
+    const result = await upsertBooking({ db, data: { weeklyCleaningDay: newDayKey }, existingId: sourceBookingId });
+    if (!result.ok) {
+      pushAlert({ title: 'Reschedule failed', message: result.message || 'Could not update cleaning day', code: result.code, tone: 'error' });
+    } else {
+      pushAlert({ title: 'Cleaning day updated', message: `${booking.guestName || 'Guest'} · weekly clean moved to ${newDayKey}`, tone: 'success' });
+    }
+  }, [bookings, db, pushAlert]);
+
+  const expandedHousekeepingBookings = useMemo(
+    () => (bookings || []).filter((b) => isBlockingStatus(b?.status)).flatMap((b) => expandBookingToRoomStays(b)),
+    [bookings]
+  );
 
   const handleCompleteRecurringRoomTodo = useCallback(async (todoTask, actingUser = user) => {
     if (!todoTask?.recurringTemplateId) return;
@@ -8849,7 +8879,43 @@ export default function App() {
           </div>
         )}
       </div>
-      {ENABLE_HOUSEKEEPING_V2 ? (
+      {/* View toggle */}
+      <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl w-fit">
+        <button
+          onClick={() => setHousekeepingView('daily')}
+          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${housekeepingView === 'daily' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          Daily tasks
+        </button>
+        <button
+          onClick={() => {
+            setHousekeepingView('weekly');
+            setWeekPlanningStart(getWeekMonday(housekeepingDate || new Date()));
+          }}
+          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${housekeepingView === 'weekly' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          Weekly planning
+        </button>
+      </div>
+
+      {housekeepingView === 'weekly' ? (
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] p-4">
+          <div className="mb-4">
+            <div className="font-semibold text-slate-800">Weekly Planning</div>
+            <div className="text-xs text-slate-500">Overview of the week ahead. Drag weekly cleans to reschedule — the guest's cleaning day updates automatically.</div>
+          </div>
+          <WeeklyPlanningView
+            bookings={expandedHousekeepingBookings}
+            rooms={ALL_ROOMS}
+            overrides={housekeepingOverrides}
+            weekStart={weekPlanningStart}
+            onWeekChange={(dir) =>
+              setWeekPlanningStart((prev) => addDays(prev, dir === 'next' ? 7 : -7))
+            }
+            onChangeCleaningDay={handleChangeWeeklyCleaningDay}
+          />
+        </div>
+      ) : ENABLE_HOUSEKEEPING_V2 ? (
         <HousekeepingErrorBoundary>
           <HousekeepingTaskManager
             tasks={housekeepingTasks}
