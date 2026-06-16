@@ -408,7 +408,14 @@ class HousekeepingErrorBoundary extends React.Component {
   }
 }
 
-const STAFF = ['Unassigned', 'Mai', 'Tuan', 'Linh', 'Dat', 'Thanh', 'Ngoc'];
+const STAFF = ['Unassigned', 'Thanh', 'Ngoc', 'Jonas', 'Van Anh'];
+
+const STAFF_ROLES = {
+  'Thanh':   'Head Housekeeper',
+  'Ngoc':    'Housekeeper',
+  'Jonas':   'Manager',
+  'Van Anh': 'Manager',
+};
 const WEEKDAY_LABELS = {
   sunday: 'Sunday',
   monday: 'Monday',
@@ -677,6 +684,59 @@ const calculateNights = (checkInDateStr, checkOutDateStr) => {
   return diffDays;
 };
 
+const getBookingEarlyCheckoutMeta = (booking) => {
+  const checkIn = formatDate(booking?.checkIn || '');
+  const contractCheckOut = formatDate(booking?.checkOut || '');
+  const actualCheckoutDate = formatDate(
+    booking?.actualCheckoutDate ||
+    booking?.earlyCheckoutDate ||
+    booking?.actualEndDate ||
+    ''
+  );
+  const endedEarly = !!(
+    booking?.endedEarly ||
+    booking?.hasEarlyTermination ||
+    booking?.earlyTermination ||
+    actualCheckoutDate
+  );
+
+  if (!endedEarly || !checkIn || !contractCheckOut || !actualCheckoutDate) {
+    return {
+      endedEarly: false,
+      actualCheckoutDate: '',
+      reimbursed: false,
+      contractCheckOut,
+    };
+  }
+
+  if (!(checkIn < actualCheckoutDate && actualCheckoutDate < contractCheckOut)) {
+    return {
+      endedEarly: false,
+      actualCheckoutDate: '',
+      reimbursed: false,
+      contractCheckOut,
+    };
+  }
+
+  return {
+    endedEarly: true,
+    actualCheckoutDate,
+    reimbursed: !!booking?.earlyTerminationReimbursed,
+    contractCheckOut,
+  };
+};
+
+const getBookingOccupancyCheckOut = (booking) => {
+  const earlyMeta = getBookingEarlyCheckoutMeta(booking);
+  return earlyMeta.endedEarly ? earlyMeta.actualCheckoutDate : earlyMeta.contractCheckOut;
+};
+
+const getBookingFinancialCheckOut = (booking) => {
+  const earlyMeta = getBookingEarlyCheckoutMeta(booking);
+  if (!earlyMeta.endedEarly) return earlyMeta.contractCheckOut;
+  return earlyMeta.reimbursed ? earlyMeta.actualCheckoutDate : earlyMeta.contractCheckOut;
+};
+
 const normalizeRoomMoves = (movesInput = [], { stayStart = '', stayEnd = '', fallbackRent = null } = {}) => {
   if (!Array.isArray(movesInput)) return [];
   return movesInput
@@ -713,9 +773,11 @@ const normalizeRoomMoves = (movesInput = [], { stayStart = '', stayEnd = '', fal
     .sort((a, b) => new Date(a.moveDate) - new Date(b.moveDate));
 };
 
-const getBookingStaySegments = (booking) => {
+const getBookingStaySegments = (booking, { mode = 'occupancy' } = {}) => {
   const checkIn = formatDate(booking?.checkIn || '');
-  const checkOut = formatDate(booking?.checkOut || '');
+  const checkOut = mode === 'financial'
+    ? getBookingFinancialCheckOut(booking)
+    : getBookingOccupancyCheckOut(booking);
   const primaryRoomId = booking?.roomId || '';
   if (!checkIn || !checkOut || !primaryRoomId) return [];
 
@@ -769,8 +831,8 @@ const getBookingStaySegments = (booking) => {
   return segments.filter((segment) => segment.roomId && segment.startDate < segment.endDate);
 };
 
-const getBookingRoomStays = (booking) => {
-  return getBookingStaySegments(booking).map((segment) => ({
+const getBookingRoomStays = (booking, options = {}) => {
+  return getBookingStaySegments(booking, options).map((segment) => ({
     id: segment.id,
     roomId: segment.roomId,
     startDate: segment.startDate,
@@ -780,12 +842,12 @@ const getBookingRoomStays = (booking) => {
 };
 
 const getBookingRoomIdForDate = (booking, dateStr) => {
-  const segment = getBookingStaySegments(booking).find((stay) => stay.startDate <= dateStr && stay.endDate > dateStr);
+  const segment = getBookingStaySegments(booking, { mode: 'occupancy' }).find((stay) => stay.startDate <= dateStr && stay.endDate > dateStr);
   return segment?.roomId || booking?.roomId || '';
 };
 
 const getBookingSegmentForDate = (booking, dateStr) => {
-  return getBookingStaySegments(booking).find((segment) => segment.startDate <= dateStr && segment.endDate > dateStr) || null;
+  return getBookingStaySegments(booking, { mode: 'occupancy' }).find((segment) => segment.startDate <= dateStr && segment.endDate > dateStr) || null;
 };
 
 const getBookingChannelForDate = (booking, dateStr) => {
@@ -797,13 +859,13 @@ const getBookingPaymentStatusForDate = (booking, dateStr) => {
 };
 
 const getBookingChannelSummary = (booking) => {
-  const channels = Array.from(new Set(getBookingStaySegments(booking).map((segment) => (segment.channel || '').toLowerCase()).filter(Boolean)));
+  const channels = Array.from(new Set(getBookingStaySegments(booking, { mode: 'occupancy' }).map((segment) => (segment.channel || '').toLowerCase()).filter(Boolean)));
   if (channels.length > 1) return 'mixed';
   return channels[0] || (booking?.channel || 'airbnb');
 };
 
 const expandBookingToRoomStays = (booking) => {
-  const roomStays = getBookingStaySegments(booking);
+  const roomStays = getBookingStaySegments(booking, { mode: 'occupancy' });
   if (!roomStays.length) return [];
   return roomStays.map((stay, index) => ({
     ...booking,
@@ -821,8 +883,12 @@ const expandBookingToRoomStays = (booking) => {
 };
 
 const calculateLongTermRentForRange = (booking, startDate, endDate) => {
-  const rangeStart = new Date(startDate);
-  const rangeEnd = new Date(endDate);
+  // Use parseLocalDateString so all boundaries are local midnight — prevents a
+  // timezone-mismatch bug where new Date('YYYY-MM-DD') is UTC midnight but
+  // new Date(y,m,d) is local midnight, causing a spurious extra month iteration
+  // on the last day of a 31-day month (visible as a doubled value in Excel exports).
+  const rangeStart = parseLocalDateString(startDate);
+  const rangeEnd = parseLocalDateString(endDate);
   if (isNaN(rangeStart.getTime()) || isNaN(rangeEnd.getTime()) || rangeStart >= rangeEnd) return 0;
 
   let totalRent = 0;
@@ -837,9 +903,9 @@ const calculateLongTermRentForRange = (booking, startDate, endDate) => {
     const monthOverlapStart = currentMonthStart < rangeStart ? rangeStart : currentMonthStart;
     const monthOverlapEnd = currentMonthEnd > rangeEnd ? rangeEnd : currentMonthEnd;
 
-    getBookingRoomStays(booking).forEach(stay => {
-      const stayStart = new Date(stay.startDate);
-      const stayEnd = new Date(stay.endDate);
+    getBookingRoomStays(booking, { mode: 'financial' }).forEach(stay => {
+      const stayStart = parseLocalDateString(stay.startDate);
+      const stayEnd = parseLocalDateString(stay.endDate);
 
       const segmentOverlapStart = stayStart > monthOverlapStart ? stayStart : monthOverlapStart;
       const segmentOverlapEnd = stayEnd < monthOverlapEnd ? stayEnd : monthOverlapEnd;
@@ -928,7 +994,7 @@ const getBookingBreakSummaryForMonth = (booking, monthKey) => {
   const monthEnd = formatDate(new Date(year, monthIndex + 1, 1));
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
   const breakNights = countBookingBreakNightsForRange(booking, monthStart, monthEnd);
-  const deductionVnd = getBookingRoomStays(booking).reduce((sum, stay) => {
+  const deductionVnd = getBookingRoomStays(booking, { mode: 'financial' }).reduce((sum, stay) => {
     const overlapStart = stay.startDate > monthStart ? stay.startDate : monthStart;
     const overlapEnd = stay.endDate < monthEnd ? stay.endDate : monthEnd;
     const breakNightsInStay = countBookingBreakNightsForRange(booking, overlapStart, overlapEnd);
@@ -948,7 +1014,8 @@ const isDateOnBookingBreak = (booking, dateStr) => {
 
 const bookingOccupiesDate = (booking, dateStr, roomId = null) => {
   if (!booking || !dateStr) return false;
-  if (!(booking.checkIn <= dateStr && booking.checkOut > dateStr)) return false;
+  const occupancyCheckOut = getBookingOccupancyCheckOut(booking) || booking.checkOut;
+  if (!(booking.checkIn <= dateStr && occupancyCheckOut > dateStr)) return false;
   if (roomId && getBookingRoomIdForDate(booking, dateStr) !== roomId) return false;
   return !isDateOnBookingBreak(booking, dateStr);
 };
@@ -957,7 +1024,7 @@ const getBookingOccupiedDates = (booking, roomId = null) => {
   const occupied = [];
   if (!booking?.checkIn || !booking?.checkOut) return occupied;
   const startTs = new Date(booking.checkIn).getTime();
-  const endTs = new Date(booking.checkOut).getTime();
+  const endTs = new Date(getBookingOccupancyCheckOut(booking) || booking.checkOut).getTime();
   if (Number.isNaN(startTs) || Number.isNaN(endTs) || startTs >= endTs) return occupied;
 
   for (let ts = startTs; ts < endTs; ts += 86_400_000) {
@@ -970,7 +1037,10 @@ const getBookingOccupiedDates = (booking, roomId = null) => {
 const bookingsOverlapConsideringBreaks = (bookingA, bookingB, roomId = null) => {
   if (!bookingA || !bookingB) return false;
   const overlapStartTs = Math.max(new Date(bookingA.checkIn).getTime(), new Date(bookingB.checkIn).getTime());
-  const overlapEndTs = Math.min(new Date(bookingA.checkOut).getTime(), new Date(bookingB.checkOut).getTime());
+  const overlapEndTs = Math.min(
+    new Date(getBookingOccupancyCheckOut(bookingA) || bookingA.checkOut).getTime(),
+    new Date(getBookingOccupancyCheckOut(bookingB) || bookingB.checkOut).getTime()
+  );
   if (Number.isNaN(overlapStartTs) || Number.isNaN(overlapEndTs) || overlapStartTs >= overlapEndTs) return false;
 
   for (let ts = overlapStartTs; ts < overlapEndTs; ts += 86_400_000) {
@@ -1751,6 +1821,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     hasGuestBreaks: false,
     guestBreakPeriods: [],
     sellRoomDuringBreak: false,
+    endedEarly: false,
+    actualCheckoutDate: '',
+    earlyTerminationReimbursed: false,
   });
   
   const [nights, setNights] = useState(0);
@@ -1868,6 +1941,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         hasGuestBreaks: !!booking.hasGuestBreaks || normalizeBookingBreaks(booking.guestBreakPeriods || booking.breakPeriods || []).length > 0,
         guestBreakPeriods: normalizeBookingBreaks(booking.guestBreakPeriods || booking.breakPeriods || []),
         sellRoomDuringBreak: !!booking.sellRoomDuringBreak,
+        endedEarly: getBookingEarlyCheckoutMeta(booking).endedEarly,
+        actualCheckoutDate: getBookingEarlyCheckoutMeta(booking).actualCheckoutDate,
+        earlyTerminationReimbursed: getBookingEarlyCheckoutMeta(booking).reimbursed,
       });
       setCategoryManual(!!booking.stayCategory);
       const normalizedServices = Array.isArray(booking.services) ? booking.services.map(normalizeServiceEntry) : [];
@@ -1907,6 +1983,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         hasGuestBreaks: false,
         guestBreakPeriods: [],
         sellRoomDuringBreak: false,
+        endedEarly: false,
+        actualCheckoutDate: '',
+        earlyTerminationReimbursed: false,
       });
       setCategoryManual(false);
       setServices([]);
@@ -2069,9 +2148,22 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
     }
 
     const rawBreaks = formData.hasGuestBreaks ? normalizeBookingBreaks(draftBreaks) : [];
+    const normalizedActualCheckoutDate = formData.endedEarly ? formatDate(formData.actualCheckoutDate || '') : '';
+    if (formData.endedEarly && !normalizedActualCheckoutDate) {
+      setConflictError('Enter the actual move-out date for an early-ended stay.');
+      return;
+    }
+    if (formData.endedEarly && !(formData.checkIn < normalizedActualCheckoutDate && normalizedActualCheckoutDate < formData.checkOut)) {
+      setConflictError(`Actual move-out date must be after ${formData.checkIn} and before ${formData.checkOut}.`);
+      return;
+    }
     for (const brk of rawBreaks) {
       if (brk.startDate < formData.checkIn || brk.endDate >= formData.checkOut) {
         setConflictError(`Break ${brk.startDate} → ${brk.endDate} must be within the stay (${formData.checkIn} → ${addDays(formData.checkOut, -1)}).`);
+        return;
+      }
+      if (normalizedActualCheckoutDate && brk.endDate >= normalizedActualCheckoutDate) {
+        setConflictError(`Break ${brk.startDate} → ${brk.endDate} must end before the actual move-out date (${normalizedActualCheckoutDate}).`);
         return;
       }
     }
@@ -2114,6 +2206,10 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         setConflictError('Room move dates must be unique.');
         return;
       }
+    }
+    if (normalizedActualCheckoutDate && normalizedRoomMoves.some((move) => move.moveDate >= normalizedActualCheckoutDate)) {
+      setConflictError(`Room changes must happen before the actual move-out date (${normalizedActualCheckoutDate}).`);
+      return;
     }
 
     const conflictResult = checkBookingConflict(
@@ -2178,6 +2274,9 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       hasGuestBreaks: !!formData.hasGuestBreaks && rawBreaks.length > 0,
       guestBreakPeriods: rawBreaks,
       sellRoomDuringBreak: !!formData.hasGuestBreaks && rawBreaks.length > 0 && !!formData.sellRoomDuringBreak,
+      endedEarly: !!formData.endedEarly && !!normalizedActualCheckoutDate,
+      actualCheckoutDate: normalizedActualCheckoutDate || null,
+      earlyTerminationReimbursed: !!formData.endedEarly && !!normalizedActualCheckoutDate && !!formData.earlyTerminationReimbursed,
     });
   };
 
@@ -2216,6 +2315,19 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
         hasGuestBreaks: checked,
         sellRoomDuringBreak: checked ? prev.sellRoomDuringBreak : false,
       }));
+    } else if (name === 'endedEarly') {
+      setFormData((prev) => {
+        const suggestedActualCheckoutDate =
+          prev.checkOut && addDays(prev.checkOut, -1) > prev.checkIn
+            ? addDays(prev.checkOut, -1)
+            : '';
+        return {
+          ...prev,
+          endedEarly: checked,
+          actualCheckoutDate: checked ? (prev.actualCheckoutDate || suggestedActualCheckoutDate) : '',
+          earlyTerminationReimbursed: checked ? prev.earlyTerminationReimbursed : false,
+        };
+      });
     } else if (name === 'channel') {
       const nextChannel = value;
       setPaymentStatusError(null);
@@ -2400,7 +2512,16 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
   };
 
   const handleDateChange = (field, dateStr) => {
-    setFormData(prev => ({ ...prev, [field]: dateStr }));
+    setFormData((prev) => {
+      const next = { ...prev, [field]: dateStr };
+      if (field === 'checkOut' && prev.endedEarly && prev.actualCheckoutDate && prev.actualCheckoutDate >= dateStr) {
+        next.actualCheckoutDate = dateStr && addDays(dateStr, -1) > prev.checkIn ? addDays(dateStr, -1) : '';
+      }
+      if (field === 'checkIn' && prev.endedEarly && prev.actualCheckoutDate && prev.actualCheckoutDate <= dateStr) {
+        next.actualCheckoutDate = prev.checkOut && addDays(prev.checkOut, -1) > dateStr ? addDays(prev.checkOut, -1) : '';
+      }
+      return next;
+    });
   };
 
   return (
@@ -2802,6 +2923,64 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
                         <p className="text-xs text-slate-500 mt-1">Use the full stay end date here. Room changes above decide when the guest leaves room 1.</p>
                       )}
                     </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Early Contract End</div>
+                        <div className="text-xs text-slate-500 mt-1">Use this when a guest or long-term tenant moves out before the booked contract end date.</div>
+                      </div>
+                      <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                        <input
+                          type="checkbox"
+                          name="endedEarly"
+                          checked={!!formData.endedEarly}
+                          onChange={handleChange}
+                          className="h-4 w-4 rounded border-slate-300"
+                          style={{ accentColor: COLORS.darkGreen }}
+                        />
+                        Enable
+                      </label>
+                    </div>
+
+                    {formData.endedEarly && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+                              Actual move-out date
+                            </label>
+                            <input
+                              type="date"
+                              value={formData.actualCheckoutDate || ''}
+                              min={formData.checkIn ? addDays(formData.checkIn, 1) : undefined}
+                              max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
+                              onChange={(e) => setFormData((prev) => ({ ...prev, actualCheckoutDate: e.target.value }))}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                            />
+                            <div className="text-xs text-slate-500 mt-1">Calendar availability and checkout cleaning will use this date instead of the booked contract end.</div>
+                          </div>
+                        </div>
+
+                        <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            name="earlyTerminationReimbursed"
+                            checked={!!formData.earlyTerminationReimbursed}
+                            onChange={handleChange}
+                            className="mt-0.5 h-4 w-4 rounded border-slate-300"
+                            style={{ accentColor: COLORS.darkGreen }}
+                          />
+                          <span>
+                            <span className="font-semibold text-slate-800">Reimburse the unused days</span>
+                            <span className="block text-xs text-slate-500 mt-1">
+                              On: financials stop on the actual move-out date. Off: the room opens in the calendar, but the original booked financials remain.
+                            </span>
+                          </span>
+                        </label>
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -4387,10 +4566,11 @@ export default function App() {
     const todayTs = new Date(todayStr).getTime();
 
     const overdue = bookings.filter((b) => {
-      if (!b?.id || !b.checkOut) return false;
+      const occupancyCheckOut = getBookingOccupancyCheckOut(b);
+      if (!b?.id || !occupancyCheckOut) return false;
       if (['cancelled', 'checked-out'].includes(b.status)) return false;
       if (autoCheckoutProcessedRef.current.has(b.id)) return false;
-      const checkoutTs = new Date(b.checkOut).getTime();
+      const checkoutTs = new Date(occupancyCheckOut).getTime();
       if (!Number.isFinite(checkoutTs)) return false;
       return checkoutTs < todayTs;
     });
@@ -5251,7 +5431,9 @@ export default function App() {
   const buildLongTermManagementRow = useCallback((booking, { view = 'current' } = {}) => {
     const isPast = view === 'past';
     const guest = guests.find((entry) => entry.id === booking.guestId);
-    const checkoutReferenceDate = booking.checkOut ? addDays(booking.checkOut, -1) : TODAY_STR;
+    const earlyCheckoutMeta = getBookingEarlyCheckoutMeta(booking);
+    const occupancyCheckOut = getBookingOccupancyCheckOut(booking) || booking.checkOut || '';
+    const checkoutReferenceDate = occupancyCheckOut ? addDays(occupancyCheckOut, -1) : TODAY_STR;
     const snapshotDateStr = isPast ? checkoutReferenceDate : TODAY_STR;
     const snapshotDate = new Date(snapshotDateStr);
     const snapshotMonthKey = getMonthKey(snapshotDate);
@@ -5293,7 +5475,7 @@ export default function App() {
       (rawLaundryStatus === 'done' || rawLaundryStatus === 'processing') && laundryUpdatedAt && !isSameOperationalWeek(laundryUpdatedAt, snapshotDate)
         ? 'pending'
         : rawLaundryStatus;
-    const stayNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
+    const stayNights = calculateNights(booking.checkIn, occupancyCheckOut || booking.checkOut);
     const stayValue = getDisplayPriceForBooking(booking);
     const serviceUsageTotal = serviceEntries.reduce((sum, entry) => sum + entry.totalPriceVnd, 0);
     const serviceUsageCount = serviceEntries.reduce((sum, entry) => sum + entry.qty, 0);
@@ -5334,14 +5516,20 @@ export default function App() {
       breakRentDeductionVnd: breakSummary.deductionVnd,
       receiptMessage: '',
       leaseEndDate: longTermOps.leaseEndDate || booking.checkOut || '',
+      endedEarly: earlyCheckoutMeta.endedEarly,
+      actualCheckoutDate: earlyCheckoutMeta.actualCheckoutDate || occupancyCheckOut || booking.checkOut || '',
+      earlyTerminationReimbursed: earlyCheckoutMeta.reimbursed,
       stayNights,
       stayValue,
       stayGrandTotal: stayValue + serviceUsageTotal,
-      stayDateLabel: `${booking.checkIn || '—'} → ${booking.checkOut || '—'}`,
-      checkoutDate: booking.checkOut || '',
+      stayDateLabel: `${booking.checkIn || '—'} → ${occupancyCheckOut || booking.checkOut || '—'}`,
+      checkoutDate: occupancyCheckOut || booking.checkOut || '',
       settledMonths,
       isPast,
       specialNotes: [
+        earlyCheckoutMeta.endedEarly
+          ? `Guest moved out early on ${earlyCheckoutMeta.actualCheckoutDate}. ${earlyCheckoutMeta.reimbursed ? 'Unused contract days are reimbursed, so financials stop there.' : 'Unused contract days are not reimbursed, so the booked financials stay in place.'}`
+          : null,
         booking.sellRoomDuringBreak && breakSummary.breakNights > 0
           ? `Guest is selling room nights during break this month: ${breakSummary.breakNights} day${breakSummary.breakNights === 1 ? '' : 's'} deducted (${formatCurrencyVND(breakSummary.deductionVnd)}).`
           : (booking.sellRoomDuringBreak
@@ -5359,7 +5547,7 @@ export default function App() {
       .filter((booking) => {
         if (!booking?.id || isCancelledStatus(booking.status)) return false;
         if (getBookingStayCategory(booking) !== 'long') return false;
-        return booking.checkIn <= TODAY_STR && booking.checkOut > TODAY_STR;
+        return booking.checkIn <= TODAY_STR && getBookingOccupancyCheckOut(booking) > TODAY_STR;
       })
       .map((booking) => buildLongTermManagementRow(booking, { view: 'current' }))
       .sort((a, b) => {
@@ -5374,9 +5562,10 @@ export default function App() {
       .filter((booking) => {
         if (!booking?.id || isCancelledStatus(booking.status)) return false;
         if (getBookingStayCategory(booking) !== 'long') return false;
-        if (!booking.checkOut) return false;
+        const occupancyCheckOut = getBookingOccupancyCheckOut(booking);
+        if (!occupancyCheckOut) return false;
         const status = String(booking.status || '').toLowerCase();
-        return booking.checkOut <= TODAY_STR || ['checked-out', 'checked_out', 'completed'].includes(status);
+        return occupancyCheckOut <= TODAY_STR || ['checked-out', 'checked_out', 'completed'].includes(status);
       })
       .map((booking) => buildLongTermManagementRow(booking, { view: 'past' }))
       .sort((a, b) => {
@@ -5535,7 +5724,7 @@ export default function App() {
       });
       return { 
         conflict: true, 
-        reason: `Room is booked by ${conflictingBooking.guestName} from ${conflictingBooking.checkIn} to ${conflictingBooking.checkOut}.`,
+        reason: `Room is booked by ${conflictingBooking.guestName} from ${conflictingBooking.checkIn} to ${getBookingOccupancyCheckOut(conflictingBooking) || conflictingBooking.checkOut}.`,
         conflictingBooking 
       };
     }
@@ -5952,6 +6141,9 @@ export default function App() {
           })();
       const normalizedPaymentStatus = normalizedChannel === 'direct' ? (bookingData.paymentStatus || null) : null;
       const nowIso = new Date().toISOString();
+      const normalizedActualCheckoutDate = bookingData.endedEarly ? formatDate(bookingData.actualCheckoutDate || '') : '';
+      const endedEarly = !!bookingData.endedEarly && !!normalizedActualCheckoutDate;
+      const earlyTerminationReimbursed = endedEarly && !!bookingData.earlyTerminationReimbursed;
       const withholding = computeAirbnbWithholding({
         ...bookingData,
         channel: normalizedChannel,
@@ -5976,6 +6168,9 @@ export default function App() {
             roomMoves,
             guestBreakPeriods: bookingData.hasGuestBreaks ? bookingData.guestBreakPeriods || [] : [],
             sellRoomDuringBreak: !!bookingData.sellRoomDuringBreak,
+            endedEarly,
+            actualCheckoutDate: normalizedActualCheckoutDate || null,
+            earlyTerminationReimbursed,
           }, bookingData.checkIn, bookingData.checkOut)
         : null;
       const normalizedGuestBreakPeriods = bookingData.hasGuestBreaks
@@ -6032,6 +6227,9 @@ export default function App() {
         breakPeriods: normalizedGuestBreakPeriods,
         breaks: normalizedGuestBreakPeriods,
         sellRoomDuringBreak: !!bookingData.hasGuestBreaks && !!bookingData.sellRoomDuringBreak,
+        endedEarly,
+        actualCheckoutDate: normalizedActualCheckoutDate || null,
+        earlyTerminationReimbursed,
         commissionWithheld: withholding.commissionWithheld,
         vatWithheld: withholding.vatWithheld,
         incomeTaxWithheld: withholding.incomeTaxWithheld,
@@ -7740,7 +7938,8 @@ export default function App() {
         if (bookingCategoryFilter !== 'all' && stayCat !== bookingCategoryFilter) return false;
 
         const checkInTs = new Date(b.checkIn).getTime();
-        const checkOutTs = new Date(b.checkOut).getTime();
+        const occupancyCheckOut = getBookingOccupancyCheckOut(b);
+        const checkOutTs = new Date(occupancyCheckOut).getTime();
 
         if (bookingTimeFilter === 'current') return todayTs >= checkInTs && todayTs < checkOutTs;
         if (bookingTimeFilter === 'future') return checkInTs > todayTs;
@@ -7826,11 +8025,15 @@ export default function App() {
             <tbody className="divide-y divide-slate-100">
               {filteredBookings.length === 0 ? <tr><td colSpan="7" className="px-6 py-12 text-center text-slate-500">No bookings found for this view.</td></tr> : filteredBookings
               .map((booking) => {
+                  const earlyCheckoutMeta = getBookingEarlyCheckoutMeta(booking);
+                  const occupancyCheckOut = getBookingOccupancyCheckOut(booking) || booking.checkOut;
+                  const financialCheckOut = getBookingFinancialCheckOut(booking) || booking.checkOut;
                   const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
+                  const billableNights = calculateNights(booking.checkIn, financialCheckOut) || bookingNights;
                   const displayPrice = getDisplayPriceForBooking(booking);
-                  const perNight = bookingNights > 0 ? Math.round(displayPrice / bookingNights) : 0;
+                  const perNight = billableNights > 0 ? Math.round(displayPrice / billableNights) : 0;
                   const stayCat = getBookingStayCategory(booking);
-                  const displayRoomDate = bookingTimeFilter === 'current' ? TODAY_STR : (bookingTimeFilter === 'past' ? addDays(booking.checkOut, -1) : booking.checkIn);
+                  const displayRoomDate = bookingTimeFilter === 'current' ? TODAY_STR : (bookingTimeFilter === 'past' ? addDays(occupancyCheckOut, -1) : booking.checkIn);
                   const displayRoomId = getBookingRoomIdForDate(booking, displayRoomDate);
                   const displayRoom = ALL_ROOMS.find((r) => r.id === displayRoomId) || ALL_ROOMS.find((r) => r.id === booking.roomId);
                   const channelValue = getBookingChannelForDate(booking, displayRoomDate);
@@ -7855,6 +8058,9 @@ export default function App() {
                     )}
                     {booking.bikeParkingNeeded && (
                       <span className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-slate-700 border-slate-200">Bike {booking.bikeCount || 1}</span>
+                    )}
+                    {earlyCheckoutMeta.endedEarly && (
+                      <span className="text-[11px] px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200">Ended early</span>
                     )}
                     <span className={`text-[11px] px-2 py-0.5 rounded-full border ${stayCat === 'long' ? 'bg-blue-50 text-blue-700 border-blue-200' : stayCat === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                       {formatStayCategoryLabel(stayCat)}
@@ -7886,7 +8092,15 @@ export default function App() {
                   <td className={`px-6 py-4 text-sm ${isPastContext ? 'text-slate-500' : 'text-slate-700'}`}>
                     <div className={`font-semibold ${isPastContext ? 'text-slate-600' : 'text-slate-800'}`}>{booking.checkIn}</div>
                     <div className={`${isPastContext ? 'text-slate-500' : 'text-slate-600'}`}>{booking.checkOut}</div>
-                    <div className="text-xs text-slate-500 mt-1">{bookingNights} night{bookingNights !== 1 ? 's' : ''}</div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {bookingNights} night{bookingNights !== 1 ? 's' : ''}
+                      {earlyCheckoutMeta.endedEarly ? ` booked · moved out ${earlyCheckoutMeta.actualCheckoutDate}` : ''}
+                    </div>
+                    {earlyCheckoutMeta.endedEarly && (
+                      <div className="text-xs mt-1 text-amber-700">
+                        {earlyCheckoutMeta.reimbursed ? 'Unused days reimbursed' : 'Unused days not reimbursed'}
+                      </div>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-sm font-medium text-slate-600">
                       {displayPrice.toLocaleString('vi-VN')} ₫
@@ -8118,6 +8332,11 @@ export default function App() {
                                 <span className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700 text-xs font-semibold">On break</span>
                               </div>
                             )}
+                            {row.endedEarly && (
+                              <div className="mt-2">
+                                <span className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700 text-xs font-semibold">Ended early</span>
+                              </div>
+                            )}
                           </td>
                           <td className="px-6 py-4">
                             {isPastView ? (
@@ -8259,6 +8478,17 @@ export default function App() {
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">{isPastView ? 'Checked Out' : 'Lease End Date'}</div>
                                     <div className="text-base font-semibold text-slate-800 mt-1">{(isPastView ? row.checkoutDate : row.leaseEndDate) || 'Not set'}</div>
                                   </div>
+                                  {row.endedEarly && (
+                                    <div>
+                                      <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Actual Move-Out</div>
+                                      <div className="text-base font-semibold text-slate-800 mt-1">{row.actualCheckoutDate || 'Not set'}</div>
+                                      <div className="text-xs text-slate-500 mt-1">
+                                        {row.earlyTerminationReimbursed
+                                          ? 'Unused contract days were reimbursed, so rent stops on the actual move-out date.'
+                                          : 'Unused contract days were not reimbursed, so booked financials remain active.'}
+                                      </div>
+                                    </div>
+                                  )}
                                   <div>
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">{isPastView ? 'Rent Snapshot' : 'Monthly Rent'}</div>
                                     <div className="text-base font-semibold text-slate-800 mt-1">{row.currentMonthRent != null ? formatCurrencyVND(row.currentMonthRent) : 'Not set'}</div>
