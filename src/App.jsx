@@ -1119,6 +1119,18 @@ const getDateRangeDays = (startDate, endDate) => {
   return days;
 };
 
+const getBookingFinancialDateKeys = (booking) => {
+  const startDate = formatDate(booking?.checkIn || '');
+  const endDate = getBookingFinancialCheckOut(booking) || formatDate(booking?.checkOut || '');
+  if (!startDate || !endDate || startDate >= endDate) return [];
+
+  const keys = [];
+  for (let ts = new Date(startDate).getTime(); ts < new Date(endDate).getTime(); ts += 86_400_000) {
+    keys.push(formatDate(new Date(ts)));
+  }
+  return keys;
+};
+
 const formatExportRangeLabel = (startDate, endDate) => {
   const start = parseLocalDateString(startDate);
   const end = parseLocalDateString(endDate);
@@ -5230,14 +5242,14 @@ export default function App() {
       return calculateLongTermRentForRange(booking, dateStr, addDays(dateStr, 1)) || null;
     }
 
-    const occupiedDates = getBookingOccupiedDates(booking);
-    const occupiedIndex = occupiedDates.indexOf(dateStr);
-    if (occupiedIndex === -1 || occupiedDates.length === 0) return null;
+    const financialDates = getBookingFinancialDateKeys(booking);
+    const financialIndex = financialDates.indexOf(dateStr);
+    if (financialIndex === -1 || financialDates.length === 0) return null;
 
     const total = Math.round(getDisplayPriceForBooking(booking));
-    const baseNightValue = Math.floor(total / occupiedDates.length);
-    const remainder = total - (baseNightValue * occupiedDates.length);
-    return baseNightValue + (occupiedIndex < remainder ? 1 : 0);
+    const baseNightValue = Math.floor(total / financialDates.length);
+    const remainder = total - (baseNightValue * financialDates.length);
+    return baseNightValue + (financialIndex < remainder ? 1 : 0);
   }, [getBookingStayCategory]);
 
   const handleExportRoomNights = useCallback(() => {
@@ -5258,16 +5270,28 @@ export default function App() {
     }
 
     const bookingsById = new Map(bookingsWithWithholding.map((booking) => [booking.id, booking]));
-    const bookingsByRoomDate = new Map();
+    const occupiedRoomDateKeys = new Set();
+    const financialBookingsByRoomDate = new Map();
 
     calendarBookings.forEach((segment) => {
       if (!segment?.roomId || isCancelledStatus(segment.status)) return;
       const sourceBooking = bookingsById.get(segment.sourceBookingId || segment.id) || segment;
       getBookingOccupiedDates(sourceBooking, segment.roomId).forEach((dateStr) => {
         if (dateStr < startDate || dateStr > endDate) return;
-        const key = `${segment.roomId}|${dateStr}`;
-        if (!bookingsByRoomDate.has(key)) {
-          bookingsByRoomDate.set(key, sourceBooking);
+        occupiedRoomDateKeys.add(`${segment.roomId}|${dateStr}`);
+      });
+    });
+
+    bookingsWithWithholding.forEach((booking) => {
+      if (!booking?.roomId || isCancelledStatus(booking.status)) return;
+      getBookingStaySegments(booking, { mode: 'financial' }).forEach((segment) => {
+        if (!segment?.roomId || !segment.startDate || !segment.endDate) return;
+        for (let ts = new Date(segment.startDate).getTime(); ts < new Date(segment.endDate).getTime(); ts += 86_400_000) {
+          const dateStr = formatDate(new Date(ts));
+          if (!dateStr || dateStr < startDate || dateStr > endDate) continue;
+          const key = `${segment.roomId}|${dateStr}`;
+          const existing = financialBookingsByRoomDate.get(key) || [];
+          financialBookingsByRoomDate.set(key, [...existing, booking]);
         }
       });
     });
@@ -5276,14 +5300,19 @@ export default function App() {
       const roomRows = property.rooms.map((room) => ({
         label: room.name,
         values: dayKeys.map((dateStr) => {
-          const booking = bookingsByRoomDate.get(`${room.id}|${dateStr}`);
-          return booking ? getExportNightValueForBooking(booking, dateStr) : null;
+          const bookingsForDate = financialBookingsByRoomDate.get(`${room.id}|${dateStr}`) || [];
+          if (!bookingsForDate.length) return null;
+          const totalValue = bookingsForDate.reduce((sum, booking) => {
+            const nightValue = getExportNightValueForBooking(booking, dateStr);
+            return sum + (Number.isFinite(nightValue) ? nightValue : 0);
+          }, 0);
+          return totalValue || null;
         }),
       }));
 
       const occupancy = dayKeys.map((dateStr) => {
         const occupiedCount = property.rooms.reduce((sum, room) => (
-          bookingsByRoomDate.has(`${room.id}|${dateStr}`) ? sum + 1 : sum
+          occupiedRoomDateKeys.has(`${room.id}|${dateStr}`) ? sum + 1 : sum
         ), 0);
         const ratio = property.rooms.length > 0 ? Math.round((occupiedCount / property.rooms.length) * 100) : 0;
         return `${ratio}%`;
