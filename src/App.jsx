@@ -464,11 +464,25 @@ const getCalendarBlockStatusClass = (status) => {
   return 'bg-slate-300 text-slate-600';
 };
 
+const getCalendarPmsBlockClass = (blockType) => {
+  if (blockType === 'long_term_priority') return 'bg-slate-400/95 text-white';
+  if (blockType === 'owner_hold') return 'bg-slate-500/95 text-white';
+  if (blockType === 'manual_block') return 'bg-slate-300/95 text-slate-800';
+  return 'bg-slate-300/95 text-slate-800';
+};
+
 const isBlockingStatus = (status) => {
   if (!status) return false;
   const s = String(status).toLowerCase();
   return s === 'confirmed' || s === 'checked-in' || s === 'checked-out';
 };
+
+const CALENDAR_BLOCK_TYPE_OPTIONS = [
+  { value: 'long_term_priority', label: 'Long-term priority' },
+  { value: 'owner_hold', label: 'Owner hold' },
+  { value: 'manual_block', label: 'Manual block' },
+  { value: 'other', label: 'Other' },
+];
 
 // --- Helper Functions ---
 const formatDate = (date) => {
@@ -735,6 +749,54 @@ const getBookingFinancialCheckOut = (booking) => {
   const earlyMeta = getBookingEarlyCheckoutMeta(booking);
   if (!earlyMeta.endedEarly) return earlyMeta.contractCheckOut;
   return earlyMeta.reimbursed ? earlyMeta.actualCheckoutDate : earlyMeta.contractCheckOut;
+};
+
+const normalizeCalendarBlock = (block = {}) => {
+  const startDate = formatDate(block?.startDate || block?.checkIn || '');
+  const endDate = formatDate(block?.endDate || block?.checkOut || '');
+  const blockType = block?.blockType || 'long_term_priority';
+  const title = (block?.title || '').trim();
+  const notes = (block?.notes || '').trim();
+  return {
+    ...block,
+    startDate,
+    endDate,
+    blockType,
+    title,
+    notes,
+    roomId: block?.roomId || '',
+    createdAt: block?.createdAt || null,
+    updatedAt: block?.updatedAt || null,
+  };
+};
+
+const getCalendarBlockLabel = (block) => {
+  if (block?.title) return block.title;
+  const match = CALENDAR_BLOCK_TYPE_OPTIONS.find((option) => option.value === block?.blockType);
+  return match?.label || 'PMS block';
+};
+
+const calendarBlockOccupiesDate = (block, dateStr, roomId = null) => {
+  if (!block || !dateStr) return false;
+  const normalized = normalizeCalendarBlock(block);
+  if (!normalized.roomId || !normalized.startDate || !normalized.endDate) return false;
+  if (roomId && normalized.roomId !== roomId) return false;
+  return normalized.startDate <= dateStr && normalized.endDate > dateStr;
+};
+
+const getCalendarBlockDateKeys = (block) => {
+  const normalized = normalizeCalendarBlock(block);
+  if (!normalized.startDate || !normalized.endDate || normalized.startDate >= normalized.endDate) return [];
+  const keys = [];
+  for (let ts = new Date(normalized.startDate).getTime(); ts < new Date(normalized.endDate).getTime(); ts += 86_400_000) {
+    keys.push(formatDate(new Date(ts)));
+  }
+  return keys;
+};
+
+const doDateRangesOverlap = (startA, endA, startB, endB) => {
+  if (!startA || !endA || !startB || !endB) return false;
+  return startA < endB && startB < endA;
 };
 
 const normalizeRoomMoves = (movesInput = [], { stayStart = '', stayEnd = '', fallbackRent = null } = {}) => {
@@ -1793,7 +1855,7 @@ const StatCard = ({ title, value, icon, subtext, colorClass = 'bg-emerald-500' }
   </div>
 );
 
-const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, checkBookingConflict, isSaving, currentUser, onLookupGuest }) => {
+const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, calendarBlocks, checkBookingConflict, isSaving, currentUser, onLookupGuest }) => {
   const modalContentRef = useRef(null);
   const deriveStayCategory = useCallback((nights) => {
       if (nights >= 31) return 'long';
@@ -2107,8 +2169,21 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
       });
     });
 
+    calendarBlocks.forEach((block) => {
+      if (block.roomId !== formData.roomId) return;
+      if (booking && block.id === booking.id) return;
+      const blockDates = getCalendarBlockDateKeys(block);
+      const blockSet = new Set(blockDates);
+      blockDates.forEach((dateStr) => {
+        checkInBlocked.add(dateStr);
+        if (!formData.hasMultipleRoomStay && blockSet.has(addDays(dateStr, -1))) {
+          checkOutBlocked.add(dateStr);
+        }
+      });
+    });
+
     return { checkInBlocked, checkOutBlocked };
-  }, [allBookings, formData.hasMultipleRoomStay, formData.roomId, booking]);
+  }, [allBookings, calendarBlocks, formData.hasMultipleRoomStay, formData.roomId, booking]);
 
   const availableRoomOptions = useMemo(() => {
     const roomBookings = allBookings.flatMap((entry) => expandBookingToRoomStays(entry)).reduce((acc, b) => {
@@ -2129,12 +2204,13 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ch
 
       let displayStatus = '';
       if (isOccupiedToday) displayStatus = ' (Occupied)';
+      else if ((calendarBlocks || []).some((block) => block.roomId === room.id && calendarBlockOccupiesDate(block, today, room.id))) displayStatus = ' (PMS Block)';
       else if (bookingsForRoom.length > 0) displayStatus = ' (Future Bookings)';
       else displayStatus = ' (Open)';
 
       return { ...room, displayStatus, isOccupied: isOccupiedToday };
     });
-  }, [allBookings, rooms, booking]);
+  }, [allBookings, rooms, booking, calendarBlocks]);
 
   if (!isOpen) return null;
 
@@ -4290,6 +4366,198 @@ const RoomNightExportModal = ({
   );
 };
 
+const CalendarBlockModal = ({
+  isOpen,
+  onClose,
+  onSave,
+  onDelete,
+  block,
+  rooms,
+  isSaving,
+}) => {
+  const [formData, setFormData] = useState({
+    roomId: '',
+    startDate: '',
+    endDate: '',
+    blockType: 'long_term_priority',
+    title: '',
+    notes: '',
+  });
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const startDate = formatDate(block?.startDate || new Date());
+    const endDate = formatDate(block?.endDate || addDays(startDate, 1));
+    setFormData({
+      roomId: block?.roomId || rooms?.[0]?.id || '',
+      startDate,
+      endDate,
+      blockType: block?.blockType || 'long_term_priority',
+      title: block?.title || '',
+      notes: block?.notes || '',
+    });
+    setError('');
+  }, [block, isOpen, rooms]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (!formData.roomId) {
+      setError('Select a room.');
+      return;
+    }
+    if (!formData.startDate || !formData.endDate || formData.startDate >= formData.endDate) {
+      setError('End date must be after start date.');
+      return;
+    }
+
+    try {
+      await onSave({
+        ...block,
+        ...formData,
+        title: (formData.title || '').trim(),
+        notes: (formData.notes || '').trim(),
+      });
+    } catch (saveError) {
+      setError(saveError?.message || 'Could not save PMS block.');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+      <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+        <div className="px-6 py-5 border-b border-slate-200 bg-[#F9F8F2] flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>
+              {block?.id ? 'Edit PMS Block' : 'Add PMS Block'}
+            </h3>
+            <p className="text-sm text-slate-500 mt-1">Use this for Airbnb-style blocks and internal notes, without creating a booking.</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-full text-slate-500 hover:text-slate-700 hover:bg-white" aria-label="Close PMS block modal">
+            <X size={20} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Room</label>
+            <select
+              value={formData.roomId}
+              onChange={(e) => setFormData((prev) => ({ ...prev, roomId: e.target.value }))}
+              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+            >
+              {rooms.map((room) => (
+                <option key={room.id} value={room.id}>
+                  {room.propertyName} · {room.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Start Date</label>
+              <input
+                type="date"
+                value={formData.startDate}
+                onChange={(e) => setFormData((prev) => ({ ...prev, startDate: e.target.value }))}
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>End Date</label>
+              <input
+                type="date"
+                value={formData.endDate}
+                min={formData.startDate || undefined}
+                onChange={(e) => setFormData((prev) => ({ ...prev, endDate: e.target.value }))}
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+              />
+              <div className="text-xs text-slate-500 mt-1">End date is exclusive, same as bookings.</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Reason</label>
+              <select
+                value={formData.blockType}
+                onChange={(e) => setFormData((prev) => ({ ...prev, blockType: e.target.value }))}
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+              >
+                {CALENDAR_BLOCK_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Short Label</label>
+              <input
+                type="text"
+                value={formData.title}
+                onChange={(e) => setFormData((prev) => ({ ...prev, title: e.target.value }))}
+                placeholder="Potential LT guest"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider mb-1" style={{ color: COLORS.darkGreen }}>Internal Note</label>
+            <textarea
+              value={formData.notes}
+              onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
+              rows={4}
+              placeholder="Why is this blocked? Who asked for it? Airbnb blocked manually?"
+              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none bg-white shadow-sm resize-none"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <div>
+              {block?.id && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(block)}
+                  disabled={isSaving}
+                  className="px-4 py-2.5 rounded-full border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 font-semibold text-sm"
+                >
+                  Delete block
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-5 py-2.5 rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSaving}
+                className={`px-5 py-2.5 rounded-full font-semibold ${isSaving ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-[#26402E] text-[#E2F05D] hover:bg-[#1e3224]'}`}
+              >
+                {isSaving ? 'Saving…' : block?.id ? 'Save block' : 'Create block'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 // --- Main App Component ---
 
 export default function App() {
@@ -4301,6 +4569,7 @@ export default function App() {
   
   // Data initialized as empty - will be populated by Firestore real-time listeners
   const [bookings, setBookings] = useState([]);
+  const [calendarBlocks, setCalendarBlocks] = useState([]);
   const [guests, setGuests] = useState([]);
   const [roomStatuses, setRoomStatuses] = useState({});
   const [maintenanceIssues, setMaintenanceIssues] = useState([]);
@@ -4639,6 +4908,7 @@ export default function App() {
   // Firestore is the single source of truth, accessed via real-time listeners
   useEffect(() => {
     let unsubBookings = () => {};
+    let unsubCalendarBlocks = () => {};
     let unsubGuests = () => {};
     let unsubMaintenance = () => {};
     let unsubRecurring = () => {};
@@ -4664,6 +4934,18 @@ export default function App() {
           setDataError(error.message || 'Unable to read bookings from Firestore');
           setLoading(false);
           pushAlert({ title: 'Sync error: bookings', message: error.message, code: error.code || 'firestore-error', raw: error });
+        }
+      );
+
+      const calendarBlocksQuery = query(collection(db, 'calendarBlocks'));
+      unsubCalendarBlocks = onSnapshot(
+        calendarBlocksQuery,
+        (snapshot) => {
+          setCalendarBlocks(snapshot.docs.map((d) => normalizeCalendarBlock({ id: d.id, ...d.data() })));
+        },
+        (error) => {
+          console.error('Error listening to calendar blocks:', error);
+          pushAlert({ title: 'Sync error: calendar blocks', message: error.message, code: error.code || 'firestore-error', raw: error });
         }
       );
 
@@ -4770,6 +5052,7 @@ export default function App() {
           setUser(null);
           if (listenersStarted) {
             unsubBookings();
+            unsubCalendarBlocks();
             unsubGuests();
             unsubMaintenance();
             unsubRecurring();
@@ -4798,6 +5081,7 @@ export default function App() {
     return () => {
       authUnsub();
       unsubBookings();
+      unsubCalendarBlocks();
       unsubGuests();
       unsubMaintenance();
       unsubRecurring();
@@ -4810,6 +5094,10 @@ export default function App() {
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBooking, setEditingBooking] = useState(null);
+  const [isCalendarBlockModalOpen, setIsCalendarBlockModalOpen] = useState(false);
+  const [editingCalendarBlock, setEditingCalendarBlock] = useState(null);
+  const [isSavingCalendarBlock, setIsSavingCalendarBlock] = useState(false);
+  const [calendarCreateMode, setCalendarCreateMode] = useState('booking');
   
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [editingMaintenanceIssue, setEditingMaintenanceIssue] = useState(null);
@@ -4924,6 +5212,7 @@ export default function App() {
       await signOut(auth);
       setUser(null);
       setBookings([]);
+      setCalendarBlocks([]);
       setRoomStatuses({});
       setMaintenanceIssues([]);
       setRecurringTasks([]);
@@ -5704,6 +5993,44 @@ export default function App() {
     [cleaningTasksTomorrow]
   );
 
+  const checkCalendarBlockConflict = useCallback((blockDraft, excludeBlockId = null) => {
+    const normalized = normalizeCalendarBlock(blockDraft);
+    if (!normalized.roomId || !normalized.startDate || !normalized.endDate) {
+      return { conflict: true, reason: 'Room and dates are required.' };
+    }
+    if (normalized.startDate >= normalized.endDate) {
+      return { conflict: true, reason: 'End date must be after start date.' };
+    }
+
+    const existingBooking = bookings.find((booking) => {
+      if (!booking?.id || isCancelledStatus(booking.status)) return false;
+      if (!doDateRangesOverlap(normalized.startDate, normalized.endDate, booking.checkIn, getBookingOccupancyCheckOut(booking) || booking.checkOut)) return false;
+      return getBookingOccupiedDates(booking, normalized.roomId).some((dateStr) => dateStr >= normalized.startDate && dateStr < normalized.endDate);
+    });
+
+    if (existingBooking) {
+      return {
+        conflict: true,
+        reason: `Room is already booked by ${existingBooking.guestName} from ${existingBooking.checkIn} to ${getBookingOccupancyCheckOut(existingBooking) || existingBooking.checkOut}.`,
+      };
+    }
+
+    const existingBlock = calendarBlocks.find((block) => {
+      if (!block?.id || block.id === excludeBlockId) return false;
+      if (block.roomId !== normalized.roomId) return false;
+      return doDateRangesOverlap(normalized.startDate, normalized.endDate, block.startDate, block.endDate);
+    });
+
+    if (existingBlock) {
+      return {
+        conflict: true,
+        reason: `Room already has a PMS block (${getCalendarBlockLabel(existingBlock)}) from ${existingBlock.startDate} to ${addDays(existingBlock.endDate, -1)}.`,
+      };
+    }
+
+    return { conflict: false };
+  }, [bookings, calendarBlocks]);
+
   const checkBookingConflict = useCallback((newBookingData, excludeBookingId = null) => {
     // Treat check-in as inclusive and check-out as exclusive to allow true back-to-back stays.
     const newCheckIn = new Date(newBookingData.checkIn).getTime();
@@ -5758,8 +6085,80 @@ export default function App() {
       };
     }
 
+    const conflictingBlock = calendarBlocks.find((block) => {
+      if (!block?.id) return false;
+      return newRoomStays.some((stay) => (
+        block.roomId === stay.roomId &&
+        doDateRangesOverlap(stay.startDate, stay.endDate, block.startDate, block.endDate)
+      ));
+    });
+
+    if (conflictingBlock) {
+      return {
+        conflict: true,
+        reason: `Room has a PMS block (${getCalendarBlockLabel(conflictingBlock)}) from ${conflictingBlock.startDate} to ${addDays(conflictingBlock.endDate, -1)}.`,
+        conflictingBlock,
+      };
+    }
+
     return { conflict: false };
-  }, [bookings]);
+  }, [bookings, calendarBlocks]);
+
+  const handleSaveCalendarBlock = useCallback(async (blockData) => {
+    const normalized = normalizeCalendarBlock(blockData);
+    const conflictResult = checkCalendarBlockConflict(normalized, normalized.id || null);
+    if (conflictResult.conflict) {
+      throw new Error(conflictResult.reason);
+    }
+
+    const nowIso = new Date().toISOString();
+    const targetId = normalized.id || randomId();
+    const payload = {
+      id: targetId,
+      roomId: normalized.roomId,
+      startDate: normalized.startDate,
+      endDate: normalized.endDate,
+      blockType: normalized.blockType || 'long_term_priority',
+      title: normalized.title || '',
+      notes: normalized.notes || '',
+      createdAt: normalized.createdAt || nowIso,
+      updatedAt: nowIso,
+      createdBy: normalized.createdBy || user?.email || user?.uid || 'system',
+    };
+
+    setIsSavingCalendarBlock(true);
+    try {
+      await setDoc(doc(db, 'calendarBlocks', targetId), payload, { merge: true });
+      setEditingCalendarBlock(null);
+      setIsCalendarBlockModalOpen(false);
+      setCalendarCreateMode('booking');
+      pushAlert({
+        title: normalized.id ? 'PMS block updated' : 'PMS block created',
+        message: `${getCalendarBlockLabel(payload)} · ${payload.startDate} to ${addDays(payload.endDate, -1)}`,
+        tone: 'success',
+      });
+    } finally {
+      setIsSavingCalendarBlock(false);
+    }
+  }, [checkCalendarBlockConflict, db, pushAlert, user]);
+
+  const handleDeleteCalendarBlock = useCallback(async (block) => {
+    if (!block?.id) return;
+    if (!confirm(`Delete PMS block "${getCalendarBlockLabel(block)}"?`)) return;
+    setIsSavingCalendarBlock(true);
+    try {
+      await deleteDoc(doc(db, 'calendarBlocks', block.id));
+      setEditingCalendarBlock(null);
+      setIsCalendarBlockModalOpen(false);
+      setCalendarCreateMode('booking');
+      pushAlert({ title: 'PMS block deleted', message: getCalendarBlockLabel(block), tone: 'success' });
+    } catch (error) {
+      console.error('Error deleting calendar block:', error);
+      pushAlert({ title: 'Delete failed', message: error?.message || 'Unable to delete PMS block', code: error?.code, raw: error });
+    } finally {
+      setIsSavingCalendarBlock(false);
+    }
+  }, [db, pushAlert]);
 
   const lookupReturningGuest = useCallback(async ({ guestEmail, guestPhone, guestName, checkIn }) => {
     try {
@@ -7612,6 +8011,10 @@ export default function App() {
       const dateStr = formatDate(date);
       return calendarBookings.find((b) => b.roomId === roomId && !isCancelledStatus(b.status) && bookingOccupiesDate(b, dateStr, roomId));
     };
+    const getCalendarBlockForCell = (roomId, date) => {
+      const dateStr = formatDate(date);
+      return calendarBlocks.find((block) => block.roomId === roomId && calendarBlockOccupiesDate(block, dateStr, roomId));
+    };
       const dateIndexMap = new Map(dates.map((d, i) => [formatDate(d), i]));
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] flex flex-col">
@@ -7627,8 +8030,20 @@ export default function App() {
               <button onClick={() => setCalendarView('guestName')} className={`px-4 py-1.5 text-sm font-medium rounded-full border ${calendarView === 'guestName' ? 'bg-slate-200' : 'hover:bg-white'}`}>Guest Name</button>
               <button onClick={() => setCalendarView('price')} className={`px-4 py-1.5 text-sm font-medium rounded-full border ${calendarView === 'price' ? 'bg-slate-200' : 'hover:bg-white'}`}>Price</button>
             </div>
+            {calendarCreateMode === 'block' && (
+              <div className="px-3 py-1.5 rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-700">
+                Click an empty room/date cell to place a PMS block
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setCalendarCreateMode((prev) => (prev === 'block' ? 'booking' : 'block'))}
+              className={`px-4 py-2 rounded-full border transition-colors text-sm font-semibold flex items-center gap-2 ${calendarCreateMode === 'block' ? 'border-slate-500 bg-slate-500 text-white hover:bg-slate-600' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+            >
+              <Plus size={16} />
+              {calendarCreateMode === 'block' ? 'Cancel PMS Block' : 'Add PMS Block'}
+            </button>
             <button
               onClick={openRoomNightExportModal}
               className="px-4 py-2 rounded-full border border-[#26402E] bg-white text-[#26402E] hover:bg-[#EAF0E6] transition-colors text-sm font-semibold flex items-center gap-2"
@@ -7790,10 +8205,13 @@ export default function App() {
                           const dateStr = formatDate(date);
                           const weekdayKey = getWeekdayKey(dateStr);
                           const booking = getBookingForCell(room.id, date);
+                          const calendarBlock = booking ? null : getCalendarBlockForCell(room.id, date);
                           const dateIndex = dateIndexMap.get(dateStr) ?? 0;
                           const previousDateStr = addDays(dateStr, -1);
-                          const isStart = !!booking && !bookingOccupiesDate(booking, previousDateStr, room.id);
-                          const isTruncatedAtStart = !!booking && dateIndex === 0 && bookingOccupiesDate(booking, previousDateStr, room.id);
+                          const isBookingStart = !!booking && !bookingOccupiesDate(booking, previousDateStr, room.id);
+                          const isBookingTruncatedAtStart = !!booking && dateIndex === 0 && bookingOccupiesDate(booking, previousDateStr, room.id);
+                          const isBlockStart = !!calendarBlock && !calendarBlockOccupiesDate(calendarBlock, previousDateStr, room.id);
+                          const isBlockTruncatedAtStart = !!calendarBlock && dateIndex === 0 && calendarBlockOccupiesDate(calendarBlock, previousDateStr, room.id);
                           const lastDateStr = formatDate(dates[dates.length - 1]);
                           const hasLongTermCleaningToday = calendarBookings.some((b) => {
                             if (!b.isLongTerm) return false;
@@ -7801,19 +8219,31 @@ export default function App() {
                             if (b.roomId !== room.id) return false;
                             return bookingOccupiesDate(b, dateStr, room.id) && b.weeklyCleaningDay === weekdayKey;
                           });
-                          let colSpan = 0;
+                          let bookingColSpan = 0;
                           if (booking) {
-                            if (isStart || isTruncatedAtStart) {
+                            if (isBookingStart || isBookingTruncatedAtStart) {
                               for (let idx = dateIndex; idx < dates.length; idx += 1) {
                                 const segmentDateStr = formatDate(dates[idx]);
                                 if (!bookingOccupiesDate(booking, segmentDateStr, room.id)) break;
-                                colSpan += 1;
+                                bookingColSpan += 1;
                               }
                             }
                           }
-                          const shouldRenderBlock = booking && (isStart || (isTruncatedAtStart && dateIndex === 0));
+                          let blockColSpan = 0;
+                          if (calendarBlock) {
+                            if (isBlockStart || isBlockTruncatedAtStart) {
+                              for (let idx = dateIndex; idx < dates.length; idx += 1) {
+                                const segmentDateStr = formatDate(dates[idx]);
+                                if (!calendarBlockOccupiesDate(calendarBlock, segmentDateStr, room.id)) break;
+                                blockColSpan += 1;
+                              }
+                            }
+                          }
+                          const shouldRenderBookingBlock = booking && (isBookingStart || (isBookingTruncatedAtStart && dateIndex === 0));
+                          const shouldRenderPmsBlock = calendarBlock && (isBlockStart || (isBlockTruncatedAtStart && dateIndex === 0));
                           const gapPx = 4; // Small gap so adjacent bookings touch without overlap
-                          const widthCalc = `calc(${colSpan * 100}% - ${gapPx}px)`;
+                          const bookingWidthCalc = `calc(${bookingColSpan * 100}% - ${gapPx}px)`;
+                          const pmsBlockWidthCalc = `calc(${blockColSpan * 100}% - ${gapPx}px)`;
                           const leftOffset = '0%';
                           const isTodayCol = dateStr === TODAY_STR;
                           const todayCellHighlight = isTodayCol
@@ -7822,10 +8252,35 @@ export default function App() {
                                 boxShadow: 'inset 0 0 0 1px rgba(226, 190, 140, 0.25)',
                               }
                             : undefined;
+                          const handleCellClick = () => {
+                            if (booking) {
+                              openBookingDetails(booking.sourceBookingId || booking.id);
+                              return;
+                            }
+                            if (calendarBlock) {
+                              setEditingCalendarBlock(calendarBlock);
+                              setIsCalendarBlockModalOpen(true);
+                              return;
+                            }
+                            if (calendarCreateMode === 'block') {
+                              setEditingCalendarBlock({
+                                roomId: room.id,
+                                startDate: dateStr,
+                                endDate: addDays(dateStr, 1),
+                                blockType: 'long_term_priority',
+                                title: '',
+                                notes: '',
+                              });
+                              setIsCalendarBlockModalOpen(true);
+                              return;
+                            }
+                            setEditingBooking({ roomId: room.id, checkIn: dateStr, checkOut: formatDate(new Date(date.getTime() + 86400000)) });
+                            setIsModalOpen(true);
+                          };
                           return (
-                            <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''}`} style={todayCellHighlight} onClick={() => { if (booking) openBookingDetails(booking.sourceBookingId || booking.id); else setEditingBooking({ roomId: room.id, checkIn: formatDate(date), checkOut: formatDate(new Date(date.getTime() + 86400000)) }); setIsModalOpen(true); }}>
+                            <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''} ${calendarCreateMode === 'block' && !booking && !calendarBlock ? 'cursor-cell hover:bg-slate-100/80' : ''}`} style={todayCellHighlight} onClick={handleCellClick}>
                               {isTodayCol && <div className="absolute inset-y-1 left-0 w-[3px] bg-[#d9a25c] rounded-full pointer-events-none" />}
-                              {booking && shouldRenderBlock && (
+                              {booking && shouldRenderBookingBlock && (
                                 (() => {
                                   const stayCat = getBookingStayCategory(booking);
                                   const catBorder = stayCat === 'long'
@@ -7836,7 +8291,7 @@ export default function App() {
                                   return (
                                     <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-30 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-40 ${getCalendarBlockStatusClass(booking.status)} ${catBorder}`}
                                       style={{
-                                        width: widthCalc,
+                                        width: bookingWidthCalc,
                                         left: leftOffset,
                                         zIndex: 10,
                                         outline: '1px solid rgba(255,255,255,0.35)',
@@ -7860,6 +8315,27 @@ export default function App() {
                                     </div>
                                   );
                                 })()
+                              )}
+                              {calendarBlock && shouldRenderPmsBlock && (
+                                <div
+                                  className={`absolute top-2.5 bottom-2.5 rounded-lg z-20 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-40 ${getCalendarPmsBlockClass(calendarBlock.blockType)}`}
+                                  style={{
+                                    width: pmsBlockWidthCalc,
+                                    left: leftOffset,
+                                    outline: '1px dashed rgba(255,255,255,0.55)',
+                                  }}
+                                  title={calendarBlock.notes || getCalendarBlockLabel(calendarBlock)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingCalendarBlock(calendarBlock);
+                                    setIsCalendarBlockModalOpen(true);
+                                  }}
+                                >
+                                  <span className="font-semibold truncate mr-1.5">
+                                    {getCalendarBlockLabel(calendarBlock)}
+                                  </span>
+                                  <span className="text-[10px] uppercase tracking-wide opacity-80">PMS</span>
+                                </div>
                               )}
                             </div>
                           );
@@ -10532,7 +11008,16 @@ export default function App() {
             </div>
           </div>
         </main>
-        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} currentUser={user} onLookupGuest={lookupReturningGuest} />
+        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} calendarBlocks={calendarBlocks} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} currentUser={user} onLookupGuest={lookupReturningGuest} />
+        <CalendarBlockModal
+          isOpen={isCalendarBlockModalOpen}
+          onClose={() => { setIsCalendarBlockModalOpen(false); setEditingCalendarBlock(null); }}
+          onSave={handleSaveCalendarBlock}
+          onDelete={handleDeleteCalendarBlock}
+          block={editingCalendarBlock}
+          rooms={ALL_ROOMS}
+          isSaving={isSavingCalendarBlock}
+        />
         <RoomNightExportModal
           isOpen={isRoomNightExportModalOpen}
           onClose={() => setIsRoomNightExportModalOpen(false)}
