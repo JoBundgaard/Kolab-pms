@@ -987,7 +987,9 @@ const calculateLongTermRentForRange = (booking, startDate, endDate) => {
 
   let totalRent = 0;
 
-  // Iterate over each month in the range
+  // A full calendar month always costs exactly the configured monthly rent.
+  // Partial months and sellable break days use that calendar month's actual
+  // length (28/29/30/31 days), never a fixed 30-day billing cycle.
   let currentMonthStart = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
 
   while (currentMonthStart < rangeEnd) {
@@ -1031,6 +1033,21 @@ const calculateLongTermRentForMonth = (booking, monthKey) => {
   const monthStart = formatDate(new Date(year, monthIndex, 1));
   const monthEnd = formatDate(new Date(year, monthIndex + 1, 1));
   return calculateLongTermRentForRange(booking, monthStart, monthEnd);
+};
+
+const getLongStayCalendarMonthCount = (checkIn, checkOut) => {
+  const start = parseLocalDateString(checkIn);
+  const end = parseLocalDateString(checkOut);
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) return 0;
+
+  let count = 0;
+  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  while (cursor < end) {
+    const nextMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    if (cursor >= start && nextMonth <= end) count += 1;
+    cursor = nextMonth;
+  }
+  return count;
 };
 
 const normalizeBookingBreaks = (breaksInput = []) => {
@@ -3354,7 +3371,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                               />
                               <span>
                                 <span className="font-semibold text-slate-800">Guest wants to sell rooms during break</span>
-                                <span className="block text-xs text-slate-500 mt-1">When enabled, break days stay available to sell and rent is reduced by monthly rent / 30 for each break day.</span>
+                                <span className="block text-xs text-slate-500 mt-1">When enabled, break days stay available to sell and rent is reduced using the actual number of days in each calendar month.</span>
                               </span>
                             </label>
                             {guestBreakCount === 0 ? (
@@ -3551,7 +3568,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                             onChange={handleChange}
                             min="0"
                           />
-                          <p className="text-xs text-slate-500 mt-1">Estimated total for selected dates: {formatCurrencyVND(longStayEstimatedTotal)}</p>
+                          <p className="text-xs text-slate-500 mt-1">Full calendar months are charged at this exact rate. Partial months use the actual number of days in that month.</p>
+                          <p className="text-xs font-semibold text-slate-600 mt-1">Estimated total for selected dates: {formatCurrencyVND(longStayEstimatedTotal)}</p>
                         </div>
 
                         {formData.hasMultipleRoomStay && (formData.roomMoves || []).map((move, idx) => (
@@ -4195,9 +4213,14 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
     const isLong = booking.isLongTerm || booking.stayCategory === 'long';
 
     let duration;
-    if (isLong && nights >= 28) {
-      const months = Math.max(1, Math.round(nights / 30));
-      duration = months === 1 ? '1 MONTH' : `${months} MONTHS`;
+    if (isLong) {
+      const fullCalendarMonths = getLongStayCalendarMonthCount(booking.checkIn, booking.checkOut);
+      const invoiceStart = parseLocalDateString(booking.checkIn);
+      const invoiceEnd = parseLocalDateString(booking.checkOut);
+      const hasPartialCalendarMonth = invoiceStart.getDate() !== 1 || invoiceEnd.getDate() !== 1;
+      duration = fullCalendarMonths > 0
+        ? `${fullCalendarMonths} FULL CALENDAR MONTH${fullCalendarMonths === 1 ? '' : 'S'}${hasPartialCalendarMonth ? ' + PRORATED DAYS' : ''}`
+        : `${nights} DAYS (PRORATED)`;
     } else {
       duration = String(nights);
     }
