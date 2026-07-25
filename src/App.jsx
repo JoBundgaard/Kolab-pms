@@ -333,6 +333,20 @@ const PROPERTIES = [
       { id: 'N_Rooftop', name: 'Rooftop', type: 'Rooftop' },
       { id: 'N_Other', name: 'Other Area', type: 'Other' },
     ]
+  },
+  {
+    id: 'prop_3',
+    name: 'The Hem',
+    openingDate: '2026-08-10',
+    rooms: Array.from({ length: 8 }, (_, index) => ({
+      id: `H${index + 1}`,
+      name: `H${index + 1}`,
+      type: 'Studio',
+    })),
+    commonAreas: [
+      { id: 'H_Common', name: 'Common Space', type: 'Common' },
+      { id: 'H_Other', name: 'Other Area', type: 'Other' },
+    ]
   }
 ];
 
@@ -346,6 +360,24 @@ const ALL_LOCATIONS = PROPERTIES.flatMap(p => [
   ...p.rooms.map(r => ({ ...r, propertyId: p.id, propertyName: p.name, locationType: 'Room' })),
   ...p.commonAreas.map(c => ({ ...c, propertyId: p.id, propertyName: p.name, locationType: c.type })),
 ]);
+
+const getPropertyForRoom = (roomId) => PROPERTIES.find((property) =>
+  property.rooms.some((room) => room.id === roomId)
+);
+
+const isRoomOpenOnDate = (roomId, dateStr) => {
+  const openingDate = getPropertyForRoom(roomId)?.openingDate;
+  return !openingDate || !dateStr || dateStr >= openingDate;
+};
+
+const countAvailableRoomNights = (rooms, startDate, endDate) => rooms.reduce((total, room) => {
+  const property = getPropertyForRoom(room.id);
+  const effectiveStart = property?.openingDate && property.openingDate > startDate
+    ? property.openingDate
+    : startDate;
+  if (!effectiveStart || !endDate || effectiveStart >= endDate) return total;
+  return total + Math.max(0, calculateNights(effectiveStart, endDate));
+}, 0);
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -3932,8 +3964,6 @@ const RecurringTaskModal = ({ isOpen, onClose, onSave, onDelete, task, prefill, 
     nextDue: formatDate(new Date()),
   });
   const [appliesTo, setAppliesTo] = useState(defaultMode); // 'single' | 'multiple'
-  const townhouseRooms = PROPERTIES.find((p) => p.id === 'prop_1')?.rooms || [];
-  const neighboursRooms = PROPERTIES.find((p) => p.id === 'prop_2')?.rooms || [];
   const [selectedRooms, setSelectedRooms] = useState([]);
   const [error, setError] = useState('');
 
@@ -4046,16 +4076,17 @@ const RecurringTaskModal = ({ isOpen, onClose, onSave, onDelete, task, prefill, 
                 <div className="text-xs text-slate-500">Selected: {selectedRooms.length} rooms</div>
               </div>
               <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
-                <div className="p-3">
+                {PROPERTIES.map((property) => (
+                <div className="p-3" key={property.id}>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="font-semibold text-slate-800">Townhouse</div>
+                    <div className="font-semibold text-slate-800">{property.name}</div>
                     <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
-                      <input type="checkbox" className="accent-[#26402E]" checked={townhouseRooms.every((r) => selectedRooms.includes(r.id)) && townhouseRooms.length > 0} onChange={(e) => selectAll(townhouseRooms.map((r) => r.id), e.target.checked)} />
-                      All Townhouse rooms
+                      <input type="checkbox" className="accent-[#26402E]" checked={property.rooms.every((r) => selectedRooms.includes(r.id)) && property.rooms.length > 0} onChange={(e) => selectAll(property.rooms.map((r) => r.id), e.target.checked)} />
+                      All {property.name} rooms
                     </label>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    {townhouseRooms.map((room) => (
+                    {property.rooms.map((room) => (
                       <label key={room.id} className="flex items-center gap-2 text-sm text-slate-700">
                         <input type="checkbox" className="accent-[#26402E]" checked={selectedRooms.includes(room.id)} onChange={() => toggleRoom(room.id)} />
                         {room.name}
@@ -4063,23 +4094,7 @@ const RecurringTaskModal = ({ isOpen, onClose, onSave, onDelete, task, prefill, 
                     ))}
                   </div>
                 </div>
-                <div className="p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="font-semibold text-slate-800">Neighbours</div>
-                    <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
-                      <input type="checkbox" className="accent-[#26402E]" checked={neighboursRooms.every((r) => selectedRooms.includes(r.id)) && neighboursRooms.length > 0} onChange={(e) => selectAll(neighboursRooms.map((r) => r.id), e.target.checked)} />
-                      All Neighbours rooms
-                    </label>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {neighboursRooms.map((room) => (
-                      <label key={room.id} className="flex items-center gap-2 text-sm text-slate-700">
-                        <input type="checkbox" className="accent-[#26402E]" checked={selectedRooms.includes(room.id)} onChange={() => toggleRoom(room.id)} />
-                        {room.name}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+                ))}
               </div>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-500">Common spaces are excluded from bulk selection.</span>
@@ -4477,7 +4492,7 @@ const RoomNightExportModal = ({
               <>
                 <div className="font-semibold text-slate-800">{formatExportRangeLabel(resolvedRange.startDate, resolvedRange.endDate)}</div>
                 <div className="text-sm text-slate-500 mt-1">
-                  {previewDays} day{previewDays === 1 ? '' : 's'} • separate sheets for Townhouse and Neighbours
+                  {previewDays} day{previewDays === 1 ? '' : 's'} • one sheet per property ({PROPERTIES.length} sheets)
                 </div>
               </>
             ) : (
@@ -6185,6 +6200,14 @@ export default function App() {
     }
 
     const newRoomStays = getBookingRoomStays(newBookingData);
+    const stayBeforePropertyOpening = newRoomStays.find((stay) => !isRoomOpenOnDate(stay.roomId, stay.startDate));
+    if (stayBeforePropertyOpening) {
+      const property = getPropertyForRoom(stayBeforePropertyOpening.roomId);
+      return {
+        conflict: true,
+        reason: `${property?.name || 'This property'} opens on ${property?.openingDate}. Choose a check-in date on or after opening day.`,
+      };
+    }
     const conflictingBooking = bookings.find((existingBooking) => {
       if (existingBooking.id === excludeBookingId) return false;
       if (!isBlockingStatus(existingBooking.status)) return false;
@@ -7482,7 +7505,7 @@ export default function App() {
     const withholdingComputedRange = airbnbActive.filter((b) => b._withholding?.status === 'computed');
     const withholdingUnknownRange = airbnbActive.filter((b) => b._withholding?.status === 'withholding_unknown');
 
-    const roomNightsAvailable = Math.max(1, ALL_ROOMS.length * rangeDays);
+    const roomNightsAvailable = Math.max(1, countAvailableRoomNights(ALL_ROOMS, rangeStartStr, formatDate(rangeEnd)));
     const roomNightsBooked = active.reduce((sum, b) => sum + (b._overlapNights || 0), 0);
     const revenue = active.reduce((sum, b) => {
     const isLong = (b.stayCategory || '').toLowerCase() === 'long' || b.isLongTerm;
@@ -7587,7 +7610,8 @@ export default function App() {
     });
 
     const propertyLoadArray = Object.entries(propertyLoad).map(([name, data]) => {
-      const capacityNights = Math.max(1, data.rooms * rangeDays);
+      const propertyRooms = ALL_ROOMS.filter((room) => room.propertyName === name);
+      const capacityNights = Math.max(1, countAvailableRoomNights(propertyRooms, rangeStartStr, formatDate(rangeEnd)));
       const occupancy = Math.min(100, Math.round((data.nights / capacityNights) * 100));
       return { name, occupancy, nights: data.nights, rooms: data.rooms };
     });
@@ -7672,7 +7696,7 @@ export default function App() {
       const mStart = new Date(currentYear, monthIdx, 1);
       const mEnd = new Date(currentYear, monthIdx + 1, 1);
       const daysInMonth = Math.round((mEnd - mStart) / msInDay);
-      const capacityNights = Math.max(1, rooms.length * daysInMonth);
+      const capacityNights = Math.max(1, countAvailableRoomNights(rooms, formatDate(mStart), formatDate(mEnd)));
 
       let nights = 0;
       let revenueMonth = 0;
@@ -7826,7 +7850,8 @@ export default function App() {
     const checkingInTomorrow = occupancyBookings.filter((b) => b.checkIn === TOMORROW_STR && b.status !== 'cancelled');
     const checkingOutTomorrow = occupancyBookings.filter((b) => b.checkOut === TOMORROW_STR && b.status !== 'cancelled');
     
-    const occupancyRate = ALL_ROOMS.length > 0 ? Math.round((activeBookings.length / ALL_ROOMS.length) * 100) : 0;
+    const openRoomsToday = ALL_ROOMS.filter((room) => isRoomOpenOnDate(room.id, TODAY_STR));
+    const occupancyRate = openRoomsToday.length > 0 ? Math.round((activeBookings.length / openRoomsToday.length) * 100) : 0;
     const tasksTodayCount = cleaningTasks ? cleaningTasks.length : 0;
     const tasksTomorrowCount = cleaningTasksTomorrow ? cleaningTasksTomorrow.length : 0;
     const openMaintenanceIssues = maintenanceIssues.filter(i => !isResolvedStatus(i.status)).length;
@@ -7924,7 +7949,7 @@ export default function App() {
           <h2 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Today</h2>
           <p className="text-slate-500 text-sm">Snapshot for {TODAY_STR}.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <StatCard title="🏠 Occupancy" value={`${occupancyRate}%`} icon={null} subtext={`${activeBookings.length} / ${ALL_ROOMS.length} rooms`} />
+            <StatCard title="🏠 Occupancy" value={`${occupancyRate}%`} icon={null} subtext={`${activeBookings.length} / ${openRoomsToday.length} open rooms`} />
             <StatCard title="👤 Check-ins" value={checkingIn.length} icon={null} subtext="Happening today" />
             <StatCard title="🧹 Cleaning" value={tasksTodayCount} icon={null} subtext="Must be ready today" />
             <StatCard title="⚙ Open Issues" value={openMaintenanceIssues} icon={null} subtext="Maintenance tickets" />
@@ -8346,6 +8371,7 @@ export default function App() {
                         <div key={room.id} className={`flex border-b border-slate-200 h-16 relative transition-colors group ${roomIndex % 2 === 0 ? 'bg-white/70' : 'bg-slate-50/70'} hover:bg-[#F9F8F2]/80`}>
                         {dates.map(date => {
                           const dateStr = formatDate(date);
+                          const isPreOpening = !isRoomOpenOnDate(room.id, dateStr);
                           const weekdayKey = getWeekdayKey(dateStr);
                           const booking = getBookingForCell(room.id, date);
                           const calendarBlock = booking ? null : getCalendarBlockForCell(room.id, date);
@@ -8396,6 +8422,7 @@ export default function App() {
                               }
                             : undefined;
                           const handleCellClick = () => {
+                            if (isPreOpening) return;
                             if (booking) {
                               openBookingDetails(booking.sourceBookingId || booking.id);
                               return;
@@ -8421,7 +8448,8 @@ export default function App() {
                             setIsModalOpen(true);
                           };
                           return (
-                            <div key={dateStr} className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''} ${calendarCreateMode === 'block' && !booking && !calendarBlock ? 'cursor-cell hover:bg-slate-100/80' : ''}`} style={todayCellHighlight} onClick={handleCellClick}>
+                            <div key={dateStr} title={isPreOpening ? `${prop.name} opens ${prop.openingDate}` : undefined} className={`flex-1 min-w-[3rem] border-r border-slate-200 relative ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-50/70' : ''} ${dateStr === selectedCalendarDate ? 'bg-[#E2F05D]/12' : ''} ${isPreOpening ? 'bg-slate-200/70 cursor-not-allowed' : ''} ${calendarCreateMode === 'block' && !booking && !calendarBlock && !isPreOpening ? 'cursor-cell hover:bg-slate-100/80' : ''}`} style={todayCellHighlight} onClick={handleCellClick}>
+                              {isPreOpening && <div className="absolute inset-0 bg-slate-200/60 z-20 flex items-center justify-center text-[9px] text-slate-500">Closed</div>}
                               {isTodayCol && <div className="absolute inset-y-1 left-0 w-[3px] bg-[#d9a25c] rounded-full pointer-events-none" />}
                               {booking && shouldRenderBookingBlock && (
                                 (() => {
@@ -9614,20 +9642,16 @@ export default function App() {
               >
                 All rooms
               </button>
-              <button
-                type="button"
-                onClick={() => setRecurringCleaningDraft((prev) => ({ ...prev, selectedRoomIds: ALL_ROOMS.filter((r) => r.propertyName === 'Neighbours').map((r) => r.id) }))}
-                className="px-2 py-1 rounded-full text-[11px] font-semibold border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-              >
-                All Neighbours
-              </button>
-              <button
-                type="button"
-                onClick={() => setRecurringCleaningDraft((prev) => ({ ...prev, selectedRoomIds: ALL_ROOMS.filter((r) => r.propertyName === 'Townhouse').map((r) => r.id) }))}
-                className="px-2 py-1 rounded-full text-[11px] font-semibold border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-              >
-                All Townhouse
-              </button>
+              {PROPERTIES.map((property) => (
+                <button
+                  key={property.id}
+                  type="button"
+                  onClick={() => setRecurringCleaningDraft((prev) => ({ ...prev, selectedRoomIds: property.rooms.map((r) => r.id) }))}
+                  className="px-2 py-1 rounded-full text-[11px] font-semibold border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                >
+                  All {property.name}
+                </button>
+              ))}
               <button
                 type="button"
                 onClick={() => setRecurringCleaningDraft((prev) => ({ ...prev, selectedRoomIds: [] }))}
