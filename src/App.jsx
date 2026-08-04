@@ -92,6 +92,12 @@ const AIRBNB_COMMISSION_RATE = AIRBNB_COMMISSION_BASE_RATE * (1 + AIRBNB_COMMISS
 const AIRBNB_PAYOUT_RATE = 1 - AIRBNB_COMMISSION_RATE;
 const AIRBNB_VAT_RATE = 0.05;
 const AIRBNB_INCOME_TAX_RATE = 0.02;
+const AIRBNB_TAX_WITHHOLDING_END_DATE = '2026-07-19';
+
+const isAirbnbTaxExemptBooking = (booking) => {
+  const checkIn = formatDate(booking?.checkIn || booking?.startDate || '');
+  return !!checkIn && checkIn >= AIRBNB_TAX_WITHHOLDING_END_DATE;
+};
 
 const deriveAirbnbGrossAmount = (booking) => {
   const legacyBase = Number(booking?.airbnbBaseEarningsVnd ?? booking?.netEarningsFromEmail);
@@ -111,7 +117,8 @@ const deriveAirbnbGrossAmount = (booking) => {
 // Compute Airbnb deductions from the guest-paid gross amount.
 // `grossPrice` is preferred when available. Legacy field names are preserved as gross aliases.
 // The Airbnb host fee is 15.5% plus 10% VAT on that service fee, for an effective 17.05% of gross.
-// VN VAT withheld = 5% of gross; VN income tax withheld = 2% of gross.
+// For stays starting before 19 July 2026, VN VAT withheld = 5% of gross and VN income tax withheld = 2% of gross.
+// From 19 July 2026 onward, Airbnb no longer withholds either tax for the company.
 // Final counted income = gross − (host fee + VAT + income tax), rounded to whole VND.
 const computeAirbnbWithholding = (booking) => {
   const channel = (booking?.channel || '').toLowerCase();
@@ -144,13 +151,15 @@ const computeAirbnbWithholding = (booking) => {
 
   const commissionWithheld = Math.round(baseEarnings * AIRBNB_COMMISSION_RATE);
   const payoutBeforeTax = Math.round(baseEarnings - commissionWithheld);
-  const vatWithheld = Math.round(baseEarnings * AIRBNB_VAT_RATE);
-  const incomeTaxWithheld = Math.round(baseEarnings * AIRBNB_INCOME_TAX_RATE);
+  const taxExempt = isAirbnbTaxExemptBooking(booking);
+  const vatWithheld = taxExempt ? 0 : Math.round(baseEarnings * AIRBNB_VAT_RATE);
+  const incomeTaxWithheld = taxExempt ? 0 : Math.round(baseEarnings * AIRBNB_INCOME_TAX_RATE);
   const totalWithheld = commissionWithheld + vatWithheld + incomeTaxWithheld;
   const finalCountedIncome = Math.round(baseEarnings - totalWithheld);
 
   return {
     status: 'computed',
+    taxExempt,
     grossPrice: baseEarnings,
     payoutBeforeTax,
     commissionWithheld,
@@ -2010,6 +2019,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
     if (formData.channel === 'airbnb') {
       const computed = computeAirbnbWithholding({
         channel: formData.channel,
+        checkIn: formData.checkIn,
         grossPrice: formData.grossPrice,
         airbnbBaseEarningsVnd: formData.airbnbBaseEarningsVnd,
         price: formData.price,
@@ -2019,7 +2029,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
       }
     }
     return Number(formData.price) || 0;
-  }, [formData.airbnbBaseEarningsVnd, formData.channel, formData.grossPrice, formData.price, formData.stayCategory, longStayEstimatedTotal]);
+  }, [formData.airbnbBaseEarningsVnd, formData.channel, formData.checkIn, formData.grossPrice, formData.price, formData.stayCategory, longStayEstimatedTotal]);
 
   const bookingTotalWithServices = useMemo(() => bookingBaseAmount + servicesTotal, [bookingBaseAmount, servicesTotal]);
 
@@ -2027,11 +2037,12 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
     if (formData.channel !== 'airbnb') return null;
     return computeAirbnbWithholding({
       channel: formData.channel,
+      checkIn: formData.checkIn,
       grossPrice: formData.grossPrice,
       airbnbBaseEarningsVnd: formData.airbnbBaseEarningsVnd,
       price: formData.price,
     });
-  }, [formData.channel, formData.grossPrice, formData.airbnbBaseEarningsVnd, formData.price]);
+  }, [formData.channel, formData.checkIn, formData.grossPrice, formData.airbnbBaseEarningsVnd, formData.price]);
 
   useEffect(() => {
     if (booking) {
@@ -2180,14 +2191,14 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
     setFormData((prev) => {
       const base = Number(prev.grossPrice ?? prev.airbnbBaseEarningsVnd);
       const hasBase = Number.isFinite(base) && base > 0;
-      const computed = hasBase ? computeAirbnbWithholding({ channel: 'airbnb', grossPrice: base, airbnbBaseEarningsVnd: base, price: prev.price }) : null;
+      const computed = hasBase ? computeAirbnbWithholding({ channel: 'airbnb', checkIn: prev.checkIn, grossPrice: base, airbnbBaseEarningsVnd: base, price: prev.price }) : null;
       const nextNet = hasBase ? base : '';
       const nextGross = hasBase ? base : '';
       const nextPrice = hasBase ? computed?.finalCountedIncome ?? '' : '';
       if (prev.netEarningsFromEmail === nextNet && prev.grossPrice === nextGross && prev.price === nextPrice) return prev;
       return { ...prev, grossPrice: nextGross, netEarningsFromEmail: nextNet, price: nextPrice };
     });
-  }, [formData.channel, formData.grossPrice, formData.airbnbBaseEarningsVnd]);
+  }, [formData.channel, formData.checkIn, formData.grossPrice, formData.airbnbBaseEarningsVnd]);
 
   useEffect(() => {
     if (formData.channel !== 'airbnb') return;
@@ -3516,7 +3527,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                       <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
                         <div>
                           <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Airbnb Withholding (Vietnam)</div>
-                          <p className="text-xs text-slate-500 mt-1">Enter the guest-paid gross amount. Host fee, VAT, and income tax are then deducted automatically.</p>
+                          <p className="text-xs text-slate-500 mt-1">Enter the guest-paid gross amount. The Airbnb host fee is deducted automatically; VAT and income tax apply only to stays before 19 July 2026.</p>
                         </div>
 
                         <div>
@@ -3538,10 +3549,13 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                           {withholdingPreview?.status === 'computed' ? (
                             <div className="space-y-1">
                               <div className="font-semibold text-slate-800">Gross amount: {formatCurrencyVND(withholdingPreview.airbnbBaseEarningsVnd || withholdingPreview.netEarningsFromEmail || 0)}</div>
+                              {withholdingPreview.taxExempt && (
+                                <div className="font-semibold text-emerald-700">No Airbnb VAT or income tax withholding (check-in on or after 19 July 2026).</div>
+                              )}
                               <div className="grid grid-cols-1 gap-1 text-slate-600">
                                 <span>Host fee (15.5% + VAT): {formatCurrencyVND(withholdingPreview.commissionWithheld)}</span>
-                                <span>VAT 5%: {formatCurrencyVND(withholdingPreview.vatWithheld)}</span>
-                                <span>Income tax 2%: {formatCurrencyVND(withholdingPreview.incomeTaxWithheld)}</span>
+                                <span>VAT 5%{withholdingPreview.taxExempt ? ' (not withheld)' : ''}: {formatCurrencyVND(withholdingPreview.vatWithheld)}</span>
+                                <span>Income tax 2%{withholdingPreview.taxExempt ? ' (not withheld)' : ''}: {formatCurrencyVND(withholdingPreview.incomeTaxWithheld)}</span>
                                 <span>Total deductions: {formatCurrencyVND(withholdingPreview.totalWithheld)}</span>
                                 <span className="font-semibold text-slate-800">Final counted income: {formatCurrencyVND(withholdingPreview.finalCountedIncome)}</span>
                               </div>
@@ -10684,7 +10698,7 @@ export default function App() {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-serif font-bold text-lg" style={{ color: COLORS.darkGreen }}>Withholding (Airbnb)</h3>
-                <p className="text-xs text-slate-500">Airbnb host fee (15.5% + VAT), 5% VN VAT, and 2% income tax calculated from the guest-paid gross amount.</p>
+                <p className="text-xs text-slate-500">Airbnb host fee is calculated from gross. VN VAT and income tax are withheld only for stays before 19 July 2026.</p>
               </div>
               <div className="text-[11px] uppercase font-semibold text-slate-500">Range</div>
             </div>
