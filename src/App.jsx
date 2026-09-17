@@ -346,7 +346,7 @@ const PROPERTIES = [
   {
     id: 'prop_3',
     name: 'The Hem',
-    openingDate: '2026-09-15',
+    openingDate: '2026-11-01',
     rooms: Array.from({ length: 8 }, (_, index) => ({
       id: `H${index + 1}`,
       name: `H${index + 1}`,
