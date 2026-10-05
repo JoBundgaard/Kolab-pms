@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { normalizeHousekeepingTasks } from '../lib/housekeeping';
 
 const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -45,6 +45,8 @@ export default function WeeklyPlanningView({
   onWeekChange,
   onChangeCleaningDay,
 }) {
+  const touchDrag = useRef(null);
+  const plannerRef = useRef(null);
   const [draggedTask, setDraggedTask] = useState(null);
   const [dragOverDay, setDragOverDay] = useState(null);
   const [moveConfirm, setMoveConfirm] = useState(null); // { taskId, guestName, roomLabel, fromDay, toDay, sourceBookingId }
@@ -81,23 +83,45 @@ export default function WeeklyPlanningView({
     }
   };
 
+  const requestMove = (task, dayIndex) => {
+    if (task && dayIndex !== null && task.fromDayIndex !== dayIndex) {
+      setMoveConfirm({
+        taskId: task.id,
+        roomLabel: task.roomLabel,
+        propertyName: task.propertyName,
+        sourceBookingId: task.sourceBookingId,
+        fromDay: DAY_KEYS[task.fromDayIndex],
+        toDay: DAY_KEYS[dayIndex],
+        fromDayLabel: DAY_SHORT[task.fromDayIndex],
+        toDayLabel: DAY_SHORT[dayIndex],
+      });
+    }
+    setDraggedTask(null);
+    setDragOverDay(null);
+  };
+
   const handleDrop = (e, dayIndex) => {
     e.preventDefault();
-    if (!draggedTask || draggedTask.fromDayIndex === dayIndex) {
-      setDraggedTask(null);
-      setDragOverDay(null);
-      return;
-    }
-    setMoveConfirm({
-      taskId: draggedTask.id,
-      roomLabel: draggedTask.roomLabel,
-      propertyName: draggedTask.propertyName,
-      sourceBookingId: draggedTask.sourceBookingId,
-      fromDay: DAY_KEYS[draggedTask.fromDayIndex],
-      toDay: DAY_KEYS[dayIndex],
-      fromDayLabel: DAY_SHORT[draggedTask.fromDayIndex],
-      toDayLabel: DAY_SHORT[dayIndex],
-    });
+    requestMove(draggedTask, dayIndex);
+  };
+
+  const dayAtPointer = (e) => {
+    const column = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-cleaning-day]');
+    return column && plannerRef.current?.contains(column)
+      ? Number(column.dataset.cleaningDay) : null;
+  };
+
+  const handlePointerDown = (e, task, dayIndex) => {
+    if (e.pointerType === 'mouse' || !e.isPrimary) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const movingTask = { ...task, fromDayIndex: dayIndex };
+    touchDrag.current = { task: movingTask, pointerId: e.pointerId };
+    setDraggedTask(movingTask);
+  };
+
+  const cancelTouchDrag = () => {
+    touchDrag.current = null;
     setDraggedTask(null);
     setDragOverDay(null);
   };
@@ -152,7 +176,7 @@ export default function WeeklyPlanningView({
       {/* Header row */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-xs text-slate-500">
-          Drag <span className="font-semibold text-sky-700">weekly cleans</span> between days to reschedule ·{' '}
+          Drag the handle or use “Move to…” on <span className="font-semibold text-sky-700">weekly cleans</span> to reschedule ·{' '}
           <span className="font-semibold text-amber-700">Checkout</span> dates are fixed
         </div>
         <div className="flex items-center gap-2 ml-auto">
@@ -178,7 +202,7 @@ export default function WeeklyPlanningView({
       </div>
 
       {/* 7-day grid */}
-      <div className="overflow-x-auto -mx-0">
+      <div ref={plannerRef} className="overflow-x-auto -mx-0">
         <div className="grid grid-cols-7 gap-2 min-w-[700px]">
           {weekDates.map((dateStr, dayIndex) => {
             const dayTasks = tasksByDay[dayIndex];
@@ -191,6 +215,7 @@ export default function WeeklyPlanningView({
             return (
               <div
                 key={dateStr}
+                data-cleaning-day={dayIndex}
                 onDragOver={(e) => handleDragOver(e, dayIndex)}
                 onDragLeave={(e) => handleDragLeave(e, dayIndex)}
                 onDrop={(e) => handleDrop(e, dayIndex)}
@@ -261,13 +286,43 @@ export default function WeeklyPlanningView({
                       >
                         <div className="flex items-start gap-1">
                           {isDraggable && (
-                            <span className="text-slate-400 text-[10px] mt-0.5 leading-none shrink-0">⋮⋮</span>
+                            <span
+                              aria-label="Drag cleaning to another day"
+                              onPointerDown={(e) => handlePointerDown(e, task, dayIndex)}
+                              onPointerMove={(e) => {
+                                if (touchDrag.current?.pointerId === e.pointerId) setDragOverDay(dayAtPointer(e));
+                              }}
+                              onPointerUp={(e) => {
+                                if (touchDrag.current?.pointerId !== e.pointerId) return;
+                                const movingTask = touchDrag.current.task;
+                                touchDrag.current = null;
+                                requestMove(movingTask, dayAtPointer(e));
+                              }}
+                              onPointerCancel={cancelTouchDrag}
+                              onLostPointerCapture={() => { if (touchDrag.current) cancelTouchDrag(); }}
+                              style={{ touchAction: 'none' }}
+                              className="text-slate-500 text-lg min-w-6 min-h-11 flex items-center justify-center shrink-0"
+                            >⋮⋮</span>
                           )}
                           <div className="min-w-0 flex-1">
                             <div className="font-semibold text-slate-800 truncate">{task.roomLabel}</div>
                             <div className="text-slate-500 truncate text-[10px]">{task.propertyName}</div>
                           </div>
                         </div>
+                        {isDraggable && (
+                          <select
+                            aria-label={`Move ${task.roomLabel} weekly cleaning to another day`}
+                            value=""
+                            onChange={(e) => requestMove({ ...task, fromDayIndex: dayIndex }, Number(e.target.value))}
+                            onDragStart={(e) => e.stopPropagation()}
+                            className="mt-2 min-h-11 w-full rounded border border-sky-200 bg-white text-xs text-slate-700"
+                          >
+                            <option value="" disabled>Move to…</option>
+                            {DAY_SHORT.map((day, index) => index !== dayIndex && (
+                              <option key={day} value={index}>{day}</option>
+                            ))}
+                          </select>
+                        )}
                         <div className="mt-1.5">
                           <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide ${style.badge}`}>
                             {task.type === 'checkout' ? 'checkout' : task.type === 'weekly' ? 'weekly' : task.type}
