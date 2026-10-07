@@ -70,7 +70,7 @@ const COLORS = {
   blockedBg: '#fee2e2'
 };
 
-const DATE_HEADER_HEIGHT = 56; // Keeps sticky offsets aligned for headers
+const DATE_HEADER_HEIGHT = 100; // Month row + day row; shared sticky offset
 const DUE_SOON_DAYS = 3; // threshold for recurring task "due soon" badge
 const CALENDAR_ERROR_CODE = 'CAL-RENDER-01';
 const HOUSEKEEPING_START_TIME = '10:00';
@@ -5536,7 +5536,7 @@ export default function App() {
     const idx = dates.findIndex(d => formatDate(d) === dateStr);
     if (idx === -1) return;
     const el = timelineRef.current;
-    const target = idx * dayWidthRef.current - el.clientWidth / 2 + dayWidthRef.current / 2;
+    const target = idx * dayWidthRef.current - (el.clientWidth - 224) / 2 + dayWidthRef.current / 2;
     el.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
   }, [dates]);
 
@@ -5609,7 +5609,7 @@ export default function App() {
       const width = rect?.width || dayWidthRef.current;
       if (width) dayWidthRef.current = width;
       const offset = cell?.offsetLeft ?? idx * dayWidthRef.current;
-      const target = offset - el.clientWidth / 2 + dayWidthRef.current / 2;
+      const target = offset - (el.clientWidth - 224) / 2 + dayWidthRef.current / 2;
       console.debug('[calendar] center perform', {
         pendingCenterDate,
         idx,
@@ -8221,6 +8221,13 @@ export default function App() {
       return calendarBlocks.find((block) => block.roomId === roomId && calendarBlockOccupiesDate(block, dateStr, roomId));
     };
       const dateIndexMap = new Map(dates.map((d, i) => [formatDate(d), i]));
+    const monthGroups = dates.reduce((groups, date) => {
+      const key = `${date.getFullYear()}-${date.getMonth()}`;
+      const last = groups[groups.length - 1];
+      if (last?.key === key) last.days += 1;
+      else groups.push({ key, date, days: 1 });
+      return groups;
+    }, []);
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] flex flex-col">
         <div className="p-5 border-b border-[#E5E7EB] flex justify-between items-center bg-[#F9F8F2]">
@@ -8261,10 +8268,10 @@ export default function App() {
             </div>
           </div>
         </div>
-        <div className="flex-1 bg-slate-50 min-h-0 overflow-auto">
-          <div className="grid grid-cols-[14rem_minmax(0,1fr)] h-full min-h-0">
+        <div className="bg-slate-50 overflow-auto max-h-[70vh] relative isolate" ref={timelineRef} onScroll={handleTimelineScroll}>
+          <div className="grid grid-cols-[14rem_minmax(0,1fr)] min-h-0" style={{ width: `max(100%, calc(14rem + ${dates.length * 48}px))` }}>
             {/* Left column: rooms/sections, no horizontal scroll */}
-            <div className="bg-white border-r border-slate-200 min-h-0">
+            <div className="bg-white border-r border-slate-200 min-h-0 sticky left-0 z-40">
               <div
                 className="border-b border-slate-200 bg-[#F9F8F2] flex items-center px-4 text-xs font-bold uppercase tracking-wider sticky top-0 z-30"
                 style={{ color: COLORS.darkGreen, height: DATE_HEADER_HEIGHT }}
@@ -8302,8 +8309,8 @@ export default function App() {
             </div>
 
             {/* Right pane: shared horizontal scroll for header + grid; vertical height driven by container */}
-            <div className="min-w-0 overflow-x-auto" ref={timelineRef} onScroll={handleTimelineScroll}>
-              <div className="min-w-[1000px] relative">
+            <div className="min-w-0">
+              <div className="relative">
                 <div className="absolute inset-0 pointer-events-none flex z-0">
                   {dates.map((date) => {
                     const dateStr = formatDate(date);
@@ -8318,7 +8325,17 @@ export default function App() {
                   })}
                 </div>
                 <div className="relative z-10">
-                  <div className="flex border-b border-slate-300 sticky top-0 z-30 bg-white" style={{ height: DATE_HEADER_HEIGHT }}>
+                  <div className="sticky top-0 z-30 bg-white shadow-sm" style={{ height: DATE_HEADER_HEIGHT }}>
+                  <div className="flex h-8 bg-[#26402E] text-white border-b border-slate-300">
+                    {monthGroups.map((month) => (
+                      <div key={month.key} className="min-w-0 border-r border-white/30 flex items-center" style={{ flex: `${month.days} 0 ${month.days * 48}px` }}>
+                        <span className="sticky left-[14rem] px-3 truncate text-xs font-bold tracking-wide">
+                          {month.date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex h-[68px] border-b border-slate-300">
                   {dates.map(date => {
                     const dateStr = formatDate(date);
                     const isToday = date.toDateString() === new Date().toDateString();
@@ -8330,18 +8347,20 @@ export default function App() {
                         key={dateStr}
                         data-date={dateStr}
                         data-day-cell
-                        className="relative flex-1 min-w-[3rem] p-3 text-center text-xs border-r border-slate-200"
+                        className={`relative flex-1 min-w-[3rem] px-1 py-2 text-center text-xs border-r ${date.getDate() === 1 ? 'border-l-2 border-l-[#26402E] border-r-slate-200' : 'border-slate-200'} ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-slate-100' : 'bg-white'}`}
                         onMouseEnter={() => setHoveredCalendarDate(dateStr)}
                         onMouseLeave={() => setHoveredCalendarDate(null)}
                         onClick={() => setSelectedCalendarDate(dateStr)}
                       >
                         <button
                           type="button"
+                          aria-label={date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                          aria-pressed={isSelected}
                           className={`w-full flex flex-col items-center justify-center rounded-md py-1 transition-colors leading-tight ${isSelected ? 'bg-[#E2F05D]/70 text-[#26402E] font-bold' : 'text-slate-500'} ${isToday ? 'font-bold' : ''}`}
                           style={{ color: isSelected || isToday ? COLORS.darkGreen : COLORS.textMuted, backgroundColor: isToday && !isSelected ? '#E2F05D22' : undefined }}
                         >
                           <span>{date.toLocaleDateString(undefined, { weekday: 'short' })}</span>
-                          <span className="text-sm font-semibold">{date.getDate()}</span>
+                          <span className="text-xl font-bold tabular-nums">{date.getDate()}</span>
                         </button>
 
                         {isToday && (
@@ -8378,6 +8397,7 @@ export default function App() {
                       </div>
                     );
                   })}
+                  </div>
                   </div>
 
                   {PROPERTIES.map(prop => (
