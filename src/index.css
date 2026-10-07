@@ -6,6 +6,11 @@ html {
 	zoom: 0.7;
 }
 
+.app-shell {
+	height: calc(100vh / 0.7);
+	height: calc(100dvh / 0.7);
+}
+
 @supports not (zoom: 0.7) {
 	body {
 		transform: scale(0.7);

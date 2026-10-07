@@ -8229,8 +8229,8 @@ export default function App() {
       return groups;
     }, []);
     return (
-      <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] flex flex-col">
-        <div className="p-5 border-b border-[#E5E7EB] flex justify-between items-center bg-[#F9F8F2]">
+      <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] flex flex-col flex-1 min-h-0">
+        <div className="p-5 border-b border-[#E5E7EB] flex flex-wrap gap-3 justify-between items-center bg-[#F9F8F2] shrink-0">
           <div className="flex items-center space-x-6">
             <h2 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Calendar</h2>
             <div className="flex space-x-2">
@@ -8268,7 +8268,7 @@ export default function App() {
             </div>
           </div>
         </div>
-        <div className="bg-slate-50 overflow-auto max-h-[70vh] relative isolate" ref={timelineRef} onScroll={handleTimelineScroll}>
+        <div className="bg-slate-50 overflow-auto flex-1 min-h-0 relative isolate" ref={timelineRef} onScroll={handleTimelineScroll}>
           <div className="grid grid-cols-[14rem_minmax(0,1fr)] min-h-0" style={{ width: `max(100%, calc(14rem + ${dates.length * 48}px))` }}>
             {/* Left column: rooms/sections, no horizontal scroll */}
             <div className="bg-white border-r border-slate-200 min-h-0 sticky left-0 z-40">
@@ -11178,15 +11178,15 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <div className="flex min-h-screen font-sans" style={{ backgroundColor: COLORS.cream }}>
+      <div className="app-shell flex font-sans" style={{ backgroundColor: COLORS.cream }}>
         <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <header className="md:hidden border-b px-6 py-4 flex items-center justify-between" style={{ backgroundColor: COLORS.darkGreen, borderColor: COLORS.darkGreen }}>
             <span className="font-serif font-bold text-xl text-white">Kolab Living</span>
             <button onClick={() => setSidebarOpen(true)} className="text-white"><Menu size={24} /></button>
           </header>
-          <div className="flex-1 overflow-auto p-6 md:p-10">
-            <div className="max-w-7xl mx-auto">
+          <div className={`flex-1 min-h-0 p-6 md:p-10 ${activeTab === 'calendar' ? 'flex flex-col overflow-hidden' : 'overflow-auto'}`}>
+            <div className={`max-w-7xl mx-auto w-full ${activeTab === 'calendar' ? 'flex flex-col flex-1 min-h-0' : ''}`}>
                {isOffline && (
                  <div className="mb-3 px-4 py-2 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-sm">
                    Offline. Some actions are disabled until connection returns.
