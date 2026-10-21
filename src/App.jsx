@@ -15,6 +15,7 @@ import {
   getDocs,
   where,
   limit,
+  runTransaction,
 } from 'firebase/firestore';
 import app, { auth, db } from './firebase';
 import { upsertBooking, removeBooking } from './services/bookingsService';
@@ -1913,7 +1914,7 @@ const StatCard = ({ title, value, icon, subtext, colorClass = 'bg-emerald-500' }
   </div>
 );
 
-const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, calendarBlocks, checkBookingConflict, isSaving, currentUser, onLookupGuest }) => {
+const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, calendarBlocks, checkBookingConflict, isSaving, currentUser, onLookupGuest, onSwapRooms }) => {
   const modalContentRef = useRef(null);
   const deriveStayCategory = useCallback((nights) => {
       if (nights >= 31) return 'long';
@@ -1960,6 +1961,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
   
   const [nights, setNights] = useState(0);
   const [conflictError, setConflictError] = useState(null);
+  const [swapPartnerId, setSwapPartnerId] = useState('');
+  const [confirmSwap, setConfirmSwap] = useState(false);
   const [categoryManual, setCategoryManual] = useState(false);
   const [paymentStatusError, setPaymentStatusError] = useState(null);
   const [services, setServices] = useState([]);
@@ -2045,6 +2048,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
   }, [formData.channel, formData.checkIn, formData.grossPrice, formData.airbnbBaseEarningsVnd, formData.price]);
 
   useEffect(() => {
+    setSwapPartnerId('');
+    setConfirmSwap(false);
     if (booking) {
       const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
       const inferredCategory = booking.stayCategory || deriveStayCategory(bookingNights);
@@ -2833,6 +2838,36 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                           <div className="text-xs text-slate-500">Checking returning guest…</div>
                         )}
                       </div>
+
+                      {booking?.id && isBlockingStatus(booking.status) && !(booking.roomMoves?.length) && (
+                        <div className="rounded-2xl border border-slate-200 p-4 space-y-3">
+                          <h3 className="font-bold text-slate-800">Swap rooms with another guest</h3>
+                          <p className="text-sm text-slate-600">Exchange rooms for both saved stays. Dates, prices and guest details stay the same. Save any other edits first. Bookings with scheduled room moves cannot be swapped here.</p>
+                          <select aria-label="Guest to swap rooms with" value={swapPartnerId} disabled={isSaving} onChange={(e) => { setSwapPartnerId(e.target.value); setConfirmSwap(false); }} className="w-full border rounded-xl px-3 py-2">
+                            <option value="">Choose a guest and room…</option>
+                            {allBookings.filter((other) => other.id !== booking.id && other.roomId !== booking.roomId && isBlockingStatus(other.status) && !other.roomMoves?.length && doDateRangesOverlap(booking.checkIn, getBookingOccupancyCheckOut(booking) || booking.checkOut, other.checkIn, getBookingOccupancyCheckOut(other) || other.checkOut)).map((other) => (
+                              <option key={other.id} value={other.id}>{other.guestName} · {rooms.find((room) => room.id === other.roomId)?.name || other.roomId} · {other.checkIn} → {other.checkOut}</option>
+                            ))}
+                          </select>
+                          {!confirmSwap ? (
+                            <button type="button" disabled={!swapPartnerId || isSaving} onClick={() => setConfirmSwap(true)} className="px-4 py-2 rounded-xl bg-slate-800 text-white disabled:opacity-50">Swap rooms…</button>
+                          ) : (() => {
+                            const partner = allBookings.find((other) => other.id === swapPartnerId);
+                            if (!partner) return null;
+                            const roomName = (id) => rooms.find((room) => room.id === id)?.name || id;
+                            return <div role="alert" className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-2">
+                              <p className="font-bold">Are you sure you want to swap these rooms?</p>
+                              <p className="text-sm">{booking.guestName}: {roomName(booking.roomId)} → {roomName(partner.roomId)} ({booking.checkIn} → {booking.checkOut})<br />{partner.guestName}: {roomName(partner.roomId)} → {roomName(booking.roomId)} ({partner.checkIn} → {partner.checkOut})</p>
+                              <button type="button" disabled={isSaving} className="px-4 py-2 rounded-xl bg-slate-800 text-white disabled:opacity-50" onClick={async () => {
+                                setConflictError(null);
+                                try { await onSwapRooms(booking, partner); }
+                                catch (error) { setConflictError(error.message || 'Room swap failed. Please try again.'); setConfirmSwap(false); }
+                              }}>{isSaving ? 'Swapping…' : 'Yes, swap rooms'}</button>
+                              <button type="button" disabled={isSaving} onClick={() => setConfirmSwap(false)} className="px-4 py-2">Cancel</button>
+                            </div>;
+                          })()}
+                        </div>
+                      )}
 
                       <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4 space-y-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -6306,6 +6341,53 @@ export default function App() {
 
     return { conflict: false };
   }, [bookings, calendarBlocks]);
+
+  const handleSwapRooms = async (first, second) => {
+    if (savingBookingId) return;
+    setSavingBookingId(first.id);
+    try {
+      // Read the current inventory, then protect every read document against concurrent edits.
+      const [bookingSnapshot, blockSnapshot] = await Promise.all([
+        getDocs(collection(db, 'bookings')),
+        getDocs(collection(db, 'calendarBlocks')),
+      ]);
+      const updated = await runTransaction(db, async (transaction) => {
+        const snapshots = await Promise.all([...bookingSnapshot.docs, ...blockSnapshot.docs].map((entry) => transaction.get(entry.ref)));
+        const freshBookings = snapshots.slice(0, bookingSnapshot.size).filter((entry) => entry.exists()).map((entry) => ({ ...entry.data(), id: entry.id }));
+        const freshBlocks = snapshots.slice(bookingSnapshot.size).filter((entry) => entry.exists()).map((entry) => ({ ...entry.data(), id: entry.id }));
+        const a = freshBookings.find((entry) => entry.id === first.id);
+        const b = freshBookings.find((entry) => entry.id === second.id);
+        const unchanged = (current, reviewed) => {
+          if (current === reviewed) return true;
+          if (!current || !reviewed || typeof current !== 'object' || typeof reviewed !== 'object') return false;
+          const keys = Object.keys(current);
+          return keys.length === Object.keys(reviewed).length && keys.every((key) => Object.hasOwn(reviewed, key) && unchanged(current[key], reviewed[key]));
+        };
+        if (!a || !b || !unchanged(a, first) || !unchanged(b, second)) {
+          throw new Error('A booking changed. Reopen the booking and review the swap again.');
+        }
+        if (a.id === b.id || a.roomId === b.roomId || !isBlockingStatus(a.status) || !isBlockingStatus(b.status) || a.roomMoves?.length || b.roomMoves?.length) {
+          throw new Error('Choose two active bookings in different rooms without scheduled room moves.');
+        }
+        const now = new Date().toISOString();
+        const swapped = [{ ...a, roomId: b.roomId, updatedAt: now }, { ...b, roomId: a.roomId, updatedAt: now }];
+        for (const candidate of swapped) {
+          if (!ALL_ROOMS.some((room) => room.id === candidate.roomId) || !isRoomOpenOnDate(candidate.roomId, candidate.checkIn)) throw new Error('The destination room is not available for this stay.');
+          const conflict = freshBookings.filter((entry) => entry.id !== a.id && entry.id !== b.id && isBlockingStatus(entry.status)).find((entry) => bookingsOverlapConsideringBreaks(entry, candidate, candidate.roomId));
+          if (conflict) throw new Error(`Cannot swap: ${candidate.guestName}'s destination is booked by ${conflict.guestName} (${conflict.checkIn} → ${conflict.checkOut}).`);
+          if (freshBlocks.some((block) => getBookingOccupiedDates(candidate, candidate.roomId).some((date) => calendarBlockOccupiesDate(block, date, candidate.roomId)))) throw new Error(`Cannot swap: ${candidate.guestName}'s destination has a PMS block.`);
+        }
+        swapped.forEach((entry) => transaction.update(doc(db, 'bookings', entry.id), { roomId: entry.roomId, updatedAt: now }));
+        return swapped;
+      });
+      setBookings((prev) => prev.map((entry) => updated.find((changed) => changed.id === entry.id) || entry));
+      setIsModalOpen(false);
+      setEditingBooking(null);
+      pushAlert({ title: 'Rooms swapped', message: `${first.guestName} and ${second.guestName} have exchanged rooms.`, tone: 'success' });
+    } finally {
+      setSavingBookingId(null);
+    }
+  };
 
   const handleSaveCalendarBlock = useCallback(async (blockData) => {
     const normalized = normalizeCalendarBlock(blockData);
@@ -11232,7 +11314,7 @@ export default function App() {
             </div>
           </div>
         </main>
-        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} calendarBlocks={calendarBlocks} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} currentUser={user} onLookupGuest={lookupReturningGuest} />
+        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} calendarBlocks={calendarBlocks} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} currentUser={user} onLookupGuest={lookupReturningGuest} onSwapRooms={handleSwapRooms} />
         <CalendarBlockModal
           isOpen={isCalendarBlockModalOpen}
           onClose={() => { setIsCalendarBlockModalOpen(false); setEditingCalendarBlock(null); }}
