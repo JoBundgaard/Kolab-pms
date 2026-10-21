@@ -19,6 +19,7 @@ import {
 } from 'firebase/firestore';
 import app, { auth, db } from './firebase';
 import { upsertBooking, removeBooking } from './services/bookingsService';
+import { buildRoomTransferPlan } from './services/roomTransfers';
 import { resolveGuestForBooking, previewReturningGuest, updateGuestStatsFromBooking } from './services/guestResolver';
 import { normalizeEmail, normalizePhone, normalizeName } from './utils/normalizeGuest';
 import {
@@ -1914,7 +1915,7 @@ const StatCard = ({ title, value, icon, subtext, colorClass = 'bg-emerald-500' }
   </div>
 );
 
-const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, calendarBlocks, checkBookingConflict, isSaving, currentUser, onLookupGuest, onSwapRooms }) => {
+const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, calendarBlocks, checkBookingConflict, isSaving, currentUser, onLookupGuest, onOpenCalendar }) => {
   const modalContentRef = useRef(null);
   const deriveStayCategory = useCallback((nights) => {
       if (nights >= 31) return 'long';
@@ -1961,8 +1962,6 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
   
   const [nights, setNights] = useState(0);
   const [conflictError, setConflictError] = useState(null);
-  const [swapPartnerId, setSwapPartnerId] = useState('');
-  const [confirmSwap, setConfirmSwap] = useState(false);
   const [categoryManual, setCategoryManual] = useState(false);
   const [paymentStatusError, setPaymentStatusError] = useState(null);
   const [services, setServices] = useState([]);
@@ -2048,8 +2047,6 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
   }, [formData.channel, formData.checkIn, formData.grossPrice, formData.airbnbBaseEarningsVnd, formData.price]);
 
   useEffect(() => {
-    setSwapPartnerId('');
-    setConfirmSwap(false);
     if (booking) {
       const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
       const inferredCategory = booking.stayCategory || deriveStayCategory(bookingNights);
@@ -2839,33 +2836,11 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                         )}
                       </div>
 
-                      {booking?.id && isBlockingStatus(booking.status) && !(booking.roomMoves?.length) && (
-                        <div className="rounded-2xl border border-slate-200 p-4 space-y-3">
-                          <h3 className="font-bold text-slate-800">Swap rooms with another guest</h3>
-                          <p className="text-sm text-slate-600">Exchange rooms for both saved stays. Dates, prices and guest details stay the same. Save any other edits first. Bookings with scheduled room moves cannot be swapped here.</p>
-                          <select aria-label="Guest to swap rooms with" value={swapPartnerId} disabled={isSaving} onChange={(e) => { setSwapPartnerId(e.target.value); setConfirmSwap(false); }} className="w-full border rounded-xl px-3 py-2">
-                            <option value="">Choose a guest and room…</option>
-                            {allBookings.filter((other) => other.id !== booking.id && other.roomId !== booking.roomId && isBlockingStatus(other.status) && !other.roomMoves?.length && doDateRangesOverlap(booking.checkIn, getBookingOccupancyCheckOut(booking) || booking.checkOut, other.checkIn, getBookingOccupancyCheckOut(other) || other.checkOut)).map((other) => (
-                              <option key={other.id} value={other.id}>{other.guestName} · {rooms.find((room) => room.id === other.roomId)?.name || other.roomId} · {other.checkIn} → {other.checkOut}</option>
-                            ))}
-                          </select>
-                          {!confirmSwap ? (
-                            <button type="button" disabled={!swapPartnerId || isSaving} onClick={() => setConfirmSwap(true)} className="px-4 py-2 rounded-xl bg-slate-800 text-white disabled:opacity-50">Swap rooms…</button>
-                          ) : (() => {
-                            const partner = allBookings.find((other) => other.id === swapPartnerId);
-                            if (!partner) return null;
-                            const roomName = (id) => rooms.find((room) => room.id === id)?.name || id;
-                            return <div role="alert" className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-2">
-                              <p className="font-bold">Are you sure you want to swap these rooms?</p>
-                              <p className="text-sm">{booking.guestName}: {roomName(booking.roomId)} → {roomName(partner.roomId)} ({booking.checkIn} → {booking.checkOut})<br />{partner.guestName}: {roomName(partner.roomId)} → {roomName(booking.roomId)} ({partner.checkIn} → {partner.checkOut})</p>
-                              <button type="button" disabled={isSaving} className="px-4 py-2 rounded-xl bg-slate-800 text-white disabled:opacity-50" onClick={async () => {
-                                setConflictError(null);
-                                try { await onSwapRooms(booking, partner); }
-                                catch (error) { setConflictError(error.message || 'Room swap failed. Please try again.'); setConfirmSwap(false); }
-                              }}>{isSaving ? 'Swapping…' : 'Yes, swap rooms'}</button>
-                              <button type="button" disabled={isSaving} onClick={() => setConfirmSwap(false)} className="px-4 py-2">Cancel</button>
-                            </div>;
-                          })()}
+                      {booking?.id && (
+                        <div className="rounded-2xl border border-slate-200 p-4 space-y-2">
+                          <h3 className="font-bold text-slate-800">Move or swap rooms</h3>
+                          <p className="text-sm text-slate-600">In the calendar, drag this guest’s room segment to another room. Review and confirm all affected guests, including multiple guests and stays with room changes.</p>
+                          <button type="button" disabled={isSaving} onClick={onOpenCalendar} className="px-4 py-2 rounded-xl bg-slate-800 text-white disabled:opacity-50">Open calendar</button>
                         </div>
                       )}
 
@@ -4813,6 +4788,10 @@ export default function App() {
   const [alerts, setAlerts] = useState([]);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [savingBookingId, setSavingBookingId] = useState(null);
+  const [roomTransfer, setRoomTransfer] = useState(null);
+  const [roomTransferError, setRoomTransferError] = useState('');
+  const draggedRoomStay = useRef(null);
+  const roomTransferSaving = useRef(false);
   const [activeIssue, setActiveIssue] = useState(null);
   const [undoAction, setUndoAction] = useState(null);
   const undoTimerRef = useRef(null);
@@ -6342,49 +6321,73 @@ export default function App() {
     return { conflict: false };
   }, [bookings, calendarBlocks]);
 
-  const handleSwapRooms = async (first, second) => {
-    if (savingBookingId) return;
-    setSavingBookingId(first.id);
+  const planRoomTransfer = (inventory, transfer) => buildRoomTransferPlan(inventory, transfer, {
+    roomAtDate: getBookingRoomIdForDate,
+    occupiedDates: getBookingOccupiedDates,
+    isBlocking: isBlockingStatus,
+  });
+
+  const validateRoomTransfer = (inventory, blocks, plan) => {
+    const updatedById = new Map(plan.map((entry) => [entry.after.id, entry.after]));
+    const finalInventory = inventory.map((booking) => updatedById.get(booking.id) || booking);
+    for (const { after } of plan) {
+      for (const stay of getBookingRoomStays(after)) {
+        if (!ALL_ROOMS.some((room) => room.id === stay.roomId) || !isRoomOpenOnDate(stay.roomId, stay.startDate)) throw new Error('A destination room is closed during this stay.');
+      }
+      for (const date of getBookingOccupiedDates(after)) {
+        const roomId = getBookingRoomIdForDate(after, date);
+        const conflict = finalInventory.find((other) => other.id !== after.id && isBlockingStatus(other.status) && bookingOccupiesDate(other, date, roomId));
+        if (conflict) throw new Error(`Cannot move ${after.guestName}: room is occupied by ${conflict.guestName} on ${date}.`);
+        if (blocks.some((block) => calendarBlockOccupiesDate(block, date, roomId))) throw new Error(`Cannot move ${after.guestName}: room has a PMS block on ${date}.`);
+      }
+    }
+  };
+
+  const prepareRoomTransfer = (roomId, payload) => {
+    if (!payload || savingBookingId || roomTransferSaving.current || payload.fromRoomId === roomId) return;
     try {
-      // Read the current inventory, then protect every read document against concurrent edits.
-      const [bookingSnapshot, blockSnapshot] = await Promise.all([
-        getDocs(collection(db, 'bookings')),
-        getDocs(collection(db, 'calendarBlocks')),
-      ]);
+      const source = bookings.find((booking) => booking.id === payload.bookingId);
+      const stay = source && getBookingSegmentForDate(source, payload.date);
+      if (!stay || stay.roomId !== payload.fromRoomId) throw new Error('This booking changed. Please drag it again.');
+      const transfer = { bookingId: source.id, fromRoomId: stay.roomId, toRoomId: roomId, startDate: stay.startDate, endDate: stay.endDate };
+      const plan = planRoomTransfer(bookings, transfer);
+      validateRoomTransfer(bookings, calendarBlocks, plan);
+      setRoomTransferError('');
+      setRoomTransfer({ ...transfer, plan });
+    } catch (error) {
+      pushAlert({ title: 'Room move unavailable', message: error.message, tone: 'error' });
+    }
+  };
+
+  const confirmRoomTransfer = async () => {
+    if (!roomTransfer || roomTransferSaving.current) return;
+    roomTransferSaving.current = true;
+    setSavingBookingId(roomTransfer.bookingId);
+    setRoomTransferError('');
+    try {
+      const [bookingSnapshot, blockSnapshot] = await Promise.all([getDocs(collection(db, 'bookings')), getDocs(collection(db, 'calendarBlocks'))]);
       const updated = await runTransaction(db, async (transaction) => {
         const snapshots = await Promise.all([...bookingSnapshot.docs, ...blockSnapshot.docs].map((entry) => transaction.get(entry.ref)));
-        const freshBookings = snapshots.slice(0, bookingSnapshot.size).filter((entry) => entry.exists()).map((entry) => ({ ...entry.data(), id: entry.id }));
-        const freshBlocks = snapshots.slice(bookingSnapshot.size).filter((entry) => entry.exists()).map((entry) => ({ ...entry.data(), id: entry.id }));
-        const a = freshBookings.find((entry) => entry.id === first.id);
-        const b = freshBookings.find((entry) => entry.id === second.id);
-        const unchanged = (current, reviewed) => {
-          if (current === reviewed) return true;
-          if (!current || !reviewed || typeof current !== 'object' || typeof reviewed !== 'object') return false;
-          const keys = Object.keys(current);
-          return keys.length === Object.keys(reviewed).length && keys.every((key) => Object.hasOwn(reviewed, key) && unchanged(current[key], reviewed[key]));
-        };
-        if (!a || !b || !unchanged(a, first) || !unchanged(b, second)) {
-          throw new Error('A booking changed. Reopen the booking and review the swap again.');
-        }
-        if (a.id === b.id || a.roomId === b.roomId || !isBlockingStatus(a.status) || !isBlockingStatus(b.status) || a.roomMoves?.length || b.roomMoves?.length) {
-          throw new Error('Choose two active bookings in different rooms without scheduled room moves.');
-        }
-        const now = new Date().toISOString();
-        const swapped = [{ ...a, roomId: b.roomId, updatedAt: now }, { ...b, roomId: a.roomId, updatedAt: now }];
-        for (const candidate of swapped) {
-          if (!ALL_ROOMS.some((room) => room.id === candidate.roomId) || !isRoomOpenOnDate(candidate.roomId, candidate.checkIn)) throw new Error('The destination room is not available for this stay.');
-          const conflict = freshBookings.filter((entry) => entry.id !== a.id && entry.id !== b.id && isBlockingStatus(entry.status)).find((entry) => bookingsOverlapConsideringBreaks(entry, candidate, candidate.roomId));
-          if (conflict) throw new Error(`Cannot swap: ${candidate.guestName}'s destination is booked by ${conflict.guestName} (${conflict.checkIn} → ${conflict.checkOut}).`);
-          if (freshBlocks.some((block) => getBookingOccupiedDates(candidate, candidate.roomId).some((date) => calendarBlockOccupiesDate(block, date, candidate.roomId)))) throw new Error(`Cannot swap: ${candidate.guestName}'s destination has a PMS block.`);
-        }
-        swapped.forEach((entry) => transaction.update(doc(db, 'bookings', entry.id), { roomId: entry.roomId, updatedAt: now }));
-        return swapped;
+        const inventory = snapshots.slice(0, bookingSnapshot.size).filter((entry) => entry.exists()).map((entry) => ({ ...entry.data(), id: entry.id }));
+        const blocks = snapshots.slice(bookingSnapshot.size).filter((entry) => entry.exists()).map((entry) => ({ ...entry.data(), id: entry.id }));
+        const plan = planRoomTransfer(inventory, roomTransfer);
+        const stable = (value) => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
+        if (stable(plan) !== stable(roomTransfer.plan)) throw new Error('Bookings changed since this preview. Cancel and drag again to review the updated moves.');
+        validateRoomTransfer(inventory, blocks, plan);
+        const updatedAt = new Date().toISOString();
+        return plan.map(({ after }) => {
+          const patch = { roomId: after.roomId, roomMoves: after.roomMoves, hasMultipleRoomStay: after.hasMultipleRoomStay, updatedAt };
+          transaction.update(doc(db, 'bookings', after.id), patch);
+          return { ...after, ...patch };
+        });
       });
-      setBookings((prev) => prev.map((entry) => updated.find((changed) => changed.id === entry.id) || entry));
-      setIsModalOpen(false);
-      setEditingBooking(null);
-      pushAlert({ title: 'Rooms swapped', message: `${first.guestName} and ${second.guestName} have exchanged rooms.`, tone: 'success' });
+      setBookings((prev) => prev.map((booking) => updated.find((entry) => entry.id === booking.id) || booking));
+      setRoomTransfer(null);
+      pushAlert({ title: 'Rooms updated', message: `${updated.length} booking${updated.length === 1 ? '' : 's'} moved successfully.`, tone: 'success' });
+    } catch (error) {
+      setRoomTransferError(error.message || 'Could not move rooms. Please try again.');
     } finally {
+      roomTransferSaving.current = false;
       setSavingBookingId(null);
     }
   };
@@ -8314,7 +8317,7 @@ export default function App() {
       <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] flex flex-col flex-1 min-h-0">
         <div className="p-5 border-b border-[#E5E7EB] flex flex-wrap gap-3 justify-between items-center bg-[#F9F8F2] shrink-0">
           <div className="flex items-center space-x-6">
-            <h2 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Calendar</h2>
+            <div><h2 className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Calendar</h2><p className="text-xs text-slate-500">Drag a guest to another room to move or swap. Dates stay the same.</p></div>
             <div className="flex space-x-2">
               <button onClick={() => scrollTimelineByViewport(-1)} className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-slate-200"><ChevronLeft size={20} /></button>
               <button onClick={() => { setSelectedCalendarDate(TODAY_STR); ensureDateVisible(TODAY_STR); }} className="px-4 py-1.5 text-sm font-medium hover:bg-white rounded-full border border-transparent hover:border-slate-200 transition-colors">Today</button>
@@ -8507,7 +8510,10 @@ export default function App() {
                       )}
 
                       {prop.rooms.map((room, roomIndex) => (
-                        <div key={room.id} className={`flex border-b border-slate-200 h-16 relative transition-colors group ${roomIndex % 2 === 0 ? 'bg-white/70' : 'bg-slate-50/70'} hover:bg-[#F9F8F2]/80`}>
+                        <div key={room.id}
+                          onDragOver={(event) => { if (draggedRoomStay.current && !savingBookingId) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }}
+                          onDrop={(event) => { event.preventDefault(); event.stopPropagation(); const payload = draggedRoomStay.current; draggedRoomStay.current = null; prepareRoomTransfer(room.id, payload); }}
+                          className={`flex border-b border-slate-200 h-16 relative transition-colors group ${roomIndex % 2 === 0 ? 'bg-white/70' : 'bg-slate-50/70'} hover:bg-[#F9F8F2]/80`}>
                         {dates.map(date => {
                           const dateStr = formatDate(date);
                           const isPreOpening = !isRoomOpenOnDate(room.id, dateStr);
@@ -8599,7 +8605,15 @@ export default function App() {
                                       ? 'ring-2 ring-amber-200'
                                       : 'ring-1 ring-white/40';
                                   return (
-                                    <div className={`absolute top-2.5 bottom-2.5 rounded-lg z-30 cursor-pointer text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-40 ${getCalendarBlockStatusClass(booking.status)} ${catBorder}`}
+                                    <div draggable={!savingBookingId}
+                                      title="Drag to another room to move or swap guests; dates stay the same"
+                                      onDragStart={(event) => {
+                                        draggedRoomStay.current = { bookingId: booking.sourceBookingId || booking.id, fromRoomId: room.id, date: dateStr };
+                                        event.dataTransfer.effectAllowed = 'move';
+                                        event.dataTransfer.setData('text/plain', booking.guestName || 'Guest');
+                                      }}
+                                      onDragEnd={() => { draggedRoomStay.current = null; }}
+                                      className={`absolute top-2.5 bottom-2.5 rounded-lg z-30 cursor-grab active:cursor-grabbing text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-40 ${getCalendarBlockStatusClass(booking.status)} ${catBorder}`}
                                       style={{
                                         width: bookingWidthCalc,
                                         left: leftOffset,
@@ -11314,7 +11328,27 @@ export default function App() {
             </div>
           </div>
         </main>
-        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} calendarBlocks={calendarBlocks} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} currentUser={user} onLookupGuest={lookupReturningGuest} onSwapRooms={handleSwapRooms} />
+        {roomTransfer && (
+          <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4">
+            <div role="dialog" aria-modal="true" aria-labelledby="room-transfer-title" className="bg-white rounded-3xl shadow-xl max-w-xl w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+              <h2 id="room-transfer-title" className="text-xl font-bold text-slate-800">{roomTransfer.plan.length > 1 ? 'Switch the current guests to the other room?' : 'Move this guest to the other room?'}</h2>
+              <p className="text-sm text-slate-600">{roomTransfer.startDate} → {roomTransfer.endDate} (checkout). Dates and prices stay the same. Only room assignments within this period change; other dates and scheduled moves are preserved.</p>
+              <ul className="space-y-3">
+                {roomTransfer.plan.map((entry) => <li key={entry.before.id} className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                  <div className="font-bold">{entry.before.guestName}</div>
+                  <div className="text-sm">{ALL_ROOMS.find((room) => room.id === entry.fromRoomId)?.name || entry.fromRoomId} → {ALL_ROOMS.find((room) => room.id === entry.toRoomId)?.name || entry.toRoomId}</div>
+                  <div className="text-xs text-slate-500">{getBookingRoomStays(entry.before).filter((stay) => stay.roomId === entry.fromRoomId && stay.startDate < roomTransfer.endDate && stay.endDate > roomTransfer.startDate).map((stay) => `${stay.startDate < roomTransfer.startDate ? roomTransfer.startDate : stay.startDate} → ${stay.endDate > roomTransfer.endDate ? roomTransfer.endDate : stay.endDate}`).join(', ')}</div>
+                </li>)}
+              </ul>
+              {roomTransferError && <p role="alert" className="text-sm text-red-700">{roomTransferError}</p>}
+              <div className="flex justify-end gap-3">
+                <button type="button" autoFocus disabled={isSavingBooking} onClick={() => setRoomTransfer(null)} className="px-4 py-2 rounded-xl border">Cancel</button>
+                <button type="button" disabled={isSavingBooking} onClick={confirmRoomTransfer} className="px-4 py-2 rounded-xl bg-[#26402E] text-white disabled:opacity-50">{isSavingBooking ? 'Saving…' : roomTransfer.plan.length > 1 ? 'Yes, switch guests' : 'Yes, move guest'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+        <BookingModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBooking} booking={editingBooking} rooms={ALL_ROOMS} allBookings={bookings} calendarBlocks={calendarBlocks} checkBookingConflict={checkBookingConflict} isSaving={isSavingBooking} currentUser={user} onLookupGuest={lookupReturningGuest} onOpenCalendar={() => { setIsModalOpen(false); setActiveTab('calendar'); }} />
         <CalendarBlockModal
           isOpen={isCalendarBlockModalOpen}
           onClose={() => { setIsCalendarBlockModalOpen(false); setEditingCalendarBlock(null); }}
