@@ -2710,7 +2710,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                         <div className="rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-xs text-slate-600">
                           {formData.channel === 'airbnb'
                             ? 'Accommodation is prepaid through Airbnb. Payouts and withholding are shown in the pricing panel.'
-                            : 'Record received payments, rent due dates and deposits in Guests & CRM after saving this booking.'}
+                            : 'Set up the 25% reservation payment and 75% arrival balance in Guests & CRM after saving. For monthly stays, this applies to the first month.'}
                         </div>
                       </div>
                     </div>
@@ -7429,7 +7429,7 @@ export default function App() {
 
     return (
       <div className="space-y-14">
-        {!crm.loading && !crm.error && paymentAttention.length > 0 && <button type="button" onClick={() => setActiveTab('crm')} className="w-full text-left flex items-center justify-between gap-4 bg-amber-50 border border-amber-200 rounded-2xl p-5 text-amber-900"><span><strong>{paymentAttention.length} stays need payment attention</strong><span className="block text-sm mt-1">{formatCurrencyVND(paymentAttention.reduce((total, summary) => total + summary.overdueVnd, 0))} overdue · review rent and deposits in Guests & CRM</span></span><AlertTriangle size={24} /></button>}
+        {!crm.loading && !crm.error && paymentAttention.length > 0 && <button type="button" onClick={() => setActiveTab('crm')} className="w-full text-left flex items-center justify-between gap-4 bg-amber-50 border border-amber-200 rounded-2xl p-5 text-amber-900"><span><strong>{paymentAttention.length} stays need payment attention</strong><span className="block text-sm mt-1">{formatCurrencyVND(paymentAttention.reduce((total, summary) => total + summary.overdueVnd, 0))} overdue · review rent and reservation payments in Guests & CRM</span></span><AlertTriangle size={24} /></button>}
         <div className="space-y-3">
           <h2 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Today</h2>
           <p className="text-slate-500 text-sm">Snapshot for {TODAY_STR}.</p>

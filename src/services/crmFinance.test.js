@@ -9,7 +9,7 @@ import {
 
 const today = '2026-10-25';
 const booking = { id: 'stay', guestId: 'guest', guestName: 'Test Guest', channel: 'direct', roomId: 'T2', checkIn: '2026-09-12', checkOut: '2027-01-01', monthlyRentVnd: 9300000, price: 35000000, stayCategory: 'long' };
-const planFor = (stay = booking, patch = {}) => ({ ...defaultPlan(stay, today), periodBasis: 'calendar', trackingStart: stay.checkIn, firstDueDate: stay.checkIn, dueDay: 5, ...patch });
+const planFor = (stay = booking, patch = {}) => ({ ...defaultPlan(stay, today), paymentTerms: 'custom', periodBasis: 'calendar', trackingStart: stay.checkIn, firstDueDate: stay.checkIn, dueDay: 5, ...patch });
 const accountFor = (stay = booking, patch = {}) => createAccount(stay, planFor(stay, patch), today);
 const receipt = (target, amountVnd, patch = {}) => ({ target, amountVnd, receivedDate: today, method: 'Bank transfer', reference: 'test-ref', ...patch });
 
@@ -269,4 +269,80 @@ test('explicit correction removes overdue calendar rent without duplicate balanc
   assert.equal(corrected.charges.filter((c) => c.voided).length, 2);
   const paid = applyPayment(kim, source, receipt('oldest', 1000), today).account;
   assert.throws(() => reviseBillingPlan(kim, paid, kimPlan(), today, true), /payments or credits/);
+});
+
+const upcoming = { ...booking, checkIn: '2026-11-24', checkOut: '2027-02-12', monthlyRentVnd: 12000000 };
+const standardPlan = (stay = upcoming) => defaultPlan(stay, today);
+test('standard monthly terms split only the first rent cycle into 25% upfront and 75% arrival', () => {
+  const plan = standardPlan();
+  const charges = buildSchedule(upcoming, plan);
+  assert.equal(plan.securityDepositVnd, 0);
+  assert.deepEqual(charges.slice(0, 2).map((c) => [c.role, c.amountVnd, c.dueDate]), [['reservation', 3000000, today], ['arrival', 9000000, upcoming.checkIn]]);
+  assert.equal(charges[2].amountVnd, 12000000);
+  assert.equal(charges[2].dueDate, '2026-12-24');
+  assert.equal(charges.filter((c) => c.role === 'reservation').length, 1);
+  assert.equal(charges.some((c) => c.type === 'security'), false);
+  const unsplit = buildSchedule(upcoming, { ...plan, paymentTerms: 'custom' });
+  assert.equal(charges.reduce((n, c) => n + c.amountVnd, 0), unsplit.reduce((n, c) => n + c.amountVnd, 0));
+});
+test('standard short stay uses 25% of total with exact rounded remainder due on arrival', () => {
+  const stay = { ...upcoming, stayCategory: 'short', checkOut: '2026-11-28', price: 10000003 };
+  const charges = buildSchedule(stay, standardPlan(stay));
+  assert.deepEqual(charges.map((c) => c.amountVnd), [2500001, 7500002]);
+  assert.equal(charges[1].dueDate, stay.checkIn);
+});
+test('reservation receipt pays rent once; arrival payment does not collect later monthly rent', () => {
+  let account = createAccount(upcoming, standardPlan(), today);
+  const initial = accountSummary(upcoming, account, today);
+  const result = applyPayment(upcoming, account, receipt('booking_deposit', 3000000), today);
+  account = result.account;
+  assert.equal(result.event.allocations[0].chargeId, account.charges.find((c) => c.role === 'reservation').id);
+  let summary = accountSummary(upcoming, account, today);
+  assert.equal(summary.bookingDepositRequired, 3000000);
+  assert.equal(summary.bookingDepositLeft, 0);
+  assert.equal(summary.arrivalBalanceVnd, 9000000);
+  assert.equal(summary.totalOutstanding, initial.totalOutstanding - 3000000);
+  const arrival = account.charges.find((c) => c.role === 'arrival');
+  account = applyPayment(upcoming, account, receipt(arrival.id, 9000000, { receivedDate: upcoming.checkIn }), upcoming.checkIn).account;
+  summary = accountSummary(upcoming, account, upcoming.checkIn);
+  assert.equal(summary.arrivalBalanceVnd, 0);
+  assert.equal(summary.arrivalReady, true);
+  assert.equal(summary.nextDue, '2026-12-24');
+});
+test('partial reservation payments, reversal and alerts track the same obligation without duplicates', () => {
+  const source = createAccount(upcoming, standardPlan(), today);
+  const { account, event } = applyPayment(upcoming, source, receipt('booking_deposit', 1000000), today);
+  assert.equal(accountSummary(upcoming, account, today).bookingDepositLeft, 2000000);
+  const alerts = buildAlerts(upcoming, account, today);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].type, 'deposit');
+  assert.equal(alerts[0].amountVnd, 2000000);
+  const reversed = reversePayment(upcoming, account, { ...event, id: 'receipt' }, 'Wrong receipt').account;
+  assert.equal(accountSummary(upcoming, reversed, today).bookingDepositLeft, 3000000);
+  assert.throws(() => applyPayment(upcoming, account, receipt('booking_deposit', 2000001), today), /exceeds/);
+});
+test('paying a later month or arrival balance cannot silently satisfy the reservation obligation', () => {
+  let account = createAccount(upcoming, standardPlan(), today);
+  const arrival = account.charges.find((c) => c.role === 'arrival');
+  account = applyPayment(upcoming, account, receipt(arrival.id, 9000000), today).account;
+  assert.equal(accountSummary(upcoming, account, today).bookingDepositLeft, 3000000);
+});
+test('no new reservation payment is created for Kim after the paid-through date', () => {
+  const charges = buildSchedule(kim, { ...kimPlan(), paymentTerms: 'standard_25_75' });
+  assert.equal(charges.length, 1);
+  assert.equal(charges[0].amountVnd, 9503357);
+  assert.equal(charges[0].role, undefined);
+});
+test('Airbnb prepaid bookings never get a standard reservation or arrival charge', () => {
+  const stay = { ...upcoming, channel: 'airbnb' };
+  const account = createAccount(stay, standardPlan(stay), today);
+  assert.equal(account.charges.some((c) => c.role), false);
+  assert.equal(accountSummary(stay, account, today).bookingDepositRequired, 0);
+  assert.deepEqual(buildAlerts(stay, account, today), []);
+});
+test('standard reservation date cannot be after arrival and legacy terms are not silently changed', () => {
+  assert.throws(() => buildSchedule(upcoming, { ...standardPlan(), bookingDepositDue: '2026-12-01' }), /before arrival/);
+  const plan = standardPlan();
+  delete plan.paymentTerms;
+  assert.equal(buildSchedule(upcoming, plan).some((c) => c.role), false);
 });

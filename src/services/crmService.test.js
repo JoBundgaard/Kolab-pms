@@ -44,7 +44,7 @@ function database() {
   const context = vm.createContext({ ...finance, propertyToday: () => today, structuredClone, Date, Map, Set, Promise, Error, Number, String, Object, doc: (_db, collection, id) => ({ path: `${collection}/${id}` }), runTransaction });
   vm.runInContext(source, context);
   const action = (kind, input, actionId) => context.saveCrmAction({ db, user, bookingId: booking.id, kind, input, actionId });
-  const setup = (patch = {}) => action('setup', { ...finance.defaultPlan(booking, today), trackingStart: booking.checkIn, firstDueDate: '2026-10-05', ...patch }, 'setup');
+  const setup = (patch = {}) => action('setup', { ...finance.defaultPlan(booking, today), paymentTerms: 'custom', trackingStart: booking.checkIn, firstDueDate: '2026-10-05', ...patch }, 'setup');
   return { documents, action, setup, account: () => documents.get(`crmAccounts/${booking.id}`) };
 }
 const payment = (amountVnd, target = 'oldest') => ({ target, amountVnd, receivedDate: today, method: 'Bank transfer', reference: 'bank-123' });
@@ -113,4 +113,25 @@ test('billing correction audits replaced overdue rent and resolves its old alert
   assert.equal(db.documents.get('crmPayments/correct').previousCharges[0].amountVnd, 10000000);
   assert.ok([...db.documents.values()].some((entry) => entry.resolved === true));
   await assert.rejects(db.action('plan', { plan, expectedVersion: before.version, correctSchedule: true, note: 'Stale form' }, 'stale'), /Another staff/);
+});
+
+test('standard terms atomically record the reservation once and leave exactly 75% for arrival', async () => {
+  const db = database();
+  await db.setup({ paymentTerms: 'standard_25_75', bookingDepositDue: booking.checkIn });
+  const reservation = db.account().charges.find((c) => c.role === 'reservation');
+  assert.equal(reservation.amountVnd, 2500000);
+  await Promise.all([db.action('payment', payment(2500000, 'booking_deposit'), 'standard-receipt'), db.action('payment', payment(2500000, 'booking_deposit'), 'standard-receipt')]);
+  const summary = finance.accountSummary(booking, db.account(), today);
+  assert.equal(summary.bookingDepositLeft, 0);
+  assert.equal(summary.arrivalBalanceVnd, 7500000);
+  assert.equal(summary.totalOutstanding, 7500000);
+  assert.equal(summary.securityHeldVnd, 0);
+});
+test('simultaneous reservation receipts cannot exceed the standard 25% requirement', async () => {
+  const db = database();
+  await db.setup({ paymentTerms: 'standard_25_75', bookingDepositDue: booking.checkIn });
+  const outcomes = await Promise.allSettled([db.action('payment', payment(2000000, 'booking_deposit'), 'reservation-a'), db.action('payment', payment(2000000, 'booking_deposit'), 'reservation-b')]);
+  assert.equal(outcomes.filter((outcome) => outcome.status === 'rejected').length, 1);
+  assert.equal(finance.accountSummary(booking, db.account(), today).bookingDepositLeft, 500000);
+  assert.equal(finance.accountSummary(booking, db.account(), today).arrivalBalanceVnd, 7500000);
 });
