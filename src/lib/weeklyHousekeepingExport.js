@@ -54,13 +54,7 @@ export function createWeeklyHousekeepingCanvas({ days, dates, rangeLabel, mode, 
       [task.guestName || 'Guest', true, 21],
       [LABELS[task.type] || task.type, false, 19],
     ];
-    if (!community) {
-      fields.push([`Priority ${task.priority ?? 3} · ${task.status === 'clean' ? 'Done' : task.status || 'To do'}`, false, 18]);
-      fields.push([`Staff: ${task.assignedTo || 'Unassigned'}`, false, 18]);
-      if (task.type === 'checkout') fields.push([`Checkout: ${task.checkOutTime || '12:00'}`, false, 18]);
-      if (task.type === 'check_room') fields.push([`Check-in: ${task.checkInTime || '15:00'}`, false, 18]);
-      if (task.description) fields.push([task.description, false, 18]);
-    }
+    if (!community && task.description) fields.push([task.description, false, 18]);
     const lines = fields.flatMap(([text, bold, size]) => {
       font(bold, size);
       return wrappedLines(ctx, text, textWidth).map((line) => ({ text: line, bold, size }));
