@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { normalizeHousekeepingTasks } from '../lib/housekeeping';
+import { downloadWeeklyHousekeepingImage } from '../lib/weeklyHousekeepingExport';
 
 const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -46,6 +47,21 @@ export default function WeeklyPlanningView({
   onWeekChange,
   onChangeCleaningDay,
 }) {
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState('');
+  const handleExport = async (mode) => {
+    if (!mode || exporting) return;
+    setExporting(true);
+    setExportMessage('');
+    try {
+      await downloadWeeklyHousekeepingImage({ tasksByDay, dates: weekDates, rangeLabel: formatWeekRange(weekStart), mode });
+      setExportMessage('Calendar image downloaded.');
+    } catch (error) {
+      setExportMessage(error.message || 'Image export failed. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
   const touchDrag = useRef(null);
   const plannerRef = useRef(null);
   const [draggedTask, setDraggedTask] = useState(null);
@@ -200,6 +216,23 @@ export default function WeeklyPlanningView({
         <span className="px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-xs text-slate-600">
           {totalTasks} task{totalTasks !== 1 ? 's' : ''} this week
         </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="text-sm font-semibold text-slate-700" htmlFor="weekly-image-export">Export weekly calendar</label>
+        <select
+          id="weekly-image-export"
+          value=""
+          disabled={exporting}
+          onChange={(event) => handleExport(event.target.value)}
+          className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 disabled:opacity-50"
+        >
+          <option value="" disabled>{exporting ? 'Creating image…' : 'Download image…'}</option>
+          <option value="housekeeping">Housekeeping — full schedule</option>
+          <option value="community">Community — long-term guests & names</option>
+        </select>
+        <span className="text-xs text-slate-500">PNG · Selected week · Community export shows long-term weekly cleans only.</span>
+        <span role="status" className="text-xs text-slate-600">{exportMessage}</span>
       </div>
 
       {/* 7-day grid */}

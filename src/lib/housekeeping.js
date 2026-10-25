@@ -64,6 +64,11 @@ export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDa
       assignedTo: null,
       sourceBookingId: booking.sourceBookingId || booking.id || null,
       dueDate: dateStr,
+      guestName: booking.guestName || '',
+      stayCategory: booking.stayCategory || '',
+      isLongTerm: !!booking.isLongTerm,
+      checkInTime: booking.checkInTime || '',
+      checkOutTime: booking.checkOutTime || '',
     };
 
     // Checkout task
