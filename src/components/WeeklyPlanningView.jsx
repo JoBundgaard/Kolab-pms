@@ -32,6 +32,7 @@ function formatWeekRange(weekStart) {
 }
 
 const TYPE_STYLE = {
+  check_room: { badge: 'bg-emerald-100 text-emerald-800', card: 'border-emerald-200 bg-emerald-50/70' },
   checkout: { badge: 'bg-amber-100 text-amber-800', card: 'border-amber-200 bg-amber-50/70' },
   weekly:   { badge: 'bg-sky-100 text-sky-800',    card: 'border-sky-200 bg-sky-50/70' },
   recurring:{ badge: 'bg-violet-100 text-violet-800', card: 'border-violet-200 bg-violet-50/70' },
@@ -211,6 +212,7 @@ export default function WeeklyPlanningView({
             const isDropTarget = dragOverDay === dayIndex && isActive;
             const weeklyCount = dayTasks.filter((t) => t.type === 'weekly').length;
             const checkoutCount = dayTasks.filter((t) => t.type === 'checkout').length;
+            const checkRoomCount = dayTasks.filter((t) => t.type === 'check_room').length;
 
             return (
               <div
@@ -244,6 +246,11 @@ export default function WeeklyPlanningView({
                           {checkoutCount} out
                         </span>
                       )}
+                      {checkRoomCount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800">
+                          {checkRoomCount} check
+                        </span>
+                      )}
                       {weeklyCount > 0 && (
                         <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-sky-100 text-sky-800">
                           {weeklyCount} wkly
@@ -275,7 +282,7 @@ export default function WeeklyPlanningView({
                             ? 'Drag to move cleaning to another day'
                             : task.type === 'checkout'
                             ? 'Checkout date is fixed – cannot be moved'
-                            : ''
+                            : task.type === 'check_room' ? 'Room check is fixed to the arrival date' : ''
                         }
                         className={[
                           'rounded-lg border p-2 text-xs transition-opacity select-none',
@@ -325,7 +332,7 @@ export default function WeeklyPlanningView({
                         )}
                         <div className="mt-1.5">
                           <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide ${style.badge}`}>
-                            {task.type === 'checkout' ? 'checkout' : task.type === 'weekly' ? 'weekly' : task.type}
+                            {task.type === 'checkout' ? 'checkout' : task.type === 'weekly' ? 'weekly' : task.type === 'check_room' ? 'Check room' : task.type}
                           </span>
                         </div>
                       </div>
@@ -347,6 +354,10 @@ export default function WeeklyPlanningView({
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 pt-1">
         <span className="font-semibold">Legend:</span>
+        <span className="flex items-center gap-1.5">
+          <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">Check room</span>
+          arrival without a same-day checkout
+        </span>
         <span className="flex items-center gap-1.5">
           <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-800 font-bold">
             <span>⋮⋮</span> weekly
