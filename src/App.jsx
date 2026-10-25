@@ -1068,7 +1068,7 @@ const normalizeBookingBreaks = (breaksInput = []) => {
       const startDate = formatDate(entry?.startDate || entry?.start || '');
       const endDate = formatDate(entry?.endDate || entry?.end || '');
       if (!startDate || !endDate) return null;
-      if (new Date(endDate).getTime() < new Date(startDate).getTime()) return null;
+      if (endDate <= startDate) return null;
       return {
         id: entry?.id || randomId(),
         startDate,
@@ -1092,8 +1092,7 @@ const countBookingBreakNightsForRange = (booking, startDate, endDate) => {
   const coveredDates = new Set();
   breaks.forEach((brk) => {
     const overlapStart = brk.startDate > rangeStart ? brk.startDate : rangeStart;
-    const breakEndExclusive = addDays(brk.endDate, 1);
-    const overlapEnd = breakEndExclusive < rangeEnd ? breakEndExclusive : rangeEnd;
+    const overlapEnd = brk.endDate < rangeEnd ? brk.endDate : rangeEnd;
     if (overlapStart >= overlapEnd) return;
     for (let ts = new Date(overlapStart).getTime(); ts < new Date(overlapEnd).getTime(); ts += 86_400_000) {
       coveredDates.add(formatDate(new Date(ts)));
@@ -1131,7 +1130,7 @@ const getBookingBreakSummaryForMonth = (booking, monthKey) => {
 const isDateOnBookingBreak = (booking, dateStr) => {
   const breaks = normalizeBookingBreaks(booking?.guestBreakPeriods || booking?.breakPeriods || booking?.breaks || []);
   if (!breaks.length) return false;
-  return breaks.some((brk) => dateStr >= brk.startDate && dateStr <= brk.endDate);
+  return breaks.some((brk) => dateStr >= brk.startDate && dateStr < brk.endDate);
 };
 
 const bookingOccupiesDate = (booking, dateStr, roomId = null) => {
@@ -2292,8 +2291,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
     }
 
     const draftBreaks = Array.isArray(formData.guestBreakPeriods) ? formData.guestBreakPeriods : [];
-    if (formData.hasGuestBreaks && draftBreaks.some((brk) => !brk?.startDate || !brk?.endDate)) {
-      setConflictError('Each break must have both start and end dates.');
+    if (formData.hasGuestBreaks && draftBreaks.some((brk) => !brk?.startDate || !brk?.endDate || brk.endDate <= brk.startDate)) {
+      setConflictError('Each break must have an away date and a later return date.');
       return;
     }
 
@@ -3412,11 +3411,11 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                                     />
                                   </div>
                                   <div>
-                                    <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Until</label>
+                                    <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Returns on</label>
                                     <input
                                       type="date"
                                       value={period.endDate || ''}
-                                      min={period.startDate || formData.checkIn || undefined}
+                                      min={period.startDate ? addDays(period.startDate, 1) : formData.checkIn || undefined}
                                       max={formData.checkOut ? addDays(formData.checkOut, -1) : undefined}
                                       onChange={(e) => updateGuestBreakPeriod(period.id, 'endDate', e.target.value)}
                                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"

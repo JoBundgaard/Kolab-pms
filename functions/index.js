@@ -75,8 +75,8 @@ function dateRange(start, end) {
 function isInBreak(booking, dateStr) {
   const breaks = booking.guestBreakPeriods || [];
   return breaks.some((bp) => {
-    const s = toDateStr(bp.start || bp.from);
-    const e = toDateStr(bp.end || bp.to);
+    const s = toDateStr(bp.startDate || bp.start || bp.from);
+    const e = toDateStr(bp.endDate || bp.end || bp.to);
     return s && e && dateStr >= s && dateStr < e;
   });
 }

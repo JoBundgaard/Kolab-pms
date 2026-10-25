@@ -30,7 +30,7 @@ const normalizeBookingBreaks = (breaksInput = []) => {
 const isDateOnBookingBreak = (booking, dateStr) => {
   const breaks = normalizeBookingBreaks(booking?.guestBreakPeriods || booking?.breakPeriods || booking?.breaks || []);
   if (!breaks.length) return false;
-  return breaks.some((brk) => dateStr >= brk.startDate && dateStr <= brk.endDate);
+  return breaks.some((brk) => dateStr >= brk.startDate && dateStr < brk.endDate);
 };
 
 export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDate, overrides = {} }) {
