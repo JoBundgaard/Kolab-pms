@@ -1,0 +1,244 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowRight, CheckCircle, ChevronDown, Clock, CreditCard, FileText, Plus, Search, Settings, Users, X } from 'lucide-react';
+import { accountSummary, airbnbOnly, buildSchedule, cancelled, daysBetween, defaultPlan, heldDeposit, legacyExtras, lifecycle, money, occupancyEnd, propertyToday, remaining, roomAt, stayCategory, weeklyLaundryStatus } from '../../functions/lib/crmFinance.mjs';
+import './GuestCRM.css';
+
+const currency = (value) => `${money(value).toLocaleString('vi-VN')} ₫`;
+const shortMoney = (value) => value >= 1e6 ? `${(value / 1e6).toLocaleString('en-US', { maximumFractionDigits: 2 })}m ₫` : currency(value);
+const dateLabel = (value) => value ? new Date(`${value}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : 'Not set';
+const channelLabel = (value) => ({ direct: 'Direct', airbnb: 'Airbnb', coliving: 'Coliving.com' }[value] || value || 'Airbnb');
+const categoryLabel = (category) => ({ short: 'Short', medium: 'Medium', long: 'Long' }[category]);
+const statusLabel = (status) => ({ arriving: 'Arriving', inhouse: 'In-house', past: 'Departed', cancelled: 'Cancelled / no-show' }[status]);
+const newId = () => crypto.randomUUID();
+const identity = (guest) => guest.email?.trim().toLowerCase() || guest.phone?.replace(/\D/g, '') || '';
+
+function guestDirectory(guests, bookings) {
+  const rows = new Map(guests.map((guest) => [guest.id, { key: guest.id, guest, name: guest.fullName || 'Unknown guest', stays: [] }]));
+  const contacts = new Map(guests.filter(identity).map((guest) => [identity(guest), guest.id]));
+  for (const booking of bookings) {
+    const contact = identity({ email: booking.guestEmail, phone: booking.guestPhone });
+    const key = (rows.has(booking.guestId) ? booking.guestId : contacts.get(contact)) || booking.guestId || `booking:${booking.id}`;
+    if (!rows.has(key)) rows.set(key, { key, guest: null, name: booking.guestName || 'Unknown guest', stays: [] });
+    rows.get(key).stays.push(booking);
+  }
+  return [...rows.values()].map((row) => ({ ...row, stays: row.stays.sort((a, b) => b.checkIn.localeCompare(a.checkIn)) }));
+}
+
+function PaymentBadge({ summary }) {
+  const { paymentState, overdueDays, nextDue } = summary;
+  const labels = { setup: 'Needs billing setup', airbnb: 'Prepaid via Airbnb', paid: 'Paid', overdue: `${overdueDays}d overdue`, partial: 'Partially paid', unpaid: nextDue ? `Due ${dateLabel(nextDue)}` : 'Unpaid' };
+  return <span className={`crm-badge ${paymentState === 'overdue' ? 'danger' : ['paid', 'airbnb'].includes(paymentState) ? 'success' : 'warning'}`}>{labels[paymentState]}</span>;
+}
+
+function DepositStatus({ account, summary }) {
+  if (!account) return <span className="crm-secondary">{summary.prepaid ? 'Not required' : 'Needs setup'}</span>;
+  const security = account.charges.find((c) => c.type === 'security' && !c.voided);
+  const required = money(account.plan.bookingDepositVnd) + money(security?.amountVnd);
+  if (!required) return <span className="crm-secondary">Not required</span>;
+  const left = summary.depositLeft + summary.bookingDepositLeft;
+  return <><span className="crm-amount">{currency(required - left)} / {currency(required)}</span><span className={`crm-badge ${left ? summary.depositAction ? 'danger' : 'warning' : 'success'}`}>{left ? `${currency(left)} remaining` : 'Satisfied'}</span>{summary.depositDue && <span className="crm-secondary">Due {dateLabel(summary.depositDue)}</span>}</>;
+}
+
+const preferences = () => {
+  try { return JSON.parse(localStorage.getItem('kolab-crm-view') || '{}'); } catch { return {}; }
+};
+
+export default function GuestCRM({ bookings, guests, rooms, accounts = [], payments = [], alerts = [], loading = false, error = '', onAction, onSaveProfile, onUpdateOps, onEditBooking, onCreateBooking, initialView = 'long' }) {
+  const [view, setView] = useState(() => preferences().view || initialView);
+  const [status, setStatus] = useState(() => (preferences().view || initialView) === 'all' ? 'all' : 'active');
+  const [property, setProperty] = useState('all');
+  const [search, setSearch] = useState('');
+  const [attention, setAttention] = useState('all');
+  const [sort, setSort] = useState('urgency');
+  const [selected, setSelected] = useState(null);
+  const [page, setPage] = useState(1);
+  const [today, setToday] = useState(propertyToday);
+  useEffect(() => {
+    const timer = setInterval(() => setToday(propertyToday()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => { try { localStorage.setItem('kolab-crm-view', JSON.stringify({ view })); } catch { /* Storage is optional. */ } }, [view]);
+  const accountMap = useMemo(() => new Map(accounts.map((account) => [account.bookingId, account])), [accounts]);
+  const directory = useMemo(() => guestDirectory(guests, bookings), [guests, bookings]);
+  const allRows = useMemo(() => directory.flatMap((entry) => entry.stays.map((booking) => {
+    const account = accountMap.get(booking.id);
+    const room = rooms.find((item) => item.id === roomAt(booking, today));
+    const summary = accountSummary(booking, account, today);
+    return { ...entry, booking, account, room, summary, status: lifecycle(booking, today), category: stayCategory(booking) };
+  })), [directory, accountMap, rooms, today]);
+  const relevant = allRows.filter((row) => (view === 'all' || (view === 'long' ? row.category !== 'short' : row.category === 'short')) && (property === 'all' || row.room?.propertyId === property));
+  const needs = (row, filter) => {
+    if (filter === 'overdue') return row.summary.overdueVnd > 0;
+    if (filter === 'soon') return row.summary.dueSoonVnd > 0;
+    if (filter === 'deposit') return row.summary.depositAction;
+    if (filter === 'ending') return row.status === 'inhouse' && daysBetween(today, occupancyEnd(row.booking)) <= 14;
+    if (filter === 'setup') return row.summary.needsSetup && ['arriving', 'inhouse'].includes(row.status);
+    if (filter === 'attention') return row.summary.overdueVnd > 0 || row.summary.depositAction || (row.summary.needsSetup && ['arriving', 'inhouse'].includes(row.status)) || (row.status === 'past' && row.summary.securityHeldVnd > 0);
+    return true;
+  };
+  const matchesStatus = (row) => status === 'all' || (status === 'active' ? ['arriving', 'inhouse'].includes(row.status) : row.status === status);
+  const matchesSearch = (row) => `${row.name} ${row.guest?.email || ''} ${row.guest?.phone || ''} ${row.booking?.guestEmail || ''} ${row.booking?.guestPhone || ''} ${row.room?.name || ''} ${(row.guest?.tags || []).join(' ')}`.toLowerCase().includes(search.toLowerCase().trim());
+  const priority = (row) => row.summary.overdueVnd ? 0 : row.summary.depositAction ? 1 : row.summary.dueSoonVnd ? 2 : row.summary.needsSetup ? 3 : 4;
+  let rows;
+  if (view === 'all') {
+    rows = directory.map((entry) => {
+      const stays = relevant.filter((row) => row.key === entry.key);
+      const matching = stays.filter((row) => matchesStatus(row) && needs(row, attention));
+      const latest = matching.find((row) => row.status === 'inhouse') || matching.find((row) => row.status === 'arriving') || matching[0];
+      if (!latest && (property !== 'all' || attention !== 'all' || !['all', 'active'].includes(status) || entry.stays.length)) return null;
+      const total = stays.reduce((sum, row) => sum + row.summary.totalOutstanding, 0);
+      return { ...entry, ...(latest || { booking: null, room: null, summary: { totalOutstanding: 0, paymentState: 'setup' } }), guestOutstanding: total, guestCredit: stays.reduce((sum, row) => sum + row.summary.creditVnd, 0) };
+    }).filter(Boolean).filter(matchesSearch);
+  } else rows = relevant.filter((row) => matchesStatus(row) && needs(row, attention) && matchesSearch(row));
+  rows.sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : sort === 'room' ? (a.room?.name || '').localeCompare(b.room?.name || '', undefined, { numeric: true }) : priority(a) - priority(b) || (a.summary.nextDue || '9999').localeCompare(b.summary.nextDue || '9999'));
+  const size = 25, pages = Math.max(1, Math.ceil(rows.length / size)), safePage = Math.min(page, pages);
+  const visible = rows.slice((safePage - 1) * size, safePage * size);
+  const selectedEntry = directory.find((entry) => selected?.bookingId ? entry.stays.some((booking) => booking.id === selected.bookingId) : entry.key === selected?.key);
+  const selectedBooking = selectedEntry?.stays.find((booking) => booking.id === selected?.bookingId) || selectedEntry?.stays[0];
+  const stats = [
+    { key: 'overdue', label: 'Overdue payments', value: shortMoney(relevant.reduce((n, row) => n + row.summary.overdueVnd, 0)), count: relevant.filter((row) => needs(row, 'overdue')).length, tone: 'danger' },
+    { key: 'soon', label: 'Due within 3 days', value: shortMoney(relevant.reduce((n, row) => n + row.summary.dueSoonVnd, 0)), count: relevant.filter((row) => needs(row, 'soon')).length },
+    { key: 'deposit', label: 'Deposit action', value: relevant.filter((row) => needs(row, 'deposit')).length, caption: 'Upcoming or overdue requirements' },
+    { key: 'ending', label: 'Ending within 14 days', value: relevant.filter((row) => needs(row, 'ending')).length, caption: 'Renewal or departure planning' },
+  ];
+  const chooseView = (value) => { setView(value); setAttention('all'); setStatus(value === 'all' ? 'all' : 'active'); setPage(1); };
+  const chooseAttention = (value) => { setAttention(attention === value ? 'all' : value); setStatus('all'); setPage(1); };
+  const financialReady = !loading && !error;
+  const savedAlertCount = alerts.filter((alert) => !alert.resolved && relevant.some((row) => row.booking.id === alert.bookingId)).length;
+
+  return <div className="guest-crm">
+    <div className="crm-heading"><div><h2>Guests & CRM</h2><p>Guest relationships, rent and deposits in one place.</p></div><div className="crm-time"><Clock size={15} />{dateLabel(today)} · Vietnam time</div></div>
+    <div className="crm-view-tabs" aria-label="Guest views">{[['long', 'Long & medium stays'], ['short', 'Short stays'], ['all', 'All guests']].map(([value, label]) => <button type="button" key={value} aria-pressed={view === value} onClick={() => chooseView(value)}>{label}</button>)}</div>
+    {error && <div className="crm-notice danger" role="alert">{error} Payment actions are disabled until records sync. Guest profiles remain available.</div>}
+    {loading && <div className="crm-notice" role="status">Syncing guest payment records…</div>}
+    <div className="crm-stat-grid">{stats.map((stat) => <button type="button" className={`crm-stat ${stat.tone || ''}`} key={stat.key} aria-pressed={attention === stat.key} onClick={() => chooseAttention(stat.key)}><span>{stat.label}</span><strong>{financialReady ? stat.value : '—'}</strong><small>{stat.caption || `${stat.count} stays · all statuses`}</small></button>)}</div>
+    <div className="crm-toolbar"><label className="crm-search"><Search size={17} /><input aria-label="Find guest, room or contact" placeholder="Find guest, room, email or phone" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label><select aria-label="Stay status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value="active">Active & arriving</option><option value="arriving">Arriving</option><option value="inhouse">In-house</option><option value="past">Past</option><option value="cancelled">Cancelled / no-show</option><option value="all">All stays</option></select><select aria-label="Property" value={property} onChange={(event) => { setProperty(event.target.value); setPage(1); }}><option value="all">All properties</option>{[...new Map(rooms.map((room) => [room.propertyId, room.propertyName])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select><select aria-label="Sort guests" value={sort} onChange={(event) => setSort(event.target.value)}><option value="urgency">Payment urgency</option><option value="name">Guest name</option><option value="room">Room</option></select></div>
+    <div className="crm-result-meta"><span aria-live="polite">{rows.length} {view === 'all' ? 'guests' : 'stays'}{attention !== 'all' ? ' · attention filter active' : ''}</span><div><button type="button" className="crm-text-button" aria-pressed={attention === 'attention'} onClick={() => chooseAttention('attention')}><AlertTriangle size={14} />Needs attention · all statuses</button>{attention !== 'all' && <button type="button" className="crm-text-button" onClick={() => setAttention('all')}>Clear filter</button>}</div></div>
+    <div className="crm-table-wrap"><table className="crm-table"><thead><tr><th>Guest & room</th><th>{view === 'all' ? 'Current / latest stay' : 'Stay'}</th><th>{view === 'short' ? 'Booking payment' : 'Rent & payment'}</th><th>Open balance</th><th>Deposit</th><th>Action</th></tr></thead><tbody>{visible.length === 0 ? <tr><td colSpan={6} className="crm-empty"><Users size={30} /><strong>No guests match this view.</strong><span>Try a different stay status, property or search.</span></td></tr> : visible.map((row) => <tr key={view === 'all' ? row.key : row.booking.id}>
+      <td data-label="Guest"><button type="button" className="crm-guest-name" onClick={() => setSelected({ key: row.key, bookingId: row.booking?.id })}>{row.name}</button><span className="crm-secondary">{row.room ? `${row.room.name} · ${row.room.propertyName}` : 'No booking yet'}</span><span className="crm-secondary">{row.booking ? `${channelLabel(row.booking.channel)} · ${categoryLabel(row.category)}` : row.guest?.email || row.guest?.phone || 'No contact details'}</span>{row.guest?.tags?.length > 0 && <span className="crm-secondary">{row.guest.tags.join(' · ')}</span>}</td>
+      <td data-label="Stay">{row.booking ? <>{dateLabel(row.booking.checkIn)}<span className="crm-secondary">to {dateLabel(occupancyEnd(row.booking))}</span><span className="crm-badge">{statusLabel(row.status)}</span>{row.status === 'arriving' && financialReady && <span className={`crm-secondary ${row.summary.arrivalReady ? 'crm-success-text' : ''}`}>{row.summary.arrivalReady ? 'Payment ready' : 'Payment check needed'}</span>}</> : '—'}</td>
+      <td data-label="Payment">{!financialReady ? <span className="crm-secondary">Waiting for payment records</span> : row.booking ? <>{row.account && <span className="crm-secondary">{row.account.plan.billing === 'monthly' ? `${currency(row.account.plan.monthlyRentVnd)} / month` : 'Per-stay billing'}</span>}<PaymentBadge summary={row.summary} />{row.summary.nextCharge && <span className="crm-secondary">{row.summary.nextCharge.title}{row.summary.paymentState !== 'unpaid' ? ` · due ${dateLabel(row.summary.nextDue)}` : ''}</span>}{row.summary.overdueVnd > 0 && row.summary.nextCharge?.paidVnd > 0 && <span className="crm-secondary">Partially paid</span>}</> : '—'}</td>
+      <td data-label="Open balance"><span className="crm-amount">{financialReady ? row.summary.needsSetup && view !== 'all' ? 'Unverified' : currency(view === 'all' ? row.guestOutstanding : row.summary.totalOutstanding) : '—'}</span>{row.summary.overdueVnd > 0 && <span className="crm-secondary crm-danger-text">{currency(row.summary.overdueVnd)} overdue</span>}{(view === 'all' ? row.guestCredit : row.summary.creditVnd) > 0 && <span className="crm-secondary">Credit: {currency(view === 'all' ? row.guestCredit : row.summary.creditVnd)}</span>}{view === 'all' && row.stays.some((stay) => !accountMap.has(stay.id) && !airbnbOnly(stay) && !cancelled(stay)) && <span className="crm-secondary">Includes stays needing review</span>}</td>
+      <td data-label="Deposit">{financialReady && row.booking ? <DepositStatus account={row.account} summary={row.summary} /> : '—'}</td><td data-label="Action"><button type="button" className="crm-button" onClick={() => setSelected({ key: row.key, bookingId: row.booking?.id, action: row.summary.needsSetup ? 'setup' : row.booking && (row.summary.totalOutstanding || row.summary.depositLeft + row.summary.bookingDepositLeft) ? 'payment' : null })}>{row.summary.needsSetup ? 'Set up billing' : 'Open guest'}<ArrowRight size={14} /></button></td>
+    </tr>)}</tbody></table></div>
+    {pages > 1 && <div className="crm-pagination"><button type="button" className="crm-button" disabled={safePage === 1} onClick={() => setPage(safePage - 1)}>Previous</button><span>Page {safePage} of {pages}</span><button type="button" className="crm-button" disabled={safePage === pages} onClick={() => setPage(safePage + 1)}>Next</button></div>}
+    <div className="crm-footer-note">Airbnb accommodation is prepaid through Airbnb. Separate services and explicitly configured deposits remain visible.{savedAlertCount > 0 && ` ${savedAlertCount} saved internal payment alerts.`}</div>
+    {selectedEntry && <GuestPanel key={selectedEntry.key} entry={selectedEntry} booking={selectedBooking} accounts={accountMap} payments={payments} rooms={rooms} today={today} initialAction={selected.action} financialReady={financialReady} onAction={onAction} onClose={() => setSelected(null)} onSelectBooking={(bookingId) => setSelected({ key: selectedEntry.key, bookingId })} onSaveProfile={onSaveProfile} onUpdateOps={onUpdateOps} onEditBooking={onEditBooking} onCreateBooking={onCreateBooking} />}
+  </div>;
+}
+
+function GuestPanel({ entry, booking, accounts, payments, rooms, today, initialAction, financialReady, onAction, onClose, onSelectBooking, onSaveProfile, onUpdateOps, onEditBooking, onCreateBooking }) {
+  const dialog = useRef(null);
+  const [tab, setTab] = useState(booking ? 'payments' : 'profile');
+  const [form, setForm] = useState(initialAction ? { kind: initialAction } : null);
+  const [message, setMessage] = useState('');
+  const [copyError, setCopyError] = useState('');
+  const account = booking ? accounts.get(booking.id) : null;
+  const summary = booking ? accountSummary(booking, account, today) : null;
+  const history = payments.filter((p) => p.bookingId === booking?.id).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  useEffect(() => {
+    const node = dialog.current;
+    node.showModal();
+    return () => node.close();
+  }, []);
+  const openForm = (next) => { setForm(next); setMessage(''); };
+  const copyStatement = async () => {
+    const text = [`Kolab statement · ${entry.name}`, `Stay: ${booking.checkIn} → ${occupancyEnd(booking)}`, `As of: ${today}`, ...(summary.prepaid ? ['Accommodation prepaid via Airbnb.'] : []), ...summary.charges.map((c) => `${c.title} · due ${c.dueDate} · charge ${currency(c.amountVnd)} · received ${currency(c.paidVnd)} · credit ${currency(c.creditVnd)} · remaining ${currency(remaining(c, booking))}`), `Outstanding accommodation/services: ${currency(summary.totalOutstanding)}`, `Security deposit held separately: ${currency(summary.securityHeldVnd)}`, `Unallocated credit: ${currency(summary.creditVnd)}`].join('\n');
+    try { await navigator.clipboard.writeText(text); setMessage('Statement copied.'); setCopyError(''); } catch { setCopyError('Clipboard unavailable. Select and copy the payment details directly.'); }
+  };
+  return <dialog ref={dialog} className="crm-dialog guest-crm" onClose={onClose} aria-labelledby="crm-guest-title">
+    <div className="crm-panel-header"><div><span className="crm-eyebrow">Guest profile</span><h2 id="crm-guest-title">{entry.name}</h2><p>{entry.guest?.email || booking?.guestEmail || entry.guest?.phone || booking?.guestPhone || 'No contact details'}</p></div><button type="button" className="crm-icon-button" onClick={() => dialog.current.close()} aria-label="Close guest"><X size={22} /></button></div>
+    {entry.stays.length > 0 && <label className="crm-field">Selected stay<select value={booking?.id || ''} onChange={(event) => { onSelectBooking(event.target.value); setForm(null); setMessage(''); }}>{entry.stays.map((stay) => <option key={stay.id} value={stay.id}>{dateLabel(stay.checkIn)} → {dateLabel(occupancyEnd(stay))} · {stay.roomId} · {channelLabel(stay.channel)}</option>)}</select></label>}
+    {summary && financialReady && <div className="crm-account-summary"><div><span>Outstanding rent & services</span><strong>{summary.needsSetup ? 'Needs review' : currency(summary.totalOutstanding)}</strong><PaymentBadge summary={summary} /></div><div><span>Security deposit held</span><strong>{currency(summary.securityHeldVnd)}</strong>{summary.creditVnd > 0 && <span>Account credit: {currency(summary.creditVnd)}</span>}</div></div>}
+    <div className="crm-detail-tabs" aria-label="Guest detail sections">{[['payments', 'Payments'], ['deposits', 'Deposits'], ['services', 'Stay & services'], ['profile', 'Profile'], ['history', 'History']].map(([value, label]) => <button type="button" key={value} aria-pressed={tab === value} onClick={() => { setTab(value); setForm(null); }}>{label}</button>)}</div>
+    {message && <div className="crm-notice success" role="status">{message}</div>}{copyError && <div className="crm-notice warning" role="status">{copyError}</div>}
+    {!financialReady && ['payments', 'deposits'].includes(tab) && <div className="crm-notice warning">Payment records must finish syncing before financial actions are available.</div>}
+    {booking && financialReady && ['payments', 'deposits'].includes(tab) && <>
+      {summary.needsSetup && <div className="crm-notice warning"><strong>Review the opening position</strong><p>Existing paid flags are preserved as historical notes. Set a first tracked period and any confirmed older balance before using rent alerts.</p>{booking.longTermOps?.rentPaidThrough && <p>Previously marked paid through: {booking.longTermOps.rentPaidThrough}.</p>}{booking.paymentStatus && <p>Previous booking flag: {booking.paymentStatus}.</p>}<button type="button" className="crm-button primary" onClick={() => openForm({ kind: 'setup' })}>Set up billing</button></div>}
+      {summary.prepaid && <div className="crm-notice success"><CheckCircle size={17} /><span>Accommodation is prepaid via Airbnb. No accommodation collection reminders are created.</span></div>}
+      {summary.scheduleChanged && <div className="crm-notice warning"><span>The stay or services changed. Update unpaid future charges and new service items; posted and paid amounts remain unchanged.</span><button type="button" className="crm-button" onClick={() => openForm({ kind: 'sync' })}>Review schedule update</button></div>}
+      {account && <div className="crm-action-row"><button type="button" className="crm-button primary" disabled={!summary.totalOutstanding && !summary.depositLeft && !summary.bookingDepositLeft} onClick={() => openForm({ kind: 'payment' })}><CreditCard size={15} />Record payment</button><button type="button" className="crm-button" onClick={() => openForm({ kind: 'plan' })}><Settings size={15} />Billing settings</button><button type="button" className="crm-button" onClick={() => openForm({ kind: 'charge' })}><Plus size={15} />Add charge</button><button type="button" className="crm-button" onClick={copyStatement}><FileText size={15} />Copy statement</button></div>}
+      {!account && summary.prepaid && <button type="button" className="crm-button" onClick={() => openForm({ kind: 'setup' })}>Set up separate services or deposit</button>}
+      {form && <ActionForm key={`${booking.id}-${form.kind}-${form.target || ''}`} form={form} booking={booking} account={account} today={today} onAction={onAction} onCancel={() => setForm(null)} onSuccess={() => { setForm(null); setMessage('Saved. Payment balances and internal alerts have been updated.'); }} />}
+      {tab === 'payments' && account && <section className="crm-panel-section"><h3>Payment schedule</h3><p className="crm-secondary">All periods stay visible, including past unpaid rent. Future amounts are included in the total balance.</p>{summary.charges.filter((c) => c.type !== 'security').map((charge) => <div className="crm-charge" key={charge.id}><div><strong>{charge.title}</strong><span className="crm-secondary">{charge.coverageStart && `${dateLabel(charge.coverageStart)} → ${dateLabel(charge.coverageEnd)} · `}Due {dateLabel(charge.dueDate)}</span><span className="crm-secondary">Charge {currency(charge.amountVnd)} · received {currency(charge.paidVnd)}{charge.creditVnd > 0 ? ` · credits ${currency(charge.creditVnd)}` : ''}</span>{charge.prepaid || (summary.prepaid && charge.type === 'rent') ? <span className="crm-badge success">Prepaid via Airbnb</span> : <span className={`crm-badge ${remaining(charge, booking) ? charge.dueDate < today ? 'danger' : 'warning' : 'success'}`}>{remaining(charge, booking) ? `${charge.paidVnd ? 'Partial · ' : ''}${currency(remaining(charge, booking))} remaining${charge.dueDate < today ? ` · ${daysBetween(charge.dueDate, today)}d overdue` : ''}` : 'Paid / credited'}</span>}</div><div className="crm-charge-actions">{remaining(charge, booking) > 0 && <><button type="button" className="crm-text-button" onClick={() => openForm({ kind: 'payment', target: charge.id })}>Record payment</button><button type="button" className="crm-text-button" onClick={() => openForm({ kind: 'due_date', target: charge.id })}>Change due date</button><button type="button" className="crm-text-button" onClick={() => openForm({ kind: 'adjustment', target: charge.id })}>Credit / waive</button>{summary.creditVnd > 0 && <button type="button" className="crm-text-button" onClick={() => openForm({ kind: 'credit', target: charge.id })}>Apply account credit</button>}</>}</div></div>)}</section>}
+      {tab === 'deposits' && account && <section className="crm-panel-section"><h3>Booking deposit / advance rent</h3><p>Required: {currency(account.plan.bookingDepositVnd)} · remaining: {currency(summary.bookingDepositLeft)}</p><p className="crm-secondary">Due {dateLabel(account.plan.bookingDepositDue)}. Counts toward rent when received.</p>{summary.bookingDepositLeft > 0 && <button type="button" className="crm-button" onClick={() => openForm({ kind: 'payment', target: 'booking_deposit' })}>Record booking deposit</button>}<h3 className="crm-section-space">Refundable security deposit</h3>{summary.charges.filter((c) => c.type === 'security').map((charge) => <div key={charge.id}><div className="crm-detail-row"><span>Required · due {dateLabel(charge.dueDate)}</span><strong>{currency(charge.amountVnd)}</strong></div><div className="crm-detail-row"><span>Received</span><strong>{currency(charge.paidVnd)}</strong></div><div className="crm-detail-row"><span>Refunded / deducted</span><strong>{currency(charge.refundedVnd)} / {currency(charge.deductedVnd)}</strong></div><div className="crm-detail-row"><span>Currently held</span><strong>{currency(heldDeposit(charge))}</strong></div><div className="crm-action-row">{remaining(charge, booking) > 0 && <button type="button" className="crm-button" onClick={() => openForm({ kind: 'payment', target: charge.id })}>Record security deposit</button>}{heldDeposit(charge) > 0 && <button type="button" className="crm-button" onClick={() => openForm({ kind: 'deposit_movement' })}>Record refund / deduction</button>}</div></div>)}{!account.plan.securityDepositVnd && <p className="crm-secondary">No security deposit required. Change this in billing settings if needed.</p>}</section>}
+    </>}
+    {tab === 'profile' && <ProfileForm key={entry.key} entry={entry} booking={booking} onSave={onSaveProfile} onCreateBooking={(guest) => { dialog.current.close(); onCreateBooking(guest); }} />}
+    {tab === 'services' && booking && <ServicesPanel booking={booking} rooms={rooms} today={today} onUpdateOps={onUpdateOps} onEditBooking={(stay) => { dialog.current.close(); onEditBooking(stay); }} />}
+    {tab === 'history' && <section className="crm-panel-section"><h3>Stay history</h3>{entry.stays.map((stay) => <button type="button" className="crm-stay-history" key={stay.id} onClick={() => { onSelectBooking(stay.id); setForm(null); }}><strong>{dateLabel(stay.checkIn)} → {dateLabel(occupancyEnd(stay))}</strong><span>{stay.roomId} · {channelLabel(stay.channel)} · {stay.status || 'Confirmed'}</span><ChevronDown size={16} /></button>)}</section>}
+    {['payments', 'history', 'deposits'].includes(tab) && <section className="crm-panel-section"><h3>Activity & receipts</h3>{history.length === 0 ? <p className="crm-secondary">No recorded financial activity yet.</p> : history.map((event) => <div className="crm-activity" key={event.id}><div><strong>{event.kind.replaceAll('_', ' ')}{event.amountVnd ? ` · ${currency(event.amountVnd)}` : ''}</strong><span className="crm-secondary">{event.receivedDate ? `Received ${dateLabel(event.receivedDate)} · ` : ''}{event.method || ''}{event.reference ? ` · ${event.reference}` : ''}</span><span className="crm-secondary">{event.createdByName || 'Staff'} · {event.createdAt ? new Date(event.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Ho_Chi_Minh' }) : ''}</span>{event.note && <p>{event.note}</p>}{event.reversedBy && <span className="crm-badge warning">Reversed</span>}</div>{['payment', 'credit_allocation'].includes(event.kind) && !event.reversedBy && <button type="button" className="crm-text-button" disabled={!financialReady} onClick={() => { setTab('payments'); openForm({ kind: 'reverse', paymentId: event.id }); }}>Reverse</button>}</div>)}</section>}
+  </dialog>;
+}
+
+function ActionForm({ form, booking, account, today, onAction, onCancel, onSuccess }) {
+  const [id] = useState(newId);
+  const [plan, setPlan] = useState(() => ({ ...(account?.plan || defaultPlan(booking, today)) }));
+  const [target, setTarget] = useState(() => form.target || (accountSummary(booking, account, today).bookingDepositLeft ? 'booking_deposit' : account?.charges.some((c) => c.type === 'rent' && remaining(c, booking)) ? 'oldest' : account?.charges.find((c) => remaining(c, booking))?.id || ''));
+  const summary = accountSummary(booking, account, today);
+  const targetCharge = account?.charges.find((c) => c.id === target);
+  const targetBalance = target === 'oldest' ? summary.openCharges.filter((c) => c.type === 'rent').reduce((n, c) => n + remaining(c, booking), 0) : target === 'booking_deposit' ? summary.bookingDepositLeft : targetCharge ? remaining(targetCharge, booking) : 0;
+  const [amount, setAmount] = useState(() => form.kind === 'deposit_movement' ? summary.securityHeldVnd : targetBalance);
+  const [receivedDate, setReceivedDate] = useState(today);
+  const [dueDate, setDueDate] = useState(() => account?.charges.find((c) => c.id === form.target)?.dueDate || today);
+  const [method, setMethod] = useState('Bank transfer');
+  const [reference, setReference] = useState('');
+  const [note, setNote] = useState('');
+  const [movement, setMovement] = useState('refund');
+  const [title, setTitle] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const inFlight = useRef(false);
+  const isPlan = ['setup', 'plan'].includes(form.kind);
+  const updatePlan = (key, value) => setPlan((old) => ({ ...old, [key]: value, ...(key === 'monthlyRentVnd' ? { useBookingRate: false } : key === 'totalVnd' ? { useBookingTotal: false } : {}) }));
+  let preview = [], planError = '';
+  if (isPlan) { try { preview = buildSchedule(booking, plan); } catch (err) { planError = err.message; } }
+  const submit = async (event) => {
+    event.preventDefault();
+    if (inFlight.current) return;
+    inFlight.current = true; setSaving(true); setError('');
+    try {
+      let input;
+      if (form.kind === 'setup') input = plan;
+      else if (form.kind === 'plan') input = { plan, expectedVersion: account.version };
+      else if (form.kind === 'payment') input = { target, amountVnd: Number(amount), receivedDate, method, reference, note };
+      else if (form.kind === 'deposit_movement') input = { kind: movement, amountVnd: Number(amount), note };
+      else if (form.kind === 'charge') input = { title, amountVnd: Number(amount), dueDate };
+      else if (form.kind === 'reverse') input = { paymentId: form.paymentId, note };
+      else input = { chargeId: form.target, amountVnd: Number(amount), dueDate, note };
+      await onAction({ bookingId: booking.id, actionId: id, kind: form.kind, input });
+      onSuccess();
+    } catch (err) { setError(err.message || 'Unable to save this payment.'); }
+    finally { inFlight.current = false; setSaving(false); }
+  };
+  const titles = { setup: 'Set up billing & deposits', plan: 'Billing settings', payment: 'Record received payment', deposit_movement: 'Record a completed refund or deduction', charge: 'Add a service or other charge', reverse: 'Reverse a recorded payment', adjustment: 'Credit or waive an unpaid charge', due_date: 'Change payment due date', credit: 'Apply available account credit', sync: 'Update future payment schedule' };
+  return <form className="crm-action-form" onSubmit={submit}><div className="crm-form-heading"><h3>{titles[form.kind]}</h3><button type="button" className="crm-icon-button" onClick={onCancel} disabled={saving} aria-label="Close payment form"><X size={18} /></button></div>
+    {isPlan ? <>
+      <div className="crm-form-grid"><label className="crm-field">Billing plan<select value={plan.billing} onChange={(event) => updatePlan('billing', event.target.value)}><option value="monthly">Monthly · calendar months</option><option value="one_off">Per stay / prepaid / deposit + balance</option></select></label><label className="crm-field">First tracked date<input type="date" value={plan.trackingStart} disabled={form.kind === 'plan'} min={booking.checkIn} required onChange={(event) => updatePlan('trackingStart', event.target.value)} /></label><label className="crm-field">First rent due date<input type="date" required value={plan.firstDueDate} onChange={(event) => updatePlan('firstDueDate', event.target.value)} /></label>{plan.billing === 'monthly' ? <><label className="crm-field">Monthly rent (VND)<input type="number" min="0" step="1" required value={plan.monthlyRentVnd} onChange={(event) => updatePlan('monthlyRentVnd', Number(event.target.value))} /></label><label className="crm-field">Recurring due day (1–31)<input type="number" min="1" max="31" step="1" required value={plan.dueDay} onChange={(event) => updatePlan('dueDay', Number(event.target.value))} /></label></> : <label className="crm-field">Total accommodation amount (VND)<input type="number" min="0" step="1" required value={plan.totalVnd} onChange={(event) => updatePlan('totalVnd', Number(event.target.value))} /></label>}
+      {!airbnbOnly(booking) && <><label className="crm-field">Booking deposit / advance rent (VND)<input type="number" min="0" step="1" required value={plan.bookingDepositVnd} onChange={(event) => updatePlan('bookingDepositVnd', Number(event.target.value))} /></label><label className="crm-field">Booking deposit due<input type="date" required={plan.bookingDepositVnd > 0} value={plan.bookingDepositDue} onChange={(event) => updatePlan('bookingDepositDue', event.target.value)} /></label></>}
+      <label className="crm-field">Refundable security deposit (VND)<input type="number" min="0" step="1" required value={plan.securityDepositVnd} onChange={(event) => updatePlan('securityDepositVnd', Number(event.target.value))} /></label><label className="crm-field">Security deposit due<input type="date" required={plan.securityDepositVnd > 0} value={plan.securityDepositDue} onChange={(event) => updatePlan('securityDepositDue', event.target.value)} /></label>
+      {form.kind === 'setup' && !airbnbOnly(booking) && <><label className="crm-field">Confirmed older unpaid rent (VND)<input type="number" min="0" step="1" required value={plan.openingVnd} onChange={(event) => updatePlan('openingVnd', Number(event.target.value))} /></label><label className="crm-field">Older balance due date<input type="date" required={plan.openingVnd > 0} value={plan.openingDue} onChange={(event) => updatePlan('openingDue', event.target.value)} /></label></>}
+      </div>{form.kind === 'setup' && <><label className="crm-check"><input type="checkbox" checked={plan.includeExtras} onChange={(event) => updatePlan('includeExtras', event.target.checked)} />Include existing unbilled extras and credits ({currency(legacyExtras(booking))})</label><label className="crm-check"><input type="checkbox" required />I reviewed the opening period and balance. Previously received payments will be recorded separately.</label></>}
+      <div className="crm-notice">Calendar-month rent is prorated for partial periods and agreed sellable breaks. Airbnb accommodation remains prepaid.{form.kind === 'plan' && ' Settings update unpaid future rent only. Use “Change due date” or a credit to correct an existing charge.'}</div>
+      <details className="crm-preview" open><summary>Schedule preview · {preview.length} charges</summary>{planError ? <p className="crm-danger-text">{planError}</p> : preview.slice(0, 12).map((charge) => <div className="crm-detail-row" key={charge.id}><span>{charge.title}<small className="crm-secondary">Due {dateLabel(charge.dueDate)}{charge.prepaid ? ' · Prepaid via Airbnb' : ''}</small></span><strong>{currency(charge.amountVnd)}</strong></div>)}{preview.length > 12 && <p className="crm-secondary">Plus {preview.length - 12} future charges.</p>}</details>
+    </> : form.kind === 'payment' ? <>
+      <label className="crm-field">Apply payment to<select value={target} required onChange={(event) => { const value = event.target.value; setTarget(value); setAmount(value === 'oldest' ? summary.openCharges.filter((c) => c.type === 'rent').reduce((n, c) => n + remaining(c, booking), 0) : value === 'booking_deposit' ? summary.bookingDepositLeft : remaining(account.charges.find((c) => c.id === value), booking)); }}>{summary.openCharges.some((c) => c.type === 'rent') && <option value="oldest">Oldest outstanding rent first</option>}{summary.bookingDepositLeft > 0 && <option value="booking_deposit">Booking deposit / advance rent · {currency(summary.bookingDepositLeft)}</option>}{account.charges.filter((c) => remaining(c, booking) > 0).map((charge) => <option key={charge.id} value={charge.id}>{charge.title} · {currency(remaining(charge, booking))} remaining</option>)}</select></label>
+      <div className="crm-form-grid"><label className="crm-field">Amount received (VND)<input type="number" min="1" step="1" required value={amount} onChange={(event) => setAmount(event.target.value)} /></label><label className="crm-field">Received date<input type="date" required max={today} value={receivedDate} onChange={(event) => setReceivedDate(event.target.value)} /></label><label className="crm-field">Method<select value={method} onChange={(event) => setMethod(event.target.value)}>{['Bank transfer', 'Cash', 'Card', 'Other'].map((value) => <option key={value}>{value}</option>)}</select></label><label className="crm-field">Reference<input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Bank or receipt reference" /></label></div><label className="crm-field">Note<input value={note} onChange={(event) => setNote(event.target.value)} /></label><p className="crm-secondary">Remaining after payment: {currency(Math.max(0, targetBalance - Number(amount)))}{Number(amount) > targetBalance && targetCharge?.type !== 'security' && target !== 'booking_deposit' ? ` · excess ${currency(Number(amount) - targetBalance)} stays as account credit` : ''}. Record confirmed money received; a pending transfer is not payment.</p>
+    </> : form.kind === 'deposit_movement' ? <><label className="crm-field">Movement<select value={movement} onChange={(event) => setMovement(event.target.value)}><option value="refund">Refund already paid to guest</option><option value="deduction">Agreed deposit deduction</option></select></label><label className="crm-field">Amount (VND) · held {currency(summary.securityHeldVnd)}<input type="number" min="1" max={summary.securityHeldVnd} step="1" value={amount} onChange={(event) => setAmount(event.target.value)} required /></label><label className="crm-field">Reason / reference<textarea value={note} onChange={(event) => setNote(event.target.value)} required /></label></> : form.kind === 'charge' ? <><label className="crm-field">Description<input value={title} onChange={(event) => setTitle(event.target.value)} required /></label><div className="crm-form-grid"><label className="crm-field">Amount (VND)<input type="number" min="1" step="1" required value={amount} onChange={(event) => setAmount(event.target.value)} /></label><label className="crm-field">Due date<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} required /></label></div></> : ['adjustment', 'due_date', 'reverse'].includes(form.kind) ? <>{form.kind === 'adjustment' && <label className="crm-field">Credit amount (VND)<input type="number" min="1" step="1" required value={amount} onChange={(event) => setAmount(event.target.value)} /></label>}{form.kind === 'due_date' && <label className="crm-field">New due date<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} required /></label>}<label className="crm-field">Reason<textarea value={note} onChange={(event) => setNote(event.target.value)} required /></label></> : <p>{form.kind === 'credit' ? `Apply available credit (${currency(summary.creditVnd)}) to this unpaid charge.` : 'Recalculate only unpaid future charges from the latest booking. Existing due or paid amounts are preserved; correct those using a credit or additional charge.'}</p>}
+    {error && <div className="crm-notice danger" role="alert">{error}</div>}<div className="crm-action-row"><button type="submit" className="crm-button primary" disabled={saving || (isPlan && !!planError)}>{saving ? 'Saving…' : form.kind === 'payment' ? 'Save received payment' : 'Save changes'}</button><button type="button" className="crm-button" disabled={saving} onClick={onCancel}>Cancel</button></div>
+  </form>;
+}
+
+function ProfileForm({ entry, booking, onSave, onCreateBooking }) {
+  const [notes, setNotes] = useState(entry.guest?.notes || booking?.notes || '');
+  const [tags, setTags] = useState((entry.guest?.tags || []).join(', '));
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  return <form className="crm-panel-section" onSubmit={async (event) => { event.preventDefault(); setSaving(true); setMessage(''); try { await onSave({ guest: entry.guest, booking, notes, tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean) }); setMessage('Profile saved.'); } catch (error) { setMessage(error.message); } finally { setSaving(false); } }}><h3>Preferences & relationship notes</h3><label className="crm-field">Tags<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="VIP, returning, quiet room" /></label><label className="crm-field">Notes<textarea rows={5} value={notes} onChange={(event) => setNotes(event.target.value)} /></label><div className="crm-action-row"><button className="crm-button primary" disabled={saving}>{saving ? 'Saving…' : 'Save profile'}</button><button type="button" className="crm-button" onClick={() => onCreateBooking(entry.guest || { fullName: entry.name, email: booking?.guestEmail, phone: booking?.guestPhone })}>Create booking</button></div>{message && <p role="status">{message}</p>}</form>;
+}
+
+function ServicesPanel({ booking, rooms, today, onUpdateOps, onEditBooking }) {
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const save = async (patch) => { setSaving(true); setError(''); try { await onUpdateOps(booking, patch); } catch (err) { setError(err.message); } finally { setSaving(false); } };
+  return <section className="crm-panel-section"><h3>Stay details</h3><div className="crm-detail-row"><span>Room</span><strong>{roomAt(booking, today)}</strong></div><div className="crm-detail-row"><span>Arrival → departure</span><strong>{dateLabel(booking.checkIn)} → {dateLabel(occupancyEnd(booking))}</strong></div><button type="button" className="crm-button" onClick={() => onEditBooking(booking)}>Edit stay / room moves / breaks</button><h3 className="crm-section-space">Weekly services</h3><label className="crm-field">Cleaning day<select disabled={saving} value={booking.longTermOps?.cleaningDay || booking.weeklyCleaningDay || ''} onChange={(event) => save({ cleaningDay: event.target.value })}><option value="">Not scheduled</option>{['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map((day) => <option key={day}>{day}</option>)}</select></label><label className="crm-field">Laundry this week<select disabled={saving} value={weeklyLaundryStatus(booking, today)} onChange={(event) => save({ laundryStatus: event.target.value, laundryUpdatedAt: new Date().toISOString() })}><option value="pending">Pending</option><option value="processing">Processing</option><option value="done">Done</option></select></label>{error && <p className="crm-danger-text" role="alert">{error}</p>}<h3 className="crm-section-space">Room moves</h3>{(booking.roomMoves || []).map((move, index) => <div className="crm-detail-row" key={move.id || index}><span>{dateLabel(move.moveDate)}</span><strong>{rooms.find((room) => room.id === move.roomId)?.name || move.roomId}{move.useDifferentMonthlyRent ? ` · ${currency(move.monthlyRentVnd)} / month` : ''}{move.useDifferentChannel ? ` · ${channelLabel(move.channel)}` : ''}</strong></div>)}<h3 className="crm-section-space">Existing services & notes</h3>{(booking.services || []).map((service, index) => <div className="crm-detail-row" key={service.id || index}><span>{service.name} × {service.qty || 1}</span><strong>{currency(money(service.price) * (service.qty || 1))}</strong></div>)}{(booking.longTermOps?.extrasLedger || booking.longTermOps?.extrasLog || []).map((entry, index) => <div className="crm-detail-row" key={entry.id || index}><span>{entry.title || entry.name} · {entry.status || 'unbilled'}</span><strong>{entry.kind === 'credit' ? '−' : ''}{currency(entry.amountVnd)}</strong></div>)}<p className="crm-secondary">Existing extras can be included once during billing setup. New booking services import when the schedule updates. You can also record charges and credits directly in Payments.</p><p>{booking.longTermOps?.specialNotes || booking.notes || 'No stay notes.'}</p></section>;
+}

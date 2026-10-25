@@ -7,6 +7,9 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 setGlobalOptions({ maxInstances: 10 });
 admin.initializeApp();
 
+// Internal guest payment alerts. No guest emails or messages are sent.
+Object.assign(exports, require('./crmAlerts'));
+
 // ─── Property structure (mirrors App.jsx) ────────────────────────────────────
 
 const PROPERTIES = [

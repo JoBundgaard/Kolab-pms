@@ -35,6 +35,12 @@ test('room switch departs and arrives on October 29 with no gap', () => {
   assert.equal(run('getBookingStaySegments(booking)[1].startDate', booking), '2026-10-29');
 });
 
+test('switching to direct billing does not require a legacy paid flag', () => {
+  const booking = { ...guest, channel: 'airbnb', roomMoves: [{ moveDate: '2026-10-29', roomId: 'b', useDifferentChannel: true, channel: 'direct' }] };
+  assert.equal(run("getBookingStaySegments(booking)[1].channel", booking), 'direct');
+  assert.equal(run("getBookingRoomIdForDate(booking, '2026-10-29')", booking), 'b');
+});
+
 test('break until October 29 returns on October 29 and deducts only away nights', () => {
   const booking = { ...guest, sellRoomDuringBreak: true, guestBreakPeriods: [{ startDate: '2026-10-25', endDate: '2026-10-29' }] };
   assert.equal(run("bookingOccupiesDate(booking, '2026-10-25', 'a')", booking), false);

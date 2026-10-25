@@ -13,15 +13,13 @@ import {
   setDoc,
   deleteDoc,
   getDocs,
-  where,
-  limit,
+  getDoc,
   runTransaction,
 } from 'firebase/firestore';
-import app, { auth, db } from './firebase';
+import { auth, db } from './firebase';
 import { upsertBooking, removeBooking } from './services/bookingsService';
 import { buildRoomTransferPlan } from './services/roomTransfers';
 import { resolveGuestForBooking, previewReturningGuest, updateGuestStatsFromBooking } from './services/guestResolver';
-import { normalizeEmail, normalizePhone, normalizeName } from './utils/normalizeGuest';
 import {
   Calendar,
   Home,
@@ -56,6 +54,9 @@ import {
 import HousekeepingTaskManager from './components/HousekeepingTaskManager';
 import WeeklyPlanningView from './components/WeeklyPlanningView';
 import Chatbot from './components/Chatbot';
+import GuestCRM from './components/GuestCRM';
+import useGuestCrm from './hooks/useGuestCrm';
+import { accountSummary, propertyToday } from '../functions/lib/crmFinance.mjs';
 import { normalizeHousekeepingTasks } from './lib/housekeeping';
 
 // Firebase is initialized once in src/firebase.js and re-used here
@@ -574,161 +575,6 @@ function getWeekdayKey(dateStr) {
   return keys[idx];
 }
 
-const formatWeekdayLabel = (weekdayKey) => WEEKDAY_LABELS[weekdayKey] || 'Not set';
-
-const getMonthKey = (dateInput = new Date()) => {
-  const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
-  if (isNaN(d.getTime())) return '';
-  return `${d.getFullYear()}-${`${d.getMonth() + 1}`.padStart(2, '0')}`;
-};
-
-const isSameOperationalWeek = (a, b) => {
-  const dateA = a instanceof Date ? new Date(a) : new Date(a);
-  const dateB = b instanceof Date ? new Date(b) : new Date(b);
-  if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return false;
-
-  const startOfWeek = (input) => {
-    const d = new Date(input);
-    const day = d.getDay();
-    const diff = (day + 6) % 7;
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - diff);
-    return d.getTime();
-  };
-
-  return startOfWeek(dateA) === startOfWeek(dateB);
-};
-
-const getRentCycleDueDate = (booking, todayInput = new Date()) => {
-  const today = todayInput instanceof Date ? todayInput : new Date(todayInput);
-  if (isNaN(today.getTime())) return '';
-  const configuredDay = Number(booking?.longTermOps?.rentDueDay);
-  const fallbackDay = new Date(booking?.checkIn || today).getDate();
-  const dueDay = Math.min(31, Math.max(1, Number.isFinite(configuredDay) && configuredDay > 0 ? configuredDay : fallbackDay || 1));
-  const year = today.getFullYear();
-  const monthIndex = today.getMonth();
-  const maxDay = new Date(year, monthIndex + 1, 0).getDate();
-  return formatDate(new Date(year, monthIndex, Math.min(dueDay, maxDay)));
-};
-
-const buildLongTermLedgerEntries = (booking, fallbackDate = new Date()) => {
-  const explicitLedger = Array.isArray(booking?.longTermOps?.extrasLedger)
-    ? booking.longTermOps.extrasLedger
-    : (Array.isArray(booking?.longTermOps?.extrasLog) ? booking.longTermOps.extrasLog : []);
-
-  const fallbackServices = Array.isArray(booking?.services)
-    ? booking.services.map((service) => ({
-        id: service.id || randomId(),
-        kind: 'charge',
-        title: service.name || 'Extra charge',
-        description: service.notes || '',
-        amountVnd: Math.max(0, Math.round(Number(service.price) || 0)) * Math.max(1, parseInt(service.qty, 10) || 1),
-        qty: Math.max(1, parseInt(service.qty, 10) || 1),
-        date: formatDate(service.createdAt || booking?.updatedAt || booking?.createdAt || fallbackDate),
-        status: service.billedAt ? 'billed' : 'unbilled',
-        source: 'services',
-      }))
-    : [];
-
-  const source = explicitLedger.length ? explicitLedger : fallbackServices;
-
-  return source
-    .map((entry) => {
-      const qty = Math.max(1, parseInt(entry?.qty, 10) || 1);
-      const unitAmount = Number(entry?.unitAmountVnd ?? entry?.price ?? entry?.amountVnd);
-      const explicitAmount = Number(entry?.amountVnd);
-      const amountVnd = Math.max(
-        0,
-        Math.round(Number.isFinite(explicitAmount) ? explicitAmount : (Number.isFinite(unitAmount) ? unitAmount * qty : 0))
-      );
-      const date = formatDate(entry?.date || entry?.createdAt || booking?.updatedAt || booking?.createdAt || fallbackDate);
-      const kind = entry?.kind === 'credit' || entry?.type === 'credit' ? 'credit' : 'charge';
-      const settledMonthKey = entry?.settledMonthKey || entry?.billedMonthKey || '';
-      const status = entry?.status || (settledMonthKey ? 'billed' : (entry?.billedAt ? 'billed' : 'unbilled'));
-
-      return {
-        id: entry?.id || `${entry?.title || entry?.label || entry?.name || 'ledger'}_${date}_${amountVnd}_${qty}_${kind}`,
-        kind,
-        title: entry?.title || entry?.label || entry?.name || (kind === 'credit' ? 'Guest credit' : 'Extra charge'),
-        description: entry?.description || entry?.notes || '',
-        amountVnd,
-        signedAmountVnd: kind === 'credit' ? -amountVnd : amountVnd,
-        qty,
-        date,
-        status,
-        settledMonthKey,
-        source: entry?.source || (explicitLedger.length ? 'longTermOps' : 'services'),
-      };
-    })
-    .filter((entry) => entry.amountVnd > 0)
-    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-};
-
-const getBookingServiceEntries = (booking) => {
-  if (!Array.isArray(booking?.services)) return [];
-  return booking.services
-    .map((service) => {
-      const qty = Math.max(1, parseInt(service?.qty, 10) || 1);
-      const unitPriceVnd = Math.max(0, Math.round(Number(service?.price) || 0));
-      const totalPriceVnd = unitPriceVnd * qty;
-      const createdAt = service?.createdAt || booking?.updatedAt || booking?.createdAt || '';
-      return {
-        id: service?.id || `${service?.name || 'service'}_${createdAt}_${unitPriceVnd}_${qty}`,
-        name: (service?.name || '').trim() || 'Unnamed service',
-        qty,
-        unitPriceVnd,
-        totalPriceVnd,
-        notes: service?.notes || '',
-        createdAt,
-        date: formatDate(createdAt || booking?.updatedAt || booking?.createdAt || new Date()),
-        status: service?.billedAt ? 'billed' : 'unbilled',
-      };
-    })
-    .filter((service) => service.totalPriceVnd > 0)
-    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-};
-
-const buildLongTermReceiptMessage = ({ row, monthKey }) => {
-  if (!row) return '';
-  const rent = calculateLongTermRentForMonth(row.booking, monthKey);
-  const monthEntries = (row.ledgerEntries || []).filter((entry) => getMonthKey(entry.date) === monthKey);
-  const chargeTotal = monthEntries.filter((entry) => entry.kind === 'charge').reduce((sum, entry) => sum + entry.amountVnd, 0);
-  const creditTotal = monthEntries.filter((entry) => entry.kind === 'credit').reduce((sum, entry) => sum + entry.amountVnd, 0);
-  const netExtras = chargeTotal - creditTotal;
-  const totalDue = rent + netExtras;
-  const lines = [
-    `Kolab receipt for ${row.booking?.guestName || 'Guest'}`,
-    `Room: ${row.room?.name || row.booking?.roomId || 'Unknown room'}`,
-    `Billing month: ${monthKey}`,
-    `Rent due date: ${row.dueDate || 'Not set'}`,
-    '',
-    `Monthly rent: ${formatCurrencyVND(rent)}`,
-  ];
-
-  if (row.breakRentDeductionVnd > 0) {
-    lines.push(`Break deduction: -${formatCurrencyVND(row.breakRentDeductionVnd)} (${row.breakNightsThisMonth} day${row.breakNightsThisMonth === 1 ? '' : 's'} on sellable break)`);
-  }
-
-  if (monthEntries.length) {
-    lines.push('Extras and credits:');
-    monthEntries
-      .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0))
-      .forEach((entry) => {
-        const sign = entry.kind === 'credit' ? '-' : '+';
-        lines.push(`${entry.date}  ${entry.title}  ${sign}${formatCurrencyVND(entry.amountVnd)}`);
-        if (entry.description) lines.push(`  ${entry.description}`);
-      });
-  } else {
-    lines.push('Extras and credits: none this month.');
-  }
-
-  lines.push('');
-  lines.push(`Charges: ${formatCurrencyVND(chargeTotal)}`);
-  lines.push(`Credits: ${formatCurrencyVND(creditTotal)}`);
-  lines.push(`Net extras: ${formatCurrencyVND(netExtras)}`);
-  lines.push(`Total due: ${formatCurrencyVND(totalDue)}`);
-  return lines.join('\n');
-};
 
 const calculateNights = (checkInDateStr, checkOutDateStr) => {
   const checkInInput = checkInDateStr?.toDate ? checkInDateStr.toDate() : checkInDateStr;
@@ -862,7 +708,6 @@ const normalizeRoomMoves = (movesInput = [], { stayStart = '', stayEnd = '', fal
       if (stayEnd && moveDate >= stayEnd) return null;
       if (useDifferentMonthlyRent && (!Number.isFinite(nextRent) || nextRent < 0)) return null;
       if (useDifferentChannel && !channel) return null;
-      if (useDifferentChannel && channel === 'direct' && !paymentStatus) return null;
 
       return {
         id: entry?.id || randomId(),
@@ -962,9 +807,6 @@ const getBookingChannelForDate = (booking, dateStr) => {
   return getBookingSegmentForDate(booking, dateStr)?.channel || booking?.channel || 'airbnb';
 };
 
-const getBookingPaymentStatusForDate = (booking, dateStr) => {
-  return getBookingSegmentForDate(booking, dateStr)?.paymentStatus || ((booking?.channel || 'airbnb') === 'direct' ? (booking?.paymentStatus || '') : '');
-};
 
 const getBookingChannelSummary = (booking) => {
   const channels = Array.from(new Set(getBookingStaySegments(booking, { mode: 'occupancy' }).map((segment) => (segment.channel || '').toLowerCase()).filter(Boolean)));
@@ -1038,16 +880,6 @@ const calculateLongTermRentForRange = (booking, startDate, endDate) => {
   return Math.round(totalRent);
 };
 
-const calculateLongTermRentForMonth = (booking, monthKey) => {
-  if (!monthKey) return 0;
-  const [yearStr, monthStr] = monthKey.split('-');
-  const year = Number(yearStr);
-  const monthIndex = Number(monthStr) - 1;
-  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0) return 0;
-  const monthStart = formatDate(new Date(year, monthIndex, 1));
-  const monthEnd = formatDate(new Date(year, monthIndex + 1, 1));
-  return calculateLongTermRentForRange(booking, monthStart, monthEnd);
-};
 
 const getLongStayCalendarMonthCount = (checkIn, checkOut) => {
   const start = parseLocalDateString(checkIn);
@@ -1105,30 +937,6 @@ const countBookingBreakNightsForRange = (booking, startDate, endDate) => {
   return coveredDates.size;
 };
 
-const getBookingBreakSummaryForMonth = (booking, monthKey) => {
-  if (!monthKey) return { breakNights: 0, deductionVnd: 0 };
-  const [yearStr, monthStr] = monthKey.split('-');
-  const year = Number(yearStr);
-  const monthIndex = Number(monthStr) - 1;
-  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0) {
-    return { breakNights: 0, deductionVnd: 0 };
-  }
-
-  const monthStart = formatDate(new Date(year, monthIndex, 1));
-  const monthEnd = formatDate(new Date(year, monthIndex + 1, 1));
-  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-  const breakNights = countBookingBreakNightsForRange(booking, monthStart, monthEnd);
-  const deductionVnd = getBookingRoomStays(booking, { mode: 'financial' }).reduce((sum, stay) => {
-    const overlapStart = stay.startDate > monthStart ? stay.startDate : monthStart;
-    const overlapEnd = stay.endDate < monthEnd ? stay.endDate : monthEnd;
-    const breakNightsInStay = countBookingBreakNightsForRange(booking, overlapStart, overlapEnd);
-    const rent = Number(stay.monthlyRentVnd);
-    if (breakNightsInStay <= 0 || !Number.isFinite(rent) || rent <= 0) return sum;
-    return sum + Math.round(rent * (breakNightsInStay / daysInMonth));
-  }, 0);
-
-  return { breakNights, deductionVnd };
-};
 
 const isDateOnBookingBreak = (booking, dateStr) => {
   const breaks = normalizeBookingBreaks(booking?.guestBreakPeriods || booking?.breakPeriods || booking?.breaks || []);
@@ -1839,8 +1647,7 @@ const Sidebar = ({ activeTab, setActiveTab, isOpen, setIsOpen }) => {
     { id: 'dashboard', label: 'Dashboard', icon: <Home size={20} /> },
     { id: 'calendar', label: 'Calendar', icon: <Calendar size={20} /> },
     { id: 'bookings', label: 'Bookings List', icon: <Users size={20} /> },
-    { id: 'longTerm', label: 'Long-Term', icon: <ListChecks size={20} /> },
-    { id: 'crm', label: 'CRM', icon: <User size={20} /> },
+    { id: 'crm', label: 'Guests & CRM', icon: <Users size={20} /> },
     { id: 'stats', label: 'Statistics', icon: <BarChart2 size={20} /> },
     { id: 'invoices', label: 'Invoices', icon: <FileText size={20} /> }, 
     { id: 'housekeeping', label: 'Housekeeping', icon: <Bed size={20} /> },
@@ -1965,7 +1772,6 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
   const [nights, setNights] = useState(0);
   const [conflictError, setConflictError] = useState(null);
   const [categoryManual, setCategoryManual] = useState(false);
-  const [paymentStatusError, setPaymentStatusError] = useState(null);
   const [services, setServices] = useState([]);
   const [customService, setCustomService] = useState({ name: '', price: '', qty: 1, notes: '' });
   const [returningInfo, setReturningInfo] = useState(null);
@@ -2129,7 +1935,6 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
       setServices([]);
     }
     setConflictError(null);
-    setPaymentStatusError(null);
     setCustomService({ name: '', price: '', qty: 1, notes: '' });
     setReturningInfo(booking?.isReturningGuest ? { isReturningGuest: true, returningReason: booking.returningReason || 'existingBooking', guest: { stayCount: booking.stayCount } } : null);
     setReturningError(null);
@@ -2281,17 +2086,13 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
   const handleSubmit = (e) => {
     e.preventDefault();
     setConflictError(null);
-    setPaymentStatusError(null);
 
     if (nights <= 0) {
         console.warn("Check-out must be after check-in. Nights calculation is 0.");
         return;
     }
 
-    if (formData.channel === 'direct' && !formData.paymentStatus) {
-      setPaymentStatusError('Select whether this booking is paid or unpaid.');
-      return;
-    }
+
 
     const draftBreaks = Array.isArray(formData.guestBreakPeriods) ? formData.guestBreakPeriods : [];
     if (formData.hasGuestBreaks && draftBreaks.some((brk) => !brk?.startDate || !brk?.endDate || brk.endDate <= brk.startDate)) {
@@ -2338,10 +2139,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
       setConflictError('Each channel change needs a channel selected.');
       return;
     }
-    if (rawRoomMoves.some((move) => move?.useDifferentChannel && move.channel === 'direct' && !move?.paymentStatus)) {
-      setConflictError('Each direct channel change needs a paid or unpaid status.');
-      return;
-    }
+
 
     const rawRoomMovesWithIds = rawRoomMoves.map((move) => ({ ...move, id: move.id || randomId() }));
     const normalizedRoomMoves = normalizeRoomMoves(rawRoomMovesWithIds, {
@@ -2460,8 +2258,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
         isLongTerm: isLongTermCategory,
         weeklyCleaningDay: isLongTermCategory ? prev.weeklyCleaningDay || 'monday' : '',
       }));
-      setPaymentStatusError(null);
-    } else if (name === 'hasGuestBreaks') {
+      } else if (name === 'hasGuestBreaks') {
       setFormData((prev) => ({
         ...prev,
         hasGuestBreaks: checked,
@@ -2482,15 +2279,13 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
       });
     } else if (name === 'channel') {
       const nextChannel = value;
-      setPaymentStatusError(null);
-      setFormData(prev => ({
+        setFormData(prev => ({
         ...prev,
         channel: nextChannel,
         paymentStatus: nextChannel === 'direct' ? prev.paymentStatus || '' : '',
       }));
     } else if (name === 'paymentStatus') {
-      setPaymentStatusError(null);
-      setFormData(prev => ({
+        setFormData(prev => ({
         ...prev,
         paymentStatus: value,
       }));
@@ -2912,41 +2707,11 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                           </div>
                         </div>
 
-                        {formData.channel === 'direct' ? (
-                          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
-                            <label className="block text-xs font-bold uppercase tracking-wider" style={{ color: COLORS.darkGreen }}>Payment Status</label>
-                            <div className="grid grid-cols-2 gap-2">
-                              {[
-                                { value: 'paid', label: 'Paid' },
-                                { value: 'unpaid', label: 'Unpaid' },
-                              ].map((opt) => {
-                                const active = formData.paymentStatus === opt.value;
-                                return (
-                                  <button
-                                    type="button"
-                                    key={opt.value}
-                                    onClick={() => handleChange({ target: { name: 'paymentStatus', value: opt.value } })}
-                                    className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all ${active ? 'border-[#26402E] bg-[#E2F05D]/30 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-                                  >
-                                    <div className="flex items-center justify-between">
-                                      <span className="font-semibold text-sm" style={{ color: COLORS.darkGreen }}>{opt.label}</span>
-                                      <span className={`w-3 h-3 rounded-full border ${active ? 'bg-[#26402E] border-[#26402E]' : 'border-slate-300'}`}></span>
-                                    </div>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            {paymentStatusError && (
-                              <p className="text-xs text-red-600">{paymentStatusError}</p>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 px-4 py-3 text-xs text-slate-500">
-                            {formData.channel === 'airbnb'
-                              ? 'Airbnb payouts and withholding are handled in the pricing panel.'
-                              : 'No extra payment status is required for this channel.'}
-                          </div>
-                        )}
+                        <div className="rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-xs text-slate-600">
+                          {formData.channel === 'airbnb'
+                            ? 'Accommodation is prepaid through Airbnb. Payouts and withholding are shown in the pricing panel.'
+                            : 'Record received payments, rent due dates and deposits in Guests & CRM after saving this booking.'}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -3272,22 +3037,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                                         <option value="coliving">Coliving.com</option>
                                       </select>
                                     </div>
-                                    {move.channel === 'direct' && (
-                                      <div>
-                                        <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">
-                                          Payment Status
-                                        </label>
-                                        <select
-                                          value={move.paymentStatus || ''}
-                                          onChange={(e) => updateRoomMove(move.id, { paymentStatus: e.target.value })}
-                                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                                        >
-                                          <option value="">Select</option>
-                                          <option value="paid">Paid</option>
-                                          <option value="unpaid">Unpaid</option>
-                                        </select>
-                                      </div>
-                                    )}
+                                    {move.channel === 'direct' && <p className="text-xs text-slate-500">Direct rent and received payments are tracked in Guests & CRM from this date.</p>}
                                   </div>
                                 )}
                               </div>
@@ -4778,6 +4528,7 @@ export default function App() {
   const [bookings, setBookings] = useState([]);
   const [calendarBlocks, setCalendarBlocks] = useState([]);
   const [guests, setGuests] = useState([]);
+  const crm = useGuestCrm(db, user);
   const [roomStatuses, setRoomStatuses] = useState({});
   const [maintenanceIssues, setMaintenanceIssues] = useState([]);
   const [recurringTasks, setRecurringTasks] = useState([]);
@@ -4803,18 +4554,6 @@ export default function App() {
   const [selectedIssues, setSelectedIssues] = useState([]);
   const [bulkAssignValue, setBulkAssignValue] = useState('Needs assignment');
   const processedRecurringRef = useRef(new Set());
-  const [guestSearchTerm, setGuestSearchTerm] = useState('');
-  const [guestSearchResults, setGuestSearchResults] = useState([]);
-  const [selectedGuestId, setSelectedGuestId] = useState(null);
-  const [guestSaveMessage, setGuestSaveMessage] = useState('');
-  const [guestSaving, setGuestSaving] = useState(false);
-  const [guestNotesDraft, setGuestNotesDraft] = useState('');
-  const [guestTagsDraft, setGuestTagsDraft] = useState('');
-  const [longTermAlertFilter, setLongTermAlertFilter] = useState('all');
-  const [longTermGuestView, setLongTermGuestView] = useState('current');
-  const [expandedLongTermRows, setExpandedLongTermRows] = useState({});
-  const [longTermEntryDrafts, setLongTermEntryDrafts] = useState({});
-  const [receiptCopyState, setReceiptCopyState] = useState({});
   const [housekeepingDate, setHousekeepingDate] = useState(() => formatDate(new Date()));
   const [housekeepingStartTime, setHousekeepingStartTime] = useState(HOUSEKEEPING_START_TIME);
   const [housekeepingView, setHousekeepingView] = useState('daily'); // 'daily' | 'weekly'
@@ -4940,69 +4679,16 @@ export default function App() {
     }
   };
 
-  const handleGuestSearch = useCallback(async () => {
-    const raw = (guestSearchTerm || '').trim();
-    if (!raw) {
-      setGuestSearchResults([]);
-      return;
+  const handleSaveCrmProfile = useCallback(async ({ guest, booking, notes, tags }) => {
+    let guestId = guest?.id;
+    if (!guestId && booking) {
+      const resolved = await resolveGuestForBooking({ db, bookingDraft: booking });
+      guestId = resolved.guestId;
+      await setDoc(doc(db, 'bookings', booking.id), { guestId }, { merge: true });
     }
-
-    try {
-      const emailNorm = normalizeEmail(raw);
-      const phoneNorm = normalizePhone(raw);
-      let results = [];
-      if (emailNorm && raw.includes('@')) {
-        const snap = await getDocs(query(collection(db, 'guests'), where('emailNorm', '==', emailNorm), limit(5)));
-        results = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      } else if (phoneNorm && /\d+/.test(phoneNorm)) {
-        const snap = await getDocs(query(collection(db, 'guests'), where('phoneNorm', '==', phoneNorm), limit(5)));
-        results = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      } else {
-        const nameNorm = normalizeName(raw);
-        results = guests.filter((g) => (g.nameNorm || '').includes(nameNorm || '') || (g.fullName || '').toLowerCase().includes(raw.toLowerCase()));
-      }
-      setGuestSearchResults(results);
-      if (results[0]?.id) {
-        setSelectedGuestId(results[0].id);
-      }
-    } catch (err) {
-      console.error('[crm] guest search failed', err);
-      pushAlert({ title: 'Search failed', message: err?.message || 'Could not search guests', tone: 'error' });
-    }
-  }, [guestSearchTerm, guests, db, pushAlert]);
-
-  const handleSelectGuest = useCallback((guest) => {
-    if (!guest) return;
-    setSelectedGuestId(guest.id);
-    setGuestNotesDraft(guest.notes || '');
-    setGuestTagsDraft((guest.tags || []).join(', '));
+    if (!guestId) throw new Error('Create a booking before saving a new guest profile.');
+    await setDoc(doc(db, 'guests', guestId), { notes, tags, updatedAt: new Date().toISOString() }, { merge: true });
   }, []);
-
-  const handleSaveGuestProfile = useCallback(async (guestId) => {
-    if (!guestId) return;
-    setGuestSaving(true);
-    setGuestSaveMessage('');
-    try {
-      const tags = (guestTagsDraft || '')
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
-
-      await setDoc(doc(db, 'guests', guestId), {
-        notes: guestNotesDraft || '',
-        tags,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-
-      setGuestSaveMessage('Saved');
-      setTimeout(() => setGuestSaveMessage(''), 2500);
-    } catch (err) {
-      console.error('[crm] save guest profile failed', err);
-      pushAlert({ title: 'Save failed', message: err?.message || 'Could not save guest', tone: 'error' });
-    } finally {
-      setGuestSaving(false);
-    }
-  }, [guestNotesDraft, guestTagsDraft, db, pushAlert]);
 
   const openBookingForGuest = useCallback((guest) => {
     if (!guest) return;
@@ -5034,22 +4720,6 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
-
-  useEffect(() => {
-    const guest = guests.find((g) => g.id === selectedGuestId);
-    if (guest) {
-      setGuestNotesDraft(guest.notes || '');
-      setGuestTagsDraft((guest.tags || []).join(', '));
-    }
-  }, [selectedGuestId, guests]);
-
-  useEffect(() => {
-    if (!selectedGuestId && guests.length > 0) {
-      setSelectedGuestId(guests[0].id);
-      setGuestNotesDraft(guests[0].notes || '');
-      setGuestTagsDraft((guests[0].tags || []).join(', '));
-    }
-  }, [guests, selectedGuestId]);
 
   // Auto-mark past stays as checked-out the day after departure.
   useEffect(() => {
@@ -5160,7 +4830,7 @@ export default function App() {
         }
       );
 
-      const guestsQuery = query(collection(db, 'guests'), limit(100));
+      const guestsQuery = query(collection(db, 'guests'));
       unsubGuests = onSnapshot(
         guestsQuery,
         (snapshot) => {
@@ -5956,176 +5626,6 @@ export default function App() {
     () => buildCleaningTasksForDate(TOMORROW_STR, bookings, roomStatuses),
     [bookings, roomStatuses, TOMORROW_STR]
   );
-
-  const buildLongTermManagementRow = useCallback((booking, { view = 'current' } = {}) => {
-    const isPast = view === 'past';
-    const guest = guests.find((entry) => entry.id === booking.guestId);
-    const earlyCheckoutMeta = getBookingEarlyCheckoutMeta(booking);
-    const occupancyCheckOut = getBookingOccupancyCheckOut(booking) || booking.checkOut || '';
-    const checkoutReferenceDate = occupancyCheckOut ? addDays(occupancyCheckOut, -1) : TODAY_STR;
-    const snapshotDateStr = isPast ? checkoutReferenceDate : TODAY_STR;
-    const snapshotDate = new Date(snapshotDateStr);
-    const snapshotMonthKey = getMonthKey(snapshotDate);
-    const todayWeekday = getWeekdayKey(TODAY_STR);
-    const activeRoomId = getBookingRoomIdForDate(booking, snapshotDateStr);
-    const room = ALL_ROOMS.find((entry) => entry.id === activeRoomId);
-    const longTermOps = booking.longTermOps || {};
-    const isOnBreakToday = !isPast && isDateOnBookingBreak(booking, TODAY_STR);
-    const cleaningDayKey = longTermOps.cleaningDay || booking.weeklyCleaningDay || '';
-    const dueDate = getRentCycleDueDate(booking, snapshotDate);
-    const rentPaidThrough = longTermOps.rentPaidThrough || '';
-    const rentLastPaidAt = longTermOps.rentLastPaidAt || '';
-    const activeChannel = getBookingChannelForDate(booking, snapshotDateStr);
-    const activePaymentStatus = getBookingPaymentStatusForDate(booking, snapshotDateStr);
-    const fallbackPaid = activeChannel === 'direct' && activePaymentStatus === 'paid';
-    const rentIsPaid =
-      fallbackPaid ||
-      rentPaidThrough === snapshotMonthKey ||
-      (rentLastPaidAt && getMonthKey(rentLastPaidAt) === snapshotMonthKey);
-    const ledgerEntries = buildLongTermLedgerEntries(booking, snapshotDate);
-    const serviceEntries = getBookingServiceEntries(booking);
-    const monthLedgerEntries = ledgerEntries.filter((entry) => getMonthKey(entry.date || snapshotDate) === snapshotMonthKey);
-    const currentMonthChargeTotal = monthLedgerEntries
-      .filter((entry) => entry.kind === 'charge' && entry.status !== 'billed')
-      .reduce((sum, entry) => sum + entry.amountVnd, 0);
-    const currentMonthCreditTotal = monthLedgerEntries
-      .filter((entry) => entry.kind === 'credit' && entry.status !== 'billed')
-      .reduce((sum, entry) => sum + entry.amountVnd, 0);
-    const unbilledExtrasTotal = currentMonthChargeTotal - currentMonthCreditTotal;
-    const outstandingLedgerBalance = ledgerEntries
-      .filter((entry) => entry.status !== 'billed')
-      .reduce((sum, entry) => sum + entry.signedAmountVnd, 0);
-    const currentMonthRent = calculateLongTermRentForMonth(booking, snapshotMonthKey);
-    const breakSummary = getBookingBreakSummaryForMonth(booking, snapshotMonthKey);
-    const currentMonthTotalDue = currentMonthRent + unbilledExtrasTotal;
-    const rawLaundryStatus = longTermOps.laundryStatus || 'pending';
-    const laundryUpdatedAt = longTermOps.laundryUpdatedAt || '';
-    const laundryStatus =
-      (rawLaundryStatus === 'done' || rawLaundryStatus === 'processing') && laundryUpdatedAt && !isSameOperationalWeek(laundryUpdatedAt, snapshotDate)
-        ? 'pending'
-        : rawLaundryStatus;
-    const stayNights = calculateNights(booking.checkIn, occupancyCheckOut || booking.checkOut);
-    const stayValue = getDisplayPriceForBooking(booking);
-    const serviceUsageTotal = serviceEntries.reduce((sum, entry) => sum + entry.totalPriceVnd, 0);
-    const serviceUsageCount = serviceEntries.reduce((sum, entry) => sum + entry.qty, 0);
-    const settledMonths = Array.from(new Set(ledgerEntries.map((entry) => entry.settledMonthKey).filter(Boolean))).sort().reverse();
-    const rentStatus = isPast
-      ? (rentIsPaid || outstandingLedgerBalance <= 0 ? 'paid' : 'pending')
-      : (rentIsPaid ? 'paid' : (dueDate && TODAY_STR > dueDate ? 'overdue' : 'pending'));
-
-    return {
-      booking,
-      guest,
-      room,
-      longTermOps,
-      cleaningDayKey,
-      cleaningDayLabel: formatWeekdayLabel(cleaningDayKey),
-      dueDate,
-      isOnBreakToday,
-      rentStatus,
-      rentIsPaid,
-      rentPaidThrough,
-      laundryStatus,
-      laundryUpdatedAt,
-      isCleaningToday: !isPast && !isOnBreakToday && !!cleaningDayKey && cleaningDayKey === todayWeekday,
-      ledgerEntries,
-      serviceEntries,
-      serviceUsageCount,
-      serviceUsageTotal,
-      serviceLineCount: serviceEntries.length,
-      monthLedgerEntries,
-      currentMonthChargeTotal,
-      currentMonthCreditTotal,
-      unbilledExtrasTotal,
-      outstandingLedgerBalance,
-      currentMonthTotalDue,
-      currentMonthKey: snapshotMonthKey,
-      currentMonthRent,
-      breakNightsThisMonth: breakSummary.breakNights,
-      breakRentDeductionVnd: breakSummary.deductionVnd,
-      receiptMessage: '',
-      leaseEndDate: longTermOps.leaseEndDate || booking.checkOut || '',
-      endedEarly: earlyCheckoutMeta.endedEarly,
-      actualCheckoutDate: earlyCheckoutMeta.actualCheckoutDate || occupancyCheckOut || booking.checkOut || '',
-      earlyTerminationReimbursed: earlyCheckoutMeta.reimbursed,
-      stayNights,
-      stayValue,
-      stayGrandTotal: stayValue + serviceUsageTotal,
-      stayDateLabel: `${booking.checkIn || '—'} → ${occupancyCheckOut || booking.checkOut || '—'}`,
-      checkoutDate: occupancyCheckOut || booking.checkOut || '',
-      settledMonths,
-      isPast,
-      specialNotes: [
-        earlyCheckoutMeta.endedEarly
-          ? `Guest moved out early on ${earlyCheckoutMeta.actualCheckoutDate}. ${earlyCheckoutMeta.reimbursed ? 'Unused contract days are reimbursed, so financials stop there.' : 'Unused contract days are not reimbursed, so the booked financials stay in place.'}`
-          : null,
-        booking.sellRoomDuringBreak && breakSummary.breakNights > 0
-          ? `Guest is selling room nights during break this month: ${breakSummary.breakNights} day${breakSummary.breakNights === 1 ? '' : 's'} deducted (${formatCurrencyVND(breakSummary.deductionVnd)}).`
-          : (booking.sellRoomDuringBreak
-            ? 'Guest wants room nights sold during break. Rent is auto-deducted for break days.'
-            : null),
-        longTermOps.specialNotes,
-        booking.notes,
-        guest?.notes,
-      ].filter(Boolean),
-    };
-  }, [guests, TODAY_STR]);
-
-  const longTermRows = useMemo(() => {
-    return (bookings || [])
-      .filter((booking) => {
-        if (!booking?.id || isCancelledStatus(booking.status)) return false;
-        if (getBookingStayCategory(booking) !== 'long') return false;
-        return booking.checkIn <= TODAY_STR && getBookingOccupancyCheckOut(booking) > TODAY_STR;
-      })
-      .map((booking) => buildLongTermManagementRow(booking, { view: 'current' }))
-      .sort((a, b) => {
-        const roomDelta = (ROOM_SORT_PRIORITY[a.room?.id || a.booking?.roomId] ?? Number.MAX_SAFE_INTEGER) - (ROOM_SORT_PRIORITY[b.room?.id || b.booking?.roomId] ?? Number.MAX_SAFE_INTEGER);
-        if (roomDelta !== 0) return roomDelta;
-        return (a.room?.name || a.booking?.roomId || '').localeCompare(b.room?.name || b.booking?.roomId || '');
-      });
-  }, [bookings, getBookingStayCategory, TODAY_STR, buildLongTermManagementRow]);
-
-  const pastLongTermRows = useMemo(() => {
-    return (bookings || [])
-      .filter((booking) => {
-        if (!booking?.id || isCancelledStatus(booking.status)) return false;
-        if (getBookingStayCategory(booking) !== 'long') return false;
-        const occupancyCheckOut = getBookingOccupancyCheckOut(booking);
-        if (!occupancyCheckOut) return false;
-        const status = String(booking.status || '').toLowerCase();
-        return occupancyCheckOut <= TODAY_STR || ['checked-out', 'checked_out', 'completed'].includes(status);
-      })
-      .map((booking) => buildLongTermManagementRow(booking, { view: 'past' }))
-      .sort((a, b) => {
-        const checkoutDelta = new Date(b.checkoutDate || 0).getTime() - new Date(a.checkoutDate || 0).getTime();
-        if (checkoutDelta !== 0) return checkoutDelta;
-        const roomDelta = (ROOM_SORT_PRIORITY[a.room?.id || a.booking?.roomId] ?? Number.MAX_SAFE_INTEGER) - (ROOM_SORT_PRIORITY[b.room?.id || b.booking?.roomId] ?? Number.MAX_SAFE_INTEGER);
-        if (roomDelta !== 0) return roomDelta;
-        return (a.booking?.guestName || '').localeCompare(b.booking?.guestName || '');
-      });
-  }, [bookings, getBookingStayCategory, TODAY_STR, buildLongTermManagementRow]);
-
-  const filteredLongTermRows = useMemo(() => {
-    if (longTermAlertFilter === 'rentOverdue') return longTermRows.filter((row) => row.rentStatus === 'overdue');
-    if (longTermAlertFilter === 'cleaningToday') return longTermRows.filter((row) => row.isCleaningToday);
-    if (longTermAlertFilter === 'laundryPending') return longTermRows.filter((row) => row.laundryStatus === 'pending');
-    return longTermRows;
-  }, [longTermRows, longTermAlertFilter]);
-
-  const longTermSummary = useMemo(() => ({
-    total: longTermRows.length,
-    rentOverdue: longTermRows.filter((row) => row.rentStatus === 'overdue').length,
-    cleaningToday: longTermRows.filter((row) => row.isCleaningToday).length,
-    laundryPending: longTermRows.filter((row) => row.laundryStatus === 'pending').length,
-  }), [longTermRows]);
-
-  const pastLongTermSummary = useMemo(() => ({
-    total: pastLongTermRows.length,
-    withOutstandingBalance: pastLongTermRows.filter((row) => row.outstandingLedgerBalance > 0).length,
-    usedServices: pastLongTermRows.filter((row) => row.serviceEntries.length > 0).length,
-    outstandingBalanceTotal: pastLongTermRows.reduce((sum, row) => sum + row.outstandingLedgerBalance, 0),
-  }), [pastLongTermRows]);
 
   const recurringCompletionMap = useMemo(() => {
     const map = {};
@@ -7017,174 +6517,24 @@ export default function App() {
     [bookings]
   );
 
-  const toggleLongTermRow = useCallback((bookingId) => {
-    if (!bookingId) return;
-    setExpandedLongTermRows((prev) => ({ ...prev, [bookingId]: !prev[bookingId] }));
-  }, []);
-
-  const updateLongTermEntryDraft = useCallback((bookingId, patch) => {
-    if (!bookingId) return;
-    setLongTermEntryDrafts((prev) => ({
-      ...prev,
-      [bookingId]: {
-        type: 'charge',
-        title: '',
-        description: '',
-        amountVnd: '',
-        date: TODAY_STR,
-        ...(prev[bookingId] || {}),
-        ...patch,
-      },
-    }));
-  }, [TODAY_STR]);
-
   const updateLongTermOps = useCallback(async (booking, patch, successMessage) => {
     if (!booking?.id) return;
     const nowIso = new Date().toISOString();
-    const nextOps = {
-      ...(booking.longTermOps || {}),
-      ...patch,
-      updatedAt: nowIso,
-      updatedBy: user?.uid || user?.email || 'unknown',
-    };
-
-    try {
-      await setDoc(
-        doc(db, 'bookings', booking.id),
-        {
-          longTermOps: nextOps,
-          updatedAt: nowIso,
-        },
-        { merge: true }
-      );
-
-      setBookings((prev) =>
-        prev.map((entry) => (
-          entry.id === booking.id
-            ? { ...entry, longTermOps: nextOps, updatedAt: nowIso }
-            : entry
-        ))
-      );
-
-      if (successMessage) {
-        pushAlert({ title: 'Long-term stay updated', message: successMessage, tone: 'success' });
-      }
-    } catch (error) {
-      console.error('[long-term] update failed', error);
-      pushAlert({ title: 'Update failed', message: error?.message || 'Could not save long-term action', code: error?.code, raw: error });
-    }
-  }, [db, user, pushAlert]);
-
-  const handleMarkRentPaid = useCallback(async (booking) => {
-    const currentMonthKey = getMonthKey(new Date());
-    await updateLongTermOps(
-      booking,
-      {
-        rentPaidThrough: currentMonthKey,
-        rentLastPaidAt: new Date().toISOString(),
-      },
-      `${booking?.guestName || 'Guest'} marked paid for ${currentMonthKey}`
-    );
-  }, [updateLongTermOps]);
-
-  const handleMarkLaundryDone = useCallback(async (booking) => {
-    await updateLongTermOps(
-      booking,
-      {
-        laundryStatus: 'done',
-        laundryUpdatedAt: new Date().toISOString(),
-      },
-      `${booking?.guestName || 'Guest'} laundry marked done`
-    );
-  }, [updateLongTermOps]);
-
-  const handleAddLongTermLedgerEntry = useCallback(async (booking) => {
-    if (!booking?.id) return;
-    const draft = longTermEntryDrafts[booking.id] || {};
-    const title = (draft.title || '').trim();
-    const description = (draft.description || '').trim();
-    const amountVnd = Math.max(0, Math.round(Number(draft.amountVnd) || 0));
-    const date = formatDate(draft.date || TODAY_STR);
-    const kind = draft.type === 'credit' ? 'credit' : 'charge';
-
-    if (!title || !amountVnd || !date) {
-      pushAlert({ title: 'Ledger entry not saved', message: 'Title, amount, and date are required.', tone: 'error' });
-      return;
-    }
-
-    const nextLedger = [
-      ...(Array.isArray(booking.longTermOps?.extrasLedger) ? booking.longTermOps.extrasLedger : []),
-      {
-        id: randomId(),
-        kind,
-        title,
-        description,
-        amountVnd,
-        date,
-        status: 'unbilled',
-        createdAt: new Date().toISOString(),
-        createdBy: user?.uid || user?.email || 'unknown',
-      },
-    ];
-
-    await updateLongTermOps(
-      booking,
-      { extrasLedger: nextLedger },
-      `${title} added for ${booking?.guestName || 'guest'}`
-    );
-
-    setLongTermEntryDrafts((prev) => ({
-      ...prev,
-      [booking.id]: {
-        type: 'charge',
-        title: '',
-        description: '',
-        amountVnd: '',
-        date: TODAY_STR,
-      },
-    }));
-  }, [longTermEntryDrafts, TODAY_STR, pushAlert, updateLongTermOps, user]);
-
-  const handleCopyLongTermReceipt = useCallback(async (row) => {
-    if (!row?.booking?.id) return;
-    const message = buildLongTermReceiptMessage({ row, monthKey: row.currentMonthKey || getMonthKey(new Date()) });
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(message);
-      } else {
-        throw new Error('Clipboard unavailable');
-      }
-      setReceiptCopyState((prev) => ({ ...prev, [row.booking.id]: 'copied' }));
-      setTimeout(() => {
-        setReceiptCopyState((prev) => ({ ...prev, [row.booking.id]: 'idle' }));
-      }, 2000);
-    } catch (error) {
-      console.error('[long-term] receipt copy failed', error);
-      setReceiptCopyState((prev) => ({ ...prev, [row.booking.id]: 'failed' }));
-      setTimeout(() => {
-        setReceiptCopyState((prev) => ({ ...prev, [row.booking.id]: 'idle' }));
-      }, 2000);
-    }
-  }, []);
-
-  const handleSettleLongTermMonth = useCallback(async (row) => {
-    if (!row?.booking?.id) return;
-    const monthKey = row.currentMonthKey || getMonthKey(new Date());
-    const nextLedger = (Array.isArray(row.booking.longTermOps?.extrasLedger) ? row.booking.longTermOps.extrasLedger : []).map((entry) => {
-      if (getMonthKey(entry.date) !== monthKey) return entry;
-      return { ...entry, status: 'billed', settledMonthKey: monthKey };
+    const payload = await runTransaction(db, async (transaction) => {
+      const ref = doc(db, 'bookings', booking.id);
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists()) throw new Error('This booking no longer exists.');
+      const next = {
+        longTermOps: { ...(snapshot.data().longTermOps || {}), ...patch, updatedAt: nowIso, updatedBy: user?.uid || 'unknown' },
+        updatedAt: nowIso,
+        ...(Object.hasOwn(patch, 'cleaningDay') ? { weeklyCleaningDay: patch.cleaningDay } : {}),
+      };
+      transaction.set(ref, next, { merge: true });
+      return next;
     });
-
-    await updateLongTermOps(
-      row.booking,
-      {
-        extrasLedger: nextLedger,
-        rentPaidThrough: monthKey,
-        rentLastPaidAt: new Date().toISOString(),
-      },
-      `${row.booking.guestName || 'Guest'} settled for ${monthKey}`
-    );
-  }, [updateLongTermOps]);
+    setBookings((prev) => prev.map((entry) => entry.id === booking.id ? { ...entry, ...payload } : entry));
+    if (successMessage) pushAlert({ title: 'Guest stay updated', message: successMessage, tone: 'success' });
+  }, [db, user, pushAlert]);
 
   const handleDeleteBooking = async (id) => {
     if (!id) return;
@@ -7197,6 +6547,11 @@ export default function App() {
     setSavingBookingId(id);
     try {
       if (normalizedAction === 'DELETE') {
+        const financialAccount = await getDoc(doc(db, 'crmAccounts', id));
+        if (financialAccount.exists()) {
+          pushAlert({ title: 'Keep payment history', message: 'This booking has guest financial records. Use CANCEL to retain its payments, balances and deposits.', tone: 'error' });
+          return;
+        }
         if (!confirm('Permanently delete this booking from the PMS? This cannot be undone.')) return;
 
         const result = await removeBooking({ db, id, timeoutMs: 6000 });
@@ -8067,8 +7422,14 @@ export default function App() {
       </div>
     );
 
+    const paymentAttention = crm.accounts.map((account) => {
+      const booking = bookings.find((entry) => entry.id === account.bookingId);
+      return booking ? accountSummary(booking, account, propertyToday()) : null;
+    }).filter((summary) => summary && (summary.overdueVnd > 0 || summary.depositAction));
+
     return (
       <div className="space-y-14">
+        {!crm.loading && !crm.error && paymentAttention.length > 0 && <button type="button" onClick={() => setActiveTab('crm')} className="w-full text-left flex items-center justify-between gap-4 bg-amber-50 border border-amber-200 rounded-2xl p-5 text-amber-900"><span><strong>{paymentAttention.length} stays need payment attention</strong><span className="block text-sm mt-1">{formatCurrencyVND(paymentAttention.reduce((total, summary) => total + summary.overdueVnd, 0))} overdue · review rent and deposits in Guests & CRM</span></span><AlertTriangle size={24} /></button>}
         <div className="space-y-3">
           <h2 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Today</h2>
           <p className="text-slate-500 text-sm">Snapshot for {TODAY_STR}.</p>
@@ -8868,7 +8229,8 @@ export default function App() {
                   const displayRoomId = getBookingRoomIdForDate(booking, displayRoomDate);
                   const displayRoom = ALL_ROOMS.find((r) => r.id === displayRoomId) || ALL_ROOMS.find((r) => r.id === booking.roomId);
                   const channelValue = getBookingChannelForDate(booking, displayRoomDate);
-                  const paymentStatusValue = getBookingPaymentStatusForDate(booking, displayRoomDate);
+                  const guestFinancialAccount = crm.accounts.find((account) => account.bookingId === booking.id);
+                  const guestPaymentSummary = accountSummary(booking, guestFinancialAccount, propertyToday());
                   const isPastContext = bookingTimeFilter === 'past';
                   const rowTone = isPastContext ? 'text-slate-500' : 'text-slate-700';
                   const rowBg = booking.status === 'checked-in' ? 'bg-lime-50' : booking.status === 'confirmed' ? 'bg-white' : 'bg-white';
@@ -8916,9 +8278,7 @@ export default function App() {
                     {getBookingChannelSummary(booking) === 'mixed' && (
                       <span className="ml-2 text-xs text-slate-500">Segmented</span>
                     )}
-                    {channelValue === 'direct' && paymentStatusValue && (
-                      <span className="ml-2 text-xs text-slate-500">{paymentStatusValue === 'paid' ? 'Paid' : 'Unpaid'}</span>
-                    )}
+                    <span className="ml-2 text-xs text-slate-500">{channelValue === 'airbnb' ? 'Prepaid via Airbnb' : crm.loading || crm.error ? 'Payment records unavailable' : guestPaymentSummary.needsSetup ? 'Review payments in CRM' : `${formatCurrencyVND(guestPaymentSummary.totalOutstanding)} open`}</span>
                   </td>
                   <td className={`px-6 py-4 text-sm ${isPastContext ? 'text-slate-500' : 'text-slate-700'}`}>
                     <div className={`font-semibold ${isPastContext ? 'text-slate-600' : 'text-slate-800'}`}>{booking.checkIn}</div>
@@ -8947,829 +8307,6 @@ export default function App() {
               )})}
             </tbody>
           </table>
-        </div>
-      </div>
-    );
-  };
-
-  const renderLongTermManagement = () => {
-    const alertWidgets = [
-      {
-        key: 'rentOverdue',
-        label: 'Rent Overdue',
-        count: longTermSummary.rentOverdue,
-        tone: 'border-red-200 bg-red-50 text-red-700',
-      },
-      {
-        key: 'cleaningToday',
-        label: 'Cleaning Today',
-        count: longTermSummary.cleaningToday,
-        tone: 'border-blue-200 bg-blue-50 text-blue-700',
-      },
-      {
-        key: 'laundryPending',
-        label: 'Laundry Pending',
-        count: longTermSummary.laundryPending,
-        tone: 'border-amber-200 bg-amber-50 text-amber-800',
-      },
-    ];
-
-    const rentBadgeClass = {
-      paid: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-      pending: 'bg-amber-50 text-amber-800 border-amber-200',
-      overdue: 'bg-red-50 text-red-700 border-red-200',
-    };
-
-    const laundryBadgeClass = {
-      done: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-      processing: 'bg-blue-50 text-blue-700 border-blue-200',
-      pending: 'bg-amber-50 text-amber-800 border-amber-200',
-    };
-
-    const isPastView = longTermGuestView === 'past';
-    const displayedLongTermRows = isPastView ? pastLongTermRows : filteredLongTermRows;
-    const visibleCount = displayedLongTermRows.length;
-    const totalCount = isPastView ? pastLongTermSummary.total : longTermSummary.total;
-
-    return (
-      <div className="space-y-6">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 className="text-3xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>Long-Term Guest Management</h2>
-            <p className="text-sm text-slate-500 mt-1">
-              {isPastView
-                ? 'Historical view for checked-out long stays: services used, ledger detail, and balance tracking.'
-                : 'Operational view for in-house long stays: rent cadence, weekly service, laundry, and unbilled extras.'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="inline-flex rounded-full border border-slate-200 bg-white p-1 shadow-sm">
-              {[
-                { key: 'current', label: 'Current Guests' },
-                { key: 'past', label: 'Past Guests' },
-              ].map((option) => {
-                const active = longTermGuestView === option.key;
-                return (
-                  <button
-                    key={option.key}
-                    type="button"
-                    onClick={() => setLongTermGuestView(option.key)}
-                    className={`px-4 py-2 rounded-full text-sm font-semibold transition-all ${active ? 'bg-[#26402E] text-[#E2F05D]' : 'text-slate-600 hover:text-slate-800'}`}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="text-xs text-slate-500">
-              Uses existing booking fields first. Extra operational metadata is stored on <span className="font-mono">booking.longTermOps</span> as actions are used.
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {isPastView ? (
-            <>
-              <div className="text-left rounded-2xl border p-5 shadow-sm border-slate-200 bg-slate-50 text-slate-700">
-                <div className="text-xs uppercase tracking-[0.2em] font-bold opacity-70">Past Guests</div>
-                <div className="mt-3 flex items-end justify-between gap-3">
-                  <div className="text-3xl font-serif font-bold">{pastLongTermSummary.total}</div>
-                  <div className="text-xs font-semibold">Checked-out long stays</div>
-                </div>
-              </div>
-              <div className="text-left rounded-2xl border p-5 shadow-sm border-amber-200 bg-amber-50 text-amber-800">
-                <div className="text-xs uppercase tracking-[0.2em] font-bold opacity-70">Open Balances</div>
-                <div className="mt-3 flex items-end justify-between gap-3">
-                  <div className="text-3xl font-serif font-bold">{pastLongTermSummary.withOutstandingBalance}</div>
-                  <div className="text-xs font-semibold">{formatCompactCurrencyVND(pastLongTermSummary.outstandingBalanceTotal)}</div>
-                </div>
-              </div>
-              <div className="text-left rounded-2xl border p-5 shadow-sm border-blue-200 bg-blue-50 text-blue-700">
-                <div className="text-xs uppercase tracking-[0.2em] font-bold opacity-70">Used Services</div>
-                <div className="mt-3 flex items-end justify-between gap-3">
-                  <div className="text-3xl font-serif font-bold">{pastLongTermSummary.usedServices}</div>
-                  <div className="text-xs font-semibold">Stays with service usage</div>
-                </div>
-              </div>
-            </>
-          ) : (
-            alertWidgets.map((widget) => {
-              const isActive = longTermAlertFilter === widget.key;
-              return (
-                <button
-                  key={widget.key}
-                  type="button"
-                  onClick={() => setLongTermAlertFilter((prev) => (prev === widget.key ? 'all' : widget.key))}
-                  className={`text-left rounded-2xl border p-5 shadow-sm transition-all hover:shadow-md ${widget.tone} ${isActive ? 'ring-2 ring-[#26402E]/20' : ''}`}
-                >
-                  <div className="text-xs uppercase tracking-[0.2em] font-bold opacity-70">{widget.label}</div>
-                  <div className="mt-3 flex items-end justify-between gap-3">
-                    <div className="text-3xl font-serif font-bold">{widget.count}</div>
-                    <div className="text-xs font-semibold">{isActive ? 'Showing only these' : 'Click to filter'}</div>
-                  </div>
-                </button>
-              );
-            })
-          )}
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] overflow-hidden">
-          <div className="p-6 border-b border-[#E5E7EB] bg-[#F9F8F2] flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div className="text-xl font-serif font-bold" style={{ color: COLORS.darkGreen }}>
-                {isPastView ? 'Past Long-Stay Guests' : 'Current Long-Stay Guests'}
-              </div>
-              <div className="text-sm text-slate-500 mt-1">
-                {visibleCount} shown · {totalCount} {isPastView ? 'recorded past long-term stay' : 'active long-term stay'}{totalCount === 1 ? '' : 's'}
-              </div>
-            </div>
-            {!isPastView ? (
-              <div className="flex items-center gap-2 flex-wrap">
-                {[
-                  { key: 'all', label: 'All' },
-                  { key: 'rentOverdue', label: 'Rent Overdue' },
-                  { key: 'cleaningToday', label: 'Cleaning Today' },
-                  { key: 'laundryPending', label: 'Laundry Pending' },
-                ].map((option) => {
-                  const active = longTermAlertFilter === option.key;
-                  return (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() => setLongTermAlertFilter(option.key)}
-                      className={`px-4 py-2 rounded-full text-sm font-semibold border transition-all ${active ? 'bg-[#26402E] text-[#E2F05D] border-[#26402E]' : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'}`}
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="text-sm text-slate-500">
-                Expand a row to inspect services used, ledger entries, settled months, and any remaining balance.
-              </div>
-            )}
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="bg-[#26402E] text-white text-xs uppercase font-bold tracking-wider">
-                <tr>
-                  <th className="px-6 py-4 w-12"></th>
-                  <th className="px-6 py-4">Room & Guest</th>
-                  <th className="px-6 py-4">{isPastView ? 'Stay Dates' : 'Rent Cycle & Status'}</th>
-                  <th className="px-6 py-4">{isPastView ? 'Stay Summary' : 'Cleaning Schedule'}</th>
-                  <th className="px-6 py-4">{isPastView ? 'Services Used' : 'Weekly Laundry'}</th>
-                  <th className="px-6 py-4 text-right">{isPastView ? 'Cost Balance' : 'Unbilled Extras'}</th>
-                  <th className="px-6 py-4 text-right">Quick Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {displayedLongTermRows.length === 0 ? (
-                  <tr>
-                    <td colSpan="7" className="px-6 py-12 text-center text-slate-500">
-                      {isPastView ? 'No past long-term guests recorded yet.' : 'No long-term guests match this view.'}
-                    </td>
-                  </tr>
-                ) : (
-                  displayedLongTermRows.map((row) => {
-                    const isExpanded = !!expandedLongTermRows[row.booking.id];
-                    const entryDraft = longTermEntryDrafts[row.booking.id] || {
-                      type: 'charge',
-                      title: '',
-                      description: '',
-                      amountVnd: '',
-                      date: TODAY_STR,
-                    };
-                    const receiptStatus = receiptCopyState[row.booking.id] || 'idle';
-                    return (
-                      <React.Fragment key={row.booking.id}>
-                        <tr
-                          onClick={() => toggleLongTermRow(row.booking.id)}
-                          className={`cursor-pointer transition-colors hover:bg-[#F9F8F2] ${isPastView ? (row.outstandingLedgerBalance > 0 ? 'bg-amber-50/30' : 'bg-white') : row.rentStatus === 'overdue' ? 'bg-red-50/40' : row.isCleaningToday ? 'bg-blue-50/40' : 'bg-white'}`}
-                        >
-                          <td className="px-6 py-4 text-slate-400">
-                            <ChevronDown size={18} className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="font-bold text-slate-800">{row.room?.name || row.booking.roomId || 'Unknown room'}</div>
-                            <div className="text-xs text-slate-500">{row.room?.propertyName || 'Unknown property'}</div>
-                            <div className="mt-2 font-semibold text-slate-700">{row.booking.guestName || row.guest?.fullName || 'Unknown guest'}</div>
-                            {(row.guest?.email || row.booking.guestPhone) && (
-                              <div className="text-xs text-slate-500">{row.guest?.email || row.booking.guestPhone}</div>
-                            )}
-                            {row.isOnBreakToday && (
-                              <div className="mt-2">
-                                <span className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700 text-xs font-semibold">On break</span>
-                              </div>
-                            )}
-                            {row.endedEarly && (
-                              <div className="mt-2">
-                                <span className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700 text-xs font-semibold">Ended early</span>
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            {isPastView ? (
-                              <>
-                                <div className="text-sm font-semibold text-slate-800">{row.stayDateLabel}</div>
-                                <div className="mt-2 flex items-center gap-2 flex-wrap">
-                                  <span className="px-3 py-1 rounded-full text-xs font-bold border bg-slate-100 text-slate-700 border-slate-200">
-                                    {row.booking.status || 'checked-out'}
-                                  </span>
-                                  <span className="text-xs text-slate-500">{row.stayNights} night{row.stayNights === 1 ? '' : 's'}</span>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="text-sm font-semibold text-slate-800">Due {row.dueDate || 'Not set'}</div>
-                                <div className="mt-2 flex items-center gap-2 flex-wrap">
-                                  <span className={`px-3 py-1 rounded-full text-xs font-bold border ${rentBadgeClass[row.rentStatus] || rentBadgeClass.pending}`}>
-                                    {row.rentStatus === 'paid' ? 'Paid' : row.rentStatus === 'overdue' ? 'Overdue' : 'Pending'}
-                                  </span>
-                                  {row.rentPaidThrough && <span className="text-xs text-slate-500">Paid through {row.rentPaidThrough}</span>}
-                                </div>
-                              </>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            {isPastView ? (
-                              <>
-                                <div className="font-semibold text-slate-800">{formatCurrencyVND(row.stayValue)}</div>
-                                <div className="text-xs text-slate-500 mt-2">
-                                  Base stay value
-                                  {row.currentMonthRent != null ? ` · Monthly snapshot ${formatCurrencyVND(row.currentMonthRent)}` : ''}
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="font-semibold text-slate-800">{row.cleaningDayLabel}</div>
-                                <div className="text-xs mt-2">
-                                  {row.isCleaningToday ? (
-                                    <span className="px-2 py-1 rounded-full border border-blue-200 bg-blue-50 text-blue-700 font-semibold">Due today</span>
-                                  ) : (
-                                    <span className="text-slate-500">Next weekly service cadence</span>
-                                  )}
-                                </div>
-                              </>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            {isPastView ? (
-                              row.serviceEntries.length > 0 ? (
-                                <>
-                                  <div className="font-semibold text-slate-800">{row.serviceLineCount} line item{row.serviceLineCount === 1 ? '' : 's'}</div>
-                                  <div className="text-xs text-slate-500 mt-1">{row.serviceUsageCount} unit{row.serviceUsageCount === 1 ? '' : 's'} · {formatCurrencyVND(row.serviceUsageTotal)}</div>
-                                </>
-                              ) : (
-                                <span className="text-sm text-slate-500">No services recorded</span>
-                              )
-                            ) : (
-                              <>
-                                <span className={`px-3 py-1 rounded-full text-xs font-bold border ${laundryBadgeClass[row.laundryStatus] || laundryBadgeClass.pending}`}>
-                                  {row.laundryStatus === 'done' ? 'Done' : row.laundryStatus === 'processing' ? 'Processing' : 'Pending'}
-                                </span>
-                                {row.laundryUpdatedAt && (
-                                  <div className="text-xs text-slate-500 mt-2">Updated {formatDate(row.laundryUpdatedAt)}</div>
-                                )}
-                              </>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <div className={`font-bold ${isPastView && row.outstandingLedgerBalance > 0 ? 'text-amber-700' : isPastView && row.outstandingLedgerBalance < 0 ? 'text-emerald-700' : 'text-slate-800'}`}>
-                              {formatCompactCurrencyVND(isPastView ? row.outstandingLedgerBalance : row.unbilledExtrasTotal)}
-                            </div>
-                            <div className="text-xs text-slate-500 mt-1">
-                              {formatCurrencyVND(isPastView ? row.outstandingLedgerBalance : row.unbilledExtrasTotal)}
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="flex items-center justify-end gap-2 flex-wrap">
-                              {!isPastView && (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleMarkRentPaid(row.booking);
-                                    }}
-                                    className="px-3 py-2 rounded-full text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                                  >
-                                    Rent Paid
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleMarkLaundryDone(row.booking);
-                                    }}
-                                    className="px-3 py-2 rounded-full text-xs font-semibold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
-                                  >
-                                    Laundry Done
-                                  </button>
-                                </>
-                              )}
-                              {isPastView && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleCopyLongTermReceipt(row);
-                                  }}
-                                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                >
-                                  Copy receipt
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openBookingDetails(row.booking.id);
-                                }}
-                                className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                              >
-                                Edit
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                        {isExpanded && (
-                          <tr className="bg-slate-50/80">
-                            <td colSpan="7" className="px-6 py-5">
-                              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                                <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
-                                  <div className="text-xs uppercase tracking-[0.2em] font-bold text-slate-500">{isPastView ? 'Stay & Notes' : 'Lease & Notes'}</div>
-                                  <div>
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Stay Dates</div>
-                                    <div className="text-base font-semibold text-slate-800 mt-1">{row.stayDateLabel}</div>
-                                    <div className="text-xs text-slate-500 mt-1">{row.stayNights} night{row.stayNights === 1 ? '' : 's'} · Total stay value {formatCurrencyVND(row.stayGrandTotal)}</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">{isPastView ? 'Checked Out' : 'Lease End Date'}</div>
-                                    <div className="text-base font-semibold text-slate-800 mt-1">{(isPastView ? row.checkoutDate : row.leaseEndDate) || 'Not set'}</div>
-                                  </div>
-                                  {row.endedEarly && (
-                                    <div>
-                                      <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Actual Move-Out</div>
-                                      <div className="text-base font-semibold text-slate-800 mt-1">{row.actualCheckoutDate || 'Not set'}</div>
-                                      <div className="text-xs text-slate-500 mt-1">
-                                        {row.earlyTerminationReimbursed
-                                          ? 'Unused contract days were reimbursed, so rent stops on the actual move-out date.'
-                                          : 'Unused contract days were not reimbursed, so booked financials remain active.'}
-                                      </div>
-                                    </div>
-                                  )}
-                                  <div>
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">{isPastView ? 'Rent Snapshot' : 'Monthly Rent'}</div>
-                                    <div className="text-base font-semibold text-slate-800 mt-1">{row.currentMonthRent != null ? formatCurrencyVND(row.currentMonthRent) : 'Not set'}</div>
-                                    {row.breakRentDeductionVnd > 0 && (
-                                      <div className="text-xs text-amber-700 mt-1">Includes break deduction of {formatCurrencyVND(row.breakRentDeductionVnd)} for {row.breakNightsThisMonth} day{row.breakNightsThisMonth === 1 ? '' : 's'} marked sellable.</div>
-                                    )}
-                                    {row.booking.hasMultipleRoomStay && (row.booking.roomMoves || []).length > 0 && (
-                                      <div className="text-xs text-slate-500 mt-1">{(row.booking.roomMoves || []).length} scheduled room change{(row.booking.roomMoves || []).length === 1 ? '' : 's'}</div>
-                                    )}
-                                  </div>
-                                  {row.booking.hasGuestBreaks && (
-                                    <div>
-                                      <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Break Status</div>
-                                      <div className="text-base font-semibold text-slate-800 mt-1">{row.isOnBreakToday ? 'On break today' : 'In stay'}</div>
-                                      <div className="text-xs text-slate-500 mt-1">
-                                        {row.booking.sellRoomDuringBreak
-                                          ? 'Room can be sold during break and rent is deducted automatically.'
-                                          : 'Break dates block occupancy only. Rent stays unchanged.'}
-                                      </div>
-                                    </div>
-                                  )}
-                                  <div>
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">{isPastView ? 'Checkout Month Total Due' : 'This Month Total Due'}</div>
-                                    <div className="text-base font-semibold text-slate-800 mt-1">{formatCurrencyVND(row.currentMonthTotalDue)}</div>
-                                    <div className="text-xs text-slate-500 mt-1">Rent plus current month charges minus credits.</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Services Used</div>
-                                    <div className="text-base font-semibold text-slate-800 mt-1">{formatCurrencyVND(row.serviceUsageTotal)}</div>
-                                    <div className="text-xs text-slate-500 mt-1">{row.serviceLineCount} line item{row.serviceLineCount === 1 ? '' : 's'} · {row.serviceUsageCount} total unit{row.serviceUsageCount === 1 ? '' : 's'}</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Outstanding Ledger Balance</div>
-                                    <div className={`text-base font-semibold mt-1 ${row.outstandingLedgerBalance > 0 ? 'text-amber-700' : row.outstandingLedgerBalance < 0 ? 'text-emerald-700' : 'text-slate-800'}`}>
-                                      {formatCurrencyVND(row.outstandingLedgerBalance)}
-                                    </div>
-                                  </div>
-                                  {row.settledMonths.length > 0 && (
-                                    <div>
-                                      <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Settled Months</div>
-                                      <div className="flex flex-wrap gap-2 mt-2">
-                                        {row.settledMonths.map((monthKey) => (
-                                          <span key={`${row.booking.id}_${monthKey}`} className="px-2 py-1 rounded-full text-[11px] font-semibold border border-slate-200 bg-slate-50 text-slate-700">
-                                            {monthKey}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                  <div>
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Special Notes</div>
-                                    {row.specialNotes.length ? (
-                                      <div className="space-y-2 mt-2">
-                                        {row.specialNotes.map((note, idx) => (
-                                          <div key={`${row.booking.id}_note_${idx}`} className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                                            {note}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <div className="text-sm text-slate-500 mt-2">No special notes saved.</div>
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 p-4 space-y-4">
-                                  <div className="flex items-center justify-between gap-3 mb-3">
-                                    <div>
-                                      <div className="text-xs uppercase tracking-[0.2em] font-bold text-slate-500">Guest Ledger</div>
-                                      <div className="text-sm text-slate-500 mt-1">
-                                        {isPastView
-                                          ? 'Historical charges, credits, and service usage captured for this completed stay.'
-                                          : 'Add charges for dinners, drinks, activities, laundry, or credits when the guest paid on your behalf.'}
-                                      </div>
-                                    </div>
-                                    <div className="text-right">
-                                      <div className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">{isPastView ? 'Ledger balance' : 'This month extras'}</div>
-                                      <div className="text-lg font-bold text-slate-800">{formatCurrencyVND(isPastView ? row.outstandingLedgerBalance : row.unbilledExtrasTotal)}</div>
-                                      <div className="text-xs text-slate-500 mt-1">Charges {formatCurrencyVND(row.currentMonthChargeTotal)} · Credits {formatCurrencyVND(row.currentMonthCreditTotal)}</div>
-                                    </div>
-                                  </div>
-
-                                  {!isPastView ? (
-                                    <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-                                      <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-                                        <select
-                                          value={entryDraft.type}
-                                          onChange={(e) => updateLongTermEntryDraft(row.booking.id, { type: e.target.value })}
-                                          onClick={(e) => e.stopPropagation()}
-                                          className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
-                                        >
-                                          <option value="charge">Charge to guest</option>
-                                          <option value="credit">Credit back to guest</option>
-                                        </select>
-                                        <input
-                                          type="text"
-                                          value={entryDraft.title}
-                                          onChange={(e) => updateLongTermEntryDraft(row.booking.id, { title: e.target.value })}
-                                          onClick={(e) => e.stopPropagation()}
-                                          placeholder="Title"
-                                          className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white md:col-span-2"
-                                        />
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          value={entryDraft.amountVnd}
-                                          onChange={(e) => updateLongTermEntryDraft(row.booking.id, { amountVnd: e.target.value })}
-                                          onClick={(e) => e.stopPropagation()}
-                                          placeholder="Amount (VND)"
-                                          className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
-                                        />
-                                        <input
-                                          type="date"
-                                          value={entryDraft.date || TODAY_STR}
-                                          onChange={(e) => updateLongTermEntryDraft(row.booking.id, { date: e.target.value })}
-                                          onClick={(e) => e.stopPropagation()}
-                                          className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
-                                        />
-                                      </div>
-                                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2 items-center">
-                                        <input
-                                          type="text"
-                                          value={entryDraft.description}
-                                          onChange={(e) => updateLongTermEntryDraft(row.booking.id, { description: e.target.value })}
-                                          onClick={(e) => e.stopPropagation()}
-                                          placeholder="Description or note"
-                                          className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleAddLongTermLedgerEntry(row.booking);
-                                          }}
-                                          className="px-4 py-2 rounded-full text-sm font-semibold border border-[#26402E] bg-[#E2F05D]/50 text-[#26402E] hover:bg-[#E2F05D]"
-                                        >
-                                          Add entry
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleCopyLongTermReceipt(row);
-                                          }}
-                                          className="px-4 py-2 rounded-full text-sm font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                        >
-                                          Copy receipt
-                                        </button>
-                                      </div>
-                                      <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-slate-500">
-                                        <span>Receipt month: {row.currentMonthKey}</span>
-                                        <div className="flex items-center gap-3">
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleSettleLongTermMonth(row);
-                                            }}
-                                            className="px-3 py-1.5 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 font-semibold"
-                                          >
-                                            Mark month settled
-                                          </button>
-                                          {receiptStatus === 'copied' && <span className="text-emerald-700 font-semibold">Receipt copied</span>}
-                                          {receiptStatus === 'failed' && <span className="text-red-600 font-semibold">Copy failed</span>}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4 flex items-center justify-between gap-3 flex-wrap">
-                                      <div className="text-sm text-slate-500">
-                                        Historical snapshot for billing month <span className="font-semibold text-slate-700">{row.currentMonthKey}</span>
-                                      </div>
-                                      <div className="flex items-center gap-3 text-xs">
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleCopyLongTermReceipt(row);
-                                          }}
-                                          className="px-4 py-2 rounded-full text-sm font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                        >
-                                          Copy receipt
-                                        </button>
-                                        {receiptStatus === 'copied' && <span className="text-emerald-700 font-semibold">Receipt copied</span>}
-                                        {receiptStatus === 'failed' && <span className="text-red-600 font-semibold">Copy failed</span>}
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  <div className="overflow-hidden rounded-xl border border-slate-200">
-                                    <table className="w-full text-sm">
-                                      <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
-                                        <tr>
-                                          <th className="px-3 py-2 text-left">Date</th>
-                                          <th className="px-3 py-2 text-left">Item</th>
-                                          <th className="px-3 py-2 text-left">Type</th>
-                                          <th className="px-3 py-2 text-left">Status</th>
-                                          <th className="px-3 py-2 text-right">Amount</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-slate-100">
-                                        {row.ledgerEntries.length === 0 ? (
-                                          <tr>
-                                            <td colSpan="5" className="px-3 py-5 text-center text-slate-500">No ledger entries yet.</td>
-                                          </tr>
-                                        ) : (
-                                          row.ledgerEntries.map((entry) => (
-                                            <tr key={entry.id}>
-                                              <td className="px-3 py-2 text-slate-600">{entry.date || '—'}</td>
-                                              <td className="px-3 py-2">
-                                                <div className="font-semibold text-slate-800">{entry.title}</div>
-                                                {entry.description && <div className="text-xs text-slate-500 mt-1">{entry.description}</div>}
-                                              </td>
-                                              <td className="px-3 py-2">
-                                                <span className={`px-2 py-1 rounded-full text-[11px] font-semibold border ${entry.kind === 'credit' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>
-                                                  {entry.kind === 'credit' ? 'Credit' : 'Charge'}
-                                                </span>
-                                              </td>
-                                              <td className="px-3 py-2">
-                                                <span className={`px-2 py-1 rounded-full text-[11px] font-semibold border ${entry.status === 'billed' ? 'border-slate-200 bg-slate-100 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-                                                  {entry.status === 'billed' ? 'Billed' : 'Unbilled'}
-                                                </span>
-                                              </td>
-                                              <td className={`px-3 py-2 text-right font-semibold ${entry.kind === 'credit' ? 'text-emerald-700' : 'text-slate-800'}`}>
-                                                {entry.kind === 'credit' ? '-' : '+'}{formatCurrencyVND(entry.amountVnd)}
-                                              </td>
-                                            </tr>
-                                          ))
-                                        )}
-                                      </tbody>
-                                    </table>
-                                  </div>
-
-                                  <div className="overflow-hidden rounded-xl border border-slate-200">
-                                    <table className="w-full text-sm">
-                                      <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
-                                        <tr>
-                                          <th className="px-3 py-2 text-left">Service Date</th>
-                                          <th className="px-3 py-2 text-left">Service</th>
-                                          <th className="px-3 py-2 text-right">Qty</th>
-                                          <th className="px-3 py-2 text-right">Unit Price</th>
-                                          <th className="px-3 py-2 text-right">Total</th>
-                                          <th className="px-3 py-2 text-left">Status</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-slate-100">
-                                        {row.serviceEntries.length === 0 ? (
-                                          <tr>
-                                            <td colSpan="6" className="px-3 py-5 text-center text-slate-500">No services recorded for this stay.</td>
-                                          </tr>
-                                        ) : (
-                                          row.serviceEntries.map((service) => (
-                                            <tr key={service.id}>
-                                              <td className="px-3 py-2 text-slate-600">{service.date || '—'}</td>
-                                              <td className="px-3 py-2">
-                                                <div className="font-semibold text-slate-800">{service.name}</div>
-                                                {service.notes && <div className="text-xs text-slate-500 mt-1">{service.notes}</div>}
-                                              </td>
-                                              <td className="px-3 py-2 text-right text-slate-700">{service.qty}</td>
-                                              <td className="px-3 py-2 text-right text-slate-700">{formatCurrencyVND(service.unitPriceVnd)}</td>
-                                              <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatCurrencyVND(service.totalPriceVnd)}</td>
-                                              <td className="px-3 py-2">
-                                                <span className={`px-2 py-1 rounded-full text-[11px] font-semibold border ${service.status === 'billed' ? 'border-slate-200 bg-slate-100 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-                                                  {service.status === 'billed' ? 'Billed' : 'Unbilled'}
-                                                </span>
-                                              </td>
-                                            </tr>
-                                          ))
-                                        )}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderCRM = () => {
-    const displayedGuests = (guestSearchResults.length ? guestSearchResults : guests).slice(0, 100);
-    const selectedGuest = displayedGuests.find((g) => g.id === selectedGuestId) || guests.find((g) => g.id === selectedGuestId) || displayedGuests[0];
-    const stayHistory = selectedGuest ? bookings.filter((b) => b.guestId === selectedGuest.id).sort((a, b) => new Date(b.checkIn) - new Date(a.checkIn)) : [];
-
-    return (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1 space-y-4">
-          <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <Search size={18} className="text-slate-500" />
-              <div>
-                <div className="font-semibold text-slate-800">Find guest</div>
-                <div className="text-xs text-slate-500">Search by email, phone, or name</div>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={guestSearchTerm}
-                onChange={(e) => setGuestSearchTerm(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleGuestSearch(); } }}
-                placeholder="guest@email.com or +84..."
-                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] outline-none"
-              />
-              <button
-                onClick={handleGuestSearch}
-                className="px-3 py-2 rounded-xl bg-[#26402E] text-white text-sm font-semibold shadow-sm"
-              >
-                Search
-              </button>
-            </div>
-            <div className="text-xs text-slate-500">Showing {displayedGuests.length} guest(s)</div>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-sm border border-[#E5E7EB] divide-y divide-slate-100 overflow-hidden">
-            {displayedGuests.length === 0 ? (
-              <div className="p-4 text-sm text-slate-500">No guests yet.</div>
-            ) : (
-              displayedGuests.map((g) => {
-                const isSelected = selectedGuest && g.id === selectedGuest.id;
-                return (
-                  <button
-                    key={g.id}
-                    onClick={() => handleSelectGuest(g)}
-                    className={`w-full text-left p-4 flex items-center justify-between gap-3 hover:bg-[#F9F8F2] ${isSelected ? 'bg-[#E2F05D]/30' : ''}`}
-                  >
-                    <div>
-                      <div className="font-semibold text-slate-800">{g.fullName || 'Unknown Guest'}</div>
-                      <div className="text-xs text-slate-500">{g.email || g.phone || 'No contact'}</div>
-                      <div className="text-[11px] text-slate-500 mt-1">Stays: {g.stayCount || 0}</div>
-                    </div>
-                    {g.isReturningGuest || (g.stayCount || 0) > 0 ? (
-                      <span className="px-2 py-1 rounded-full text-[11px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">Returning</span>
-                    ) : null}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-[#E5E7EB] p-6 space-y-5">
-          {!selectedGuest ? (
-            <div className="text-sm text-slate-500">Select a guest to view details.</div>
-          ) : (
-            <>
-              <div className="flex items-start justify-between gap-3 flex-wrap">
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-500 font-bold">Guest Profile</div>
-                  <h2 className="text-2xl font-serif font-bold text-slate-900">{selectedGuest.fullName || 'Unknown Guest'}</h2>
-                  <div className="text-sm text-slate-500 mt-1">
-                    Last stay end: {selectedGuest.lastStayEnd ? formatDate(selectedGuest.lastStayEnd) : '—'} · Stays: {selectedGuest.stayCount || 0}
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => openBookingForGuest(selectedGuest)}
-                    className="px-4 py-2 rounded-full bg-[#26402E] text-white text-sm font-semibold shadow-sm"
-                  >
-                    Create booking
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('bookings')}
-                    className="px-4 py-2 rounded-full border border-slate-200 text-sm font-semibold"
-                  >
-                    Go to bookings
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Tags</div>
-                  <input
-                    type="text"
-                    value={guestTagsDraft}
-                    onChange={(e) => setGuestTagsDraft(e.target.value)}
-                    placeholder="VIP, Problematic, Loves late checkout"
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    {(selectedGuest.tags || []).map((tag) => (
-                      <span key={tag} className="px-2 py-1 rounded-full text-[11px] bg-slate-100 text-slate-700 border border-slate-200">{tag}</span>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Notes</div>
-                  <textarea
-                    rows="4"
-                    value={guestNotesDraft}
-                    onChange={(e) => setGuestNotesDraft(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-[#E2F05D] focus:border-[#26402E] text-sm"
-                    placeholder="Preferences, issues, payment notes..."
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => handleSaveGuestProfile(selectedGuest.id)}
-                  disabled={guestSaving}
-                  className={`px-5 py-2 rounded-full text-sm font-semibold shadow-sm ${guestSaving ? 'bg-slate-200 text-slate-500' : 'bg-[#26402E] text-white'}`}
-                >
-                  {guestSaving ? 'Saving…' : 'Save profile'}
-                </button>
-                {guestSaveMessage && <span className="text-sm text-emerald-700">{guestSaveMessage}</span>}
-              </div>
-
-              <div className="space-y-3">
-                <div className="text-xs uppercase tracking-wide font-bold text-slate-500">Stay history</div>
-                <div className="overflow-x-auto border border-slate-100 rounded-xl">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
-                      <tr><th className="px-4 py-2">Dates</th><th className="px-4 py-2">Room</th><th className="px-4 py-2">Channel</th><th className="px-4 py-2">Status</th><th className="px-4 py-2">Total</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {stayHistory.length === 0 ? (
-                        <tr><td colSpan="5" className="px-4 py-4 text-slate-500 text-center">No stays recorded.</td></tr>
-                      ) : (
-                        stayHistory.map((b) => {
-                          const room = ALL_ROOMS.find((r) => r.id === b.roomId);
-                          const displayPrice = getDisplayPriceForBooking(b);
-                          return (
-                            <tr key={b.id} className="hover:bg-slate-50">
-                              <td className="px-4 py-2">{b.checkIn} → {b.checkOut}</td>
-                              <td className="px-4 py-2">{room?.name || b.roomId} <span className="text-xs text-slate-500">{room?.propertyName}</span></td>
-                              <td className="px-4 py-2">{formatChannelLabel(getBookingChannelSummary(b))}</td>
-                              <td className="px-4 py-2 text-xs"><span className="px-2 py-1 rounded-full border bg-slate-100 text-slate-700">{b.status}</span></td>
-                              <td className="px-4 py-2">{displayPrice.toLocaleString('vi-VN')} ₫</td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
-          )}
         </div>
       </div>
     );
@@ -11321,8 +9858,7 @@ export default function App() {
                {activeTab === 'dashboard' && renderDashboard()}
                {activeTab === 'calendar' && renderCalendar()}
                {activeTab === 'bookings' && renderBookingsList()}
-               {activeTab === 'longTerm' && renderLongTermManagement()}
-               {activeTab === 'crm' && renderCRM()}
+               {(activeTab === 'crm' || activeTab === 'longTerm') && <GuestCRM bookings={bookings} guests={guests} rooms={ALL_ROOMS} {...crm} onSaveProfile={handleSaveCrmProfile} onUpdateOps={updateLongTermOps} onEditBooking={(booking) => { setEditingBooking(booking); setIsModalOpen(true); }} onCreateBooking={openBookingForGuest} />}
                {activeTab === 'stats' && renderStats()} 
                {activeTab === 'invoices' && renderInvoices()}
                {activeTab === 'housekeeping' && renderHousekeeping()}
