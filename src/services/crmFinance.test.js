@@ -346,3 +346,54 @@ test('standard reservation date cannot be after arrival and legacy terms are not
   delete plan.paymentTerms;
   assert.equal(buildSchedule(upcoming, plan).some((c) => c.role), false);
 });
+
+test('no-deposit returning guest owes the full first month on arrival and no upfront obligation', () => {
+  const plan = { ...standardPlan(), paymentTerms: 'no_deposit' };
+  const account = createAccount(upcoming, plan, today);
+  const summary = accountSummary(upcoming, account, today);
+  assert.equal(account.charges[0].role, 'arrival');
+  assert.equal(account.charges[0].amountVnd, 12000000);
+  assert.equal(account.charges[0].dueDate, upcoming.checkIn);
+  assert.equal(summary.bookingDepositRequired, 0);
+  assert.equal(summary.bookingDepositLeft, 0);
+  assert.equal(summary.arrivalBalanceVnd, 12000000);
+  assert.equal(account.charges[1].dueDate, '2026-12-24');
+  assert.equal(summary.depositAction, false);
+  assert.deepEqual(buildAlerts(upcoming, account, today), []);
+});
+test('no deposit for a short stay is the full accommodation payment on arrival', () => {
+  const stay = { ...upcoming, stayCategory: 'short', checkOut: '2026-11-28', price: 10000000 };
+  const charges = buildSchedule(stay, { ...standardPlan(stay), paymentTerms: 'no_deposit' });
+  assert.equal(charges.length, 1);
+  assert.equal(charges[0].amountVnd, 10000000);
+  assert.equal(charges[0].dueDate, stay.checkIn);
+});
+test('custom terms use the agreed amount and remaining due date without increasing total rent', () => {
+  const plan = { ...standardPlan(), paymentTerms: 'custom', splitReservation: true, bookingDepositVnd: 4000000, firstDueDate: '2026-11-26' };
+  let account = createAccount(upcoming, plan, today);
+  assert.equal(account.charges[0].amountVnd, 4000000);
+  assert.equal(account.charges[0].role, 'reservation');
+  assert.equal(account.charges[1].amountVnd, 8000000);
+  assert.equal(account.charges[1].dueDate, '2026-11-26');
+  const result = applyPayment(upcoming, account, receipt('booking_deposit', 4000000), today);
+  account = result.account;
+  const summary = accountSummary(upcoming, account, today);
+  assert.equal(summary.bookingDepositLeft, 0);
+  assert.equal(summary.arrivalBalanceVnd, 8000000);
+  assert.equal(account.charges[2].amountVnd, 12000000);
+  assert.throws(() => buildSchedule(upcoming, { ...plan, bookingDepositVnd: 12000001 }), /first rent period/);
+});
+test('no-deposit rejects stale upfront amounts and leaves Kim remaining rent unchanged', () => {
+  assert.throws(() => buildSchedule(upcoming, { ...standardPlan(), paymentTerms: 'no_deposit', bookingDepositVnd: 1 }), /zero reservation/);
+  const charges = buildSchedule(kim, { ...kimPlan(), paymentTerms: 'no_deposit' });
+  assert.equal(charges.length, 1);
+  assert.equal(charges[0].amountVnd, 9503357);
+});
+test('switching an unreceived standard plan to no deposit requires correction and preserves the total', () => {
+  const source = createAccount(upcoming, standardPlan(), today);
+  const plan = { ...source.plan, paymentTerms: 'no_deposit' };
+  assert.throws(() => reviseBillingPlan(upcoming, source, plan, today), /Confirm/);
+  const corrected = reviseBillingPlan(upcoming, source, plan, today, true);
+  assert.equal(accountSummary(upcoming, corrected, today).bookingDepositRequired, 0);
+  assert.equal(accountSummary(upcoming, corrected, today).totalOutstanding, accountSummary(upcoming, source, today).totalOutstanding);
+});

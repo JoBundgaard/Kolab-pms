@@ -78,8 +78,10 @@ export function defaultPlan(booking, today = propertyToday()) {
 export function validatePlan(booking, plan) {
   if (!validDate(booking.checkIn) || !validDate(financialEnd(booking))) throw new Error('This booking needs valid arrival and departure dates.');
   if (!['monthly', 'one_off'].includes(plan.billing) || !validDate(plan.trackingStart) || !validDate(plan.firstDueDate)) throw new Error('Choose a billing plan, tracking start, and first due date.');
-  if (plan.paymentTerms && !['standard_25_75', 'custom'].includes(plan.paymentTerms)) throw new Error('Choose valid reservation payment terms.');
-  if (plan.paymentTerms === 'standard_25_75' && (!validDate(plan.bookingDepositDue) || plan.bookingDepositDue > booking.checkIn)) throw new Error('Reservation payment must be due on or before arrival.');
+  if (plan.paymentTerms && !['standard_25_75', 'no_deposit', 'custom'].includes(plan.paymentTerms)) throw new Error('Choose valid reservation payment terms.');
+  if (plan.splitReservation && plan.trackingStart > booking.checkIn && Number(plan.bookingDepositVnd) > 0) throw new Error('A reservation payment applies at arrival only. Record advance payments against the remaining rent instead.');
+  if (plan.paymentTerms === 'no_deposit' && Number(plan.bookingDepositVnd) !== 0) throw new Error('No deposit requires a zero reservation payment.');
+  if ((plan.paymentTerms === 'standard_25_75' || plan.splitReservation) && (!validDate(plan.bookingDepositDue) || plan.bookingDepositDue > booking.checkIn)) throw new Error('Reservation payment must be due on or before arrival.');
   if (plan.periodBasis && !['calendar', 'anniversary'].includes(plan.periodBasis)) throw new Error('Choose calendar months or rent-date months.');
   if (plan.periodBasis === 'anniversary' && (!validDate(plan.cycleAnchor) || plan.cycleAnchor > plan.trackingStart)) throw new Error('The rent cycle anchor must be on or before the first unpaid date.');
   if (plan.trackingStart < booking.checkIn || plan.trackingStart >= financialEnd(booking)) throw new Error('The first tracked date must be within the stay.');
@@ -152,22 +154,23 @@ export function buildSchedule(booking, plan) {
   }
   // Reservation and arrival instalments partition rent, never add to it.
   // A paid-through date after arrival must not create a new reservation deposit.
-  if (plan.paymentTerms === 'standard_25_75' && plan.trackingStart === booking.checkIn) {
+  if ((plan.paymentTerms === 'standard_25_75' || plan.paymentTerms === 'no_deposit' || plan.splitReservation) && plan.trackingStart === booking.checkIn) {
     const first = charges.find((c) => c.type === 'rent' && !c.prepaid && c.coverageStart === booking.checkIn);
     if (first) {
-      const upfront = money(first.amountVnd * 0.25);
-      push({ ...first, id: `reservation_${first.id}`, role: 'reservation', title: '25% reservation payment', dueDate: plan.bookingDepositDue, amountVnd: upfront });
+      const upfront = plan.paymentTerms === 'standard_25_75' ? money(first.amountVnd * 0.25) : plan.paymentTerms === 'no_deposit' ? 0 : money(plan.bookingDepositVnd);
+      if (upfront > first.amountVnd) throw new Error('Reservation payment cannot exceed the first rent period.');
+      if (upfront > 0) push({ ...first, id: `reservation_${first.id}`, role: 'reservation', title: plan.paymentTerms === 'standard_25_75' ? '25% reservation payment' : 'Custom reservation payment', dueDate: plan.bookingDepositDue, amountVnd: upfront });
       first.amountVnd -= upfront;
       first.role = 'arrival';
-      first.title = '75% arrival balance';
-      first.dueDate = booking.checkIn;
+      first.title = plan.paymentTerms === 'standard_25_75' ? '75% arrival balance' : plan.paymentTerms === 'no_deposit' ? 'Full payment on arrival · no deposit' : 'Custom remaining balance';
+      first.dueDate = plan.paymentTerms === 'custom' ? max(plan.firstDueDate, first.coverageStart) : booking.checkIn;
     }
   }
   if (Number(plan.openingVnd) > 0) push({ id: 'opening', type: 'rent', channel: 'direct', title: 'Reviewed opening rent balance', amountVnd: money(plan.openingVnd), dueDate: plan.openingDue });
   if (Number(plan.securityDepositVnd) > 0) push({ id: 'security', type: 'security', title: 'Refundable security deposit', amountVnd: money(plan.securityDepositVnd), dueDate: plan.securityDepositDue });
   const rentTotal = charges.filter((c) => c.type === 'rent' && !c.prepaid).reduce((n, c) => n + c.amountVnd, 0);
   if (Number(plan.bookingDepositVnd) > rentTotal) throw new Error('Booking deposit cannot exceed the rent collected directly.');
-  return plan.paymentTerms !== 'standard_25_75' ? charges : charges.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || (a.role === 'reservation' ? -1 : b.role === 'reservation' ? 1 : 0));
+  return !(plan.paymentTerms === 'standard_25_75' || plan.splitReservation) ? charges : charges.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || (a.role === 'reservation' ? -1 : b.role === 'reservation' ? 1 : 0));
 }
 export function bookingFingerprint(booking) {
   return JSON.stringify([booking.checkIn, booking.checkOut, occupancyEnd(booking), !!booking.earlyTerminationReimbursed, booking.monthlyRentVnd ?? null, booking.price ?? null, booking.channel || 'airbnb', booking.status || '', booking.roomMoves || [], !!booking.sellRoomDuringBreak, booking.guestBreakPeriods || booking.breakPeriods || booking.breaks || [], extraEntries(booking)]);
@@ -192,7 +195,7 @@ export function accountSummary(booking, account, today = propertyToday()) {
   const security = charges.filter((c) => c.type === 'security');
   const depositLeft = security.reduce((n, c) => n + remaining(c, booking), 0);
   const rentReceived = rent.filter((c) => c.type === 'rent' && c.id !== 'opening').reduce((n, c) => n + money(c.paidVnd), 0);
-  const standard = account?.plan?.paymentTerms === 'standard_25_75';
+  const standard = account?.plan?.paymentTerms === 'standard_25_75' || account?.plan?.splitReservation;
   const reservations = rent.filter((c) => c.role === 'reservation');
   const bookingDepositRequired = standard ? reservations.reduce((n, c) => n + c.amountVnd, 0) : money(account?.plan?.bookingDepositVnd);
   const bookingDepositLeft = prepaid || cancelled(booking) ? 0 : standard ? reservations.reduce((n, c) => n + remaining(c, booking), 0) : Math.max(0, bookingDepositRequired - rentReceived);
@@ -219,7 +222,7 @@ export function applyPayment(booking, source, input, today = propertyToday()) {
   else candidates = account.charges.filter((c) => c.id === input.target && remaining(c, booking) > 0);
   if (!candidates.length) throw new Error('This obligation is already paid or is prepaid via Airbnb.');
   if (input.target === 'booking_deposit') {
-    candidates = candidates.filter((c) => c.id !== 'opening' && (account.plan.paymentTerms !== 'standard_25_75' || c.role === 'reservation'));
+    candidates = candidates.filter((c) => c.id !== 'opening' && (!(account.plan.paymentTerms === 'standard_25_75' || account.plan.splitReservation) || c.role === 'reservation'));
     if (amountVnd > accountSummary(booking, account, today).bookingDepositLeft) throw new Error('Payment exceeds the remaining booking deposit. Record additional rent separately.');
   }
   if (candidates[0].type === 'security' && amountVnd > remaining(candidates[0], booking)) throw new Error('Payment exceeds the security deposit requirement.');
@@ -295,8 +298,9 @@ export function addCharge(source, input) {
 }
 // Explicit correction of an unreceived rent schedule; never reinterpret receipts.
 export function reviseBillingPlan(booking, source, plan, today, correction = false) {
-  const structural = ['billing', 'trackingStart', 'periodBasis', 'cycleAnchor', 'paymentTerms'].some((key) => (source.plan[key] || (key === 'periodBasis' ? 'calendar' : '')) !== (plan[key] || (key === 'periodBasis' ? 'calendar' : '')));
-  if (!structural) return syncSchedule(booking, { ...source, plan }, today);
+  const structural = ['billing', 'trackingStart', 'periodBasis', 'cycleAnchor', 'paymentTerms', 'splitReservation'].some((key) => (source.plan[key] || (key === 'periodBasis' ? 'calendar' : '')) !== (plan[key] || (key === 'periodBasis' ? 'calendar' : '')));
+  const changedCustomDeposit = plan.splitReservation && Number(source.plan.bookingDepositVnd) !== Number(plan.bookingDepositVnd);
+  if (!structural && !changedCustomDeposit) return syncSchedule(booking, { ...source, plan }, today);
   if (!correction) throw new Error('Confirm replacement of the existing rent schedule.');
   if (source.charges.some((c) => c.type === 'rent' && c.id !== 'opening' && !c.voided && (c.paidVnd || c.creditVnd))) throw new Error('This rent schedule has payments or credits. Reverse those allocations before changing its billing periods.');
   const account = structuredClone(source);
@@ -352,6 +356,6 @@ export function buildAlerts(booking, account, today = propertyToday()) {
     if (days < -3) continue;
     alerts.push({ id: `${booking.id}__${charge.id}`, bookingId: booking.id, guestId: booking.guestId || '', guestName: booking.guestName || 'Guest', type: charge.type === 'security' || charge.role === 'reservation' ? 'deposit' : 'payment', title: charge.title, amountVnd: remaining(charge, booking), dueDate: charge.dueDate, stage: days >= 7 ? 'escalated' : days >= 3 ? 'follow_up' : days > 0 ? 'overdue' : days === 0 ? 'due_today' : 'due_soon', daysOverdue: Math.max(0, days) });
   }
-  if (account.plan.paymentTerms !== 'standard_25_75' && summary.bookingDepositLeft && daysBetween(today, account.plan.bookingDepositDue) <= 3) alerts.push({ id: `${booking.id}__booking_deposit`, bookingId: booking.id, guestId: booking.guestId || '', guestName: booking.guestName || 'Guest', type: 'deposit', title: 'Booking deposit', amountVnd: summary.bookingDepositLeft, dueDate: account.plan.bookingDepositDue, stage: account.plan.bookingDepositDue < today ? 'overdue' : 'due_soon' });
+  if (!(account.plan.paymentTerms === 'standard_25_75' || account.plan.splitReservation) && summary.bookingDepositLeft && daysBetween(today, account.plan.bookingDepositDue) <= 3) alerts.push({ id: `${booking.id}__booking_deposit`, bookingId: booking.id, guestId: booking.guestId || '', guestName: booking.guestName || 'Guest', type: 'deposit', title: 'Booking deposit', amountVnd: summary.bookingDepositLeft, dueDate: account.plan.bookingDepositDue, stage: account.plan.bookingDepositDue < today ? 'overdue' : 'due_soon' });
   return alerts;
 }

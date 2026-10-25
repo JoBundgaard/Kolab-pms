@@ -90,3 +90,9 @@ Both instalments are rent charges with separate due dates, not additional fees. 
 The menu uses **Reservation & arrival** and removes security-deposit inputs from new setups. Existing security-deposit records remain available for reconciliation; existing billing plans keep their saved terms until staff explicitly changes and reviews them through schedule correction. Airbnb accommodation remains prepaid. A paid-through date after arrival does not create a new reservation charge on the remaining rent (including Kim's October 24–November 12 period).
 
 Validation covers the first-month-only split, per-stay rounding, partial and concurrent reservation receipts, idempotency, arrival balance, future rent preservation, reversal, alerts, Airbnb and existing-plan compatibility. Browser verification was unavailable in this session because no browser surface was connected; the production build and targeted lint verify the changed interface code.
+
+## Payment structure choices
+
+Billing setup and settings now offer **Standard · 25% reservation / 75% arrival**, **No deposit · pay on arrival** (normally returning guests), and **Custom**. No deposit creates no upfront obligation and makes the full first rent period (or per-stay amount) due on arrival. Later monthly periods are unchanged. Custom allows an agreed upfront VND amount and a separate remaining-balance due date, with the upfront portion deducted from the first rent period, never added to total rent. Zero custom upfront is allowed. Neither option adds security deposits.
+
+New custom plans use `splitReservation: true`; saved legacy custom terms remain unchanged until explicitly reviewed. Changing payment structure or the custom upfront amount on an existing split plan uses the audited correction workflow, with receipts/credits protected. Paid-through dates after arrival continue to exclude the original reservation period.
