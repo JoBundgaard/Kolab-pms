@@ -520,6 +520,9 @@ const isBlockingStatus = (status) => {
   return s === 'confirmed' || s === 'checked-in' || s === 'checked-out';
 };
 
+// Older bookings may have no status; keep their room departures in housekeeping.
+const isHousekeepingBooking = (booking) => !!booking && (!booking.status || isBlockingStatus(booking.status));
+
 const CALENDAR_BLOCK_TYPE_OPTIONS = [
   { value: 'long_term_priority', label: 'Long-term priority' },
   { value: 'owner_hold', label: 'Owner hold' },
@@ -5870,12 +5873,12 @@ export default function App() {
   }, [bookings, housekeepingDate]);
 
   const checkoutsForDate = useMemo(
-    () => (bookings || []).flatMap((booking) => expandBookingToRoomStays(booking)).filter((b) => b && isBlockingStatus(b.status) && formatDate(b.checkOut) === housekeepingDate),
+    () => (bookings || []).flatMap((booking) => expandBookingToRoomStays(booking)).filter((b) => isHousekeepingBooking(b) && formatDate(b.checkOut) === housekeepingDate),
     [bookings, housekeepingDate]
   );
 
   const checkinsForDate = useMemo(
-    () => (bookings || []).flatMap((booking) => expandBookingToRoomStays(booking)).filter((b) => b && isBlockingStatus(b.status) && formatDate(b.checkIn) === housekeepingDate),
+    () => (bookings || []).flatMap((booking) => expandBookingToRoomStays(booking)).filter((b) => isHousekeepingBooking(b) && formatDate(b.checkIn) === housekeepingDate),
     [bookings, housekeepingDate]
   );
 
@@ -5887,7 +5890,7 @@ export default function App() {
   const bookingHousekeepingTasks = useMemo(
     () =>
       normalizeHousekeepingTasks({
-        bookings: (bookings || []).filter((b) => isBlockingStatus(b?.status)).flatMap((booking) => expandBookingToRoomStays(booking)),
+        bookings: (bookings || []).filter(isHousekeepingBooking).flatMap((booking) => expandBookingToRoomStays(booking)),
         rooms: ALL_ROOMS,
         targetDate: housekeepingDate,
         overrides: housekeepingOverrides,
@@ -6689,7 +6692,7 @@ export default function App() {
   }, [bookings, db, pushAlert]);
 
   const expandedHousekeepingBookings = useMemo(
-    () => (bookings || []).filter((b) => isBlockingStatus(b?.status)).flatMap((b) => expandBookingToRoomStays(b)),
+    () => (bookings || []).filter(isHousekeepingBooking).flatMap((b) => expandBookingToRoomStays(b)),
     [bookings]
   );
 
