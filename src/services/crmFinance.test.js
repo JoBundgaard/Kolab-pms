@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import {
   accountSummary, addCharge, airbnbOnly, applyCredit, applyDepositMovement, applyPayment,
   buildAlerts, buildSchedule, createAccount, defaultPlan, heldDeposit, lifecycle,
-  propertyToday, remaining, reversePayment, roomAt, stayCategory, syncSchedule,
+  propertyToday, reviseBillingPlan, remaining, reversePayment, roomAt, stayCategory, syncSchedule,
   weeklyLaundryStatus,
 } from '../../functions/lib/crmFinance.mjs';
 
 const today = '2026-10-25';
 const booking = { id: 'stay', guestId: 'guest', guestName: 'Test Guest', channel: 'direct', roomId: 'T2', checkIn: '2026-09-12', checkOut: '2027-01-01', monthlyRentVnd: 9300000, price: 35000000, stayCategory: 'long' };
-const planFor = (stay = booking, patch = {}) => ({ ...defaultPlan(stay, today), trackingStart: stay.checkIn, firstDueDate: stay.checkIn, dueDay: 5, ...patch });
+const planFor = (stay = booking, patch = {}) => ({ ...defaultPlan(stay, today), periodBasis: 'calendar', trackingStart: stay.checkIn, firstDueDate: stay.checkIn, dueDay: 5, ...patch });
 const accountFor = (stay = booking, patch = {}) => createAccount(stay, planFor(stay, patch), today);
 const receipt = (target, amountVnd, patch = {}) => ({ target, amountVnd, receivedDate: today, method: 'Bank transfer', reference: 'test-ref', ...patch });
 
@@ -242,4 +242,31 @@ test('arrival readiness does not require a security deposit agreed for after arr
   const stay = { ...booking, channel: 'airbnb', checkIn: '2026-10-27', checkOut: '2026-11-27' };
   const account = accountFor(stay, { securityDepositVnd: 1000000, securityDepositDue: '2026-10-30' });
   assert.equal(accountSummary(stay, account, today).arrivalReady, true);
+});
+
+const kim = { ...booking, checkIn: '2026-09-24', checkOut: '2026-11-12', monthlyRentVnd: 15505478 };
+const kimPlan = () => planFor(kim, { periodBasis: 'anniversary', cycleAnchor: kim.checkIn, trackingStart: '2026-10-24', firstDueDate: '2026-10-24' });
+test('Kim: paid through October 24 leaves one 19-night rent charge due October 24', () => {
+  const charges = buildSchedule(kim, kimPlan());
+  assert.equal(charges.length, 1);
+  assert.equal(charges[0].coverageStart, '2026-10-24');
+  assert.equal(charges[0].coverageEnd, '2026-11-12');
+  assert.equal(charges[0].dueDate, '2026-10-24');
+  assert.equal(charges[0].amountVnd, Math.round(15505478 * 19 / 31));
+});
+test('anniversary months clamp February then return to the anchor day', () => {
+  const stay = { ...booking, checkIn: '2026-01-31', checkOut: '2026-04-30' };
+  const charges = buildSchedule(stay, planFor(stay, { periodBasis: 'anniversary', cycleAnchor: stay.checkIn }));
+  assert.deepEqual(charges.map((c) => [c.coverageStart, c.coverageEnd]), [['2026-01-31', '2026-02-28'], ['2026-02-28', '2026-03-31'], ['2026-03-31', '2026-04-30']]);
+  assert.ok(charges.every((c) => c.amountVnd === stay.monthlyRentVnd));
+});
+test('explicit correction removes overdue calendar rent without duplicate balances and preserves source', () => {
+  const source = createAccount(kim, planFor(kim, { trackingStart: '2026-10-01', firstDueDate: '2026-10-24' }), today);
+  assert.throws(() => reviseBillingPlan(kim, source, kimPlan(), today), /Confirm/);
+  const corrected = reviseBillingPlan(kim, source, kimPlan(), today, true);
+  assert.equal(accountSummary(kim, corrected, today).totalOutstanding, Math.round(15505478 * 19 / 31));
+  assert.equal(source.charges[0].voided, undefined);
+  assert.equal(corrected.charges.filter((c) => c.voided).length, 2);
+  const paid = applyPayment(kim, source, receipt('oldest', 1000), today).account;
+  assert.throws(() => reviseBillingPlan(kim, paid, kimPlan(), today, true), /payments or credits/);
 });

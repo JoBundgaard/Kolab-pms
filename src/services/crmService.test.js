@@ -99,3 +99,18 @@ test('payment reversal preserves the original and restores its collection alert'
   assert.equal([...db.documents.values()].some((entry) => entry.resolved === false && entry.type === 'payment'), true);
   await assert.rejects(db.action('reverse', { paymentId: 'receipt', note: 'Again' }, 'undo-again'), /unreversed/);
 });
+
+test('billing correction audits replaced overdue rent and resolves its old alert atomically', async () => {
+  const db = database();
+  await db.setup({ periodBasis: 'calendar' });
+  const before = structuredClone(db.account());
+  const plan = { ...before.plan, periodBasis: 'anniversary', cycleAnchor: booking.checkIn, trackingStart: '2026-10-24', firstDueDate: '2026-10-24' };
+  await assert.rejects(db.action('plan', { plan, expectedVersion: before.version, correctSchedule: true }, 'missing-reason'), /reason/);
+  await db.action('plan', { plan, expectedVersion: before.version, correctSchedule: true, note: 'Rent already paid until October 24' }, 'correct');
+  const summary = finance.accountSummary(booking, db.account(), today);
+  assert.equal(summary.totalOutstanding, Math.round(10000000 * 8 / 31));
+  assert.equal(summary.openCharges.length, 1);
+  assert.equal(db.documents.get('crmPayments/correct').previousCharges[0].amountVnd, 10000000);
+  assert.ok([...db.documents.values()].some((entry) => entry.resolved === true));
+  await assert.rejects(db.action('plan', { plan, expectedVersion: before.version, correctSchedule: true, note: 'Stale form' }, 'stale'), /Another staff/);
+});

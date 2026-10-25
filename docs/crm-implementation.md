@@ -72,3 +72,11 @@ Deploy the frontend through the project's normal hosting workflow. This reposito
 The React workspace was exercised in a browser with isolated fictional data, including payment and deposit forms, setup, profiles, no-results search, historical debt, and layouts at 736, 390, and 320 pixels. No production guest records were written during testing.
 
 The production build and targeted lint for the new code pass. Repository-wide lint has pre-existing errors in the large App component, Housekeeping component, and existing chatbot helpers. Firebase emulator integration is not verified here because a Java runtime is unavailable. Local function discovery also stalled while loading the existing `firebase-admin` dependency; syntax checks passed, but background functions require runtime/deployment verification.
+
+## Rent-date billing correction (25 October 2026)
+
+New monthly setups default to rent-date months anchored to arrival. Existing plans without `periodBasis` remain calendar-month plans until explicitly corrected. Rent-date months clamp the anchor day in shorter months and restore it afterward. Partial periods use nights divided by the full rent cycle length; checkout is exclusive. Rate changes, direct/Airbnb transitions and agreed sellable breaks still apply.
+
+For Kim's existing setup, enable **Correct billing periods / paid-through date** in Billing settings, choose **Monthly · from rent date**, set the anchor to **24 September 2026**, the paid-through / first unpaid date to **24 October 2026**, and the first due date to **24 October 2026**. Enter a correction reason and review the schedule before saving. At a monthly rate of 15,505,478 VND, 24 October–12 November is 19 of the 31 nights in the 24 October–24 November cycle: **9,503,357 VND** (unless other booking rate changes or agreed breaks apply).
+
+Corrections replace unreceived scheduled rent, including overdue charges. Opening arrears, services, deposits and receipt history remain separate. The transaction stores the previous plan and charges in the audit event and resolves superseded alerts. Changing period structure is blocked where scheduled rent has recorded payments or credits; staff must reverse those allocations first. The paid-through date excludes earlier coverage without inventing a receipt. Existing guest records are not automatically migrated.

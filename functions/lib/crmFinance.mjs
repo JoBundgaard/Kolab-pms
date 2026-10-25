@@ -68,13 +68,18 @@ export function legacyExtras(booking) {
 export function defaultPlan(booking, today = propertyToday()) {
   const monthly = stayCategory(booking) === 'long' && money(booking.monthlyRentVnd) > 0;
   const reference = financialEnd(booking) <= today ? addDays(financialEnd(booking), -1) : today;
-  const start = booking.checkIn > reference ? booking.checkIn : max(booking.checkIn, `${reference.slice(0, 7)}-01`);
+  const anchorDay = Number(booking.checkIn?.slice(8)) || 1;
+  let cycleStart = monthDue(reference.slice(0, 7), anchorDay);
+  if (cycleStart > reference) cycleStart = monthDue(addDays(`${reference.slice(0, 7)}-01`, -1).slice(0, 7), anchorDay);
+  const start = booking.checkIn > reference ? booking.checkIn : max(booking.checkIn, monthly ? cycleStart : `${reference.slice(0, 7)}-01`);
   const dueDay = Number(booking.longTermOps?.rentDueDay) || Number(booking.checkIn?.slice(8)) || 1;
-  return { billing: monthly ? 'monthly' : 'one_off', trackingStart: start, firstDueDate: monthly ? max(start, monthDue(start.slice(0, 7), dueDay)) : booking.checkIn, dueDay, monthlyRentVnd: money(booking.monthlyRentVnd), totalVnd: money(booking.price), useBookingRate: true, useBookingTotal: true, bookingDepositVnd: 0, bookingDepositDue: booking.checkIn, securityDepositVnd: 0, securityDepositDue: booking.checkIn, openingVnd: 0, openingDue: today, includeExtras: true };
+  return { billing: monthly ? 'monthly' : 'one_off', periodBasis: 'anniversary', cycleAnchor: booking.checkIn, trackingStart: start, firstDueDate: monthly ? start : booking.checkIn, dueDay, monthlyRentVnd: money(booking.monthlyRentVnd), totalVnd: money(booking.price), useBookingRate: true, useBookingTotal: true, bookingDepositVnd: 0, bookingDepositDue: booking.checkIn, securityDepositVnd: 0, securityDepositDue: booking.checkIn, openingVnd: 0, openingDue: today, includeExtras: true };
 }
 export function validatePlan(booking, plan) {
   if (!validDate(booking.checkIn) || !validDate(financialEnd(booking))) throw new Error('This booking needs valid arrival and departure dates.');
   if (!['monthly', 'one_off'].includes(plan.billing) || !validDate(plan.trackingStart) || !validDate(plan.firstDueDate)) throw new Error('Choose a billing plan, tracking start, and first due date.');
+  if (plan.periodBasis && !['calendar', 'anniversary'].includes(plan.periodBasis)) throw new Error('Choose calendar months or rent-date months.');
+  if (plan.periodBasis === 'anniversary' && (!validDate(plan.cycleAnchor) || plan.cycleAnchor > plan.trackingStart)) throw new Error('The rent cycle anchor must be on or before the first unpaid date.');
   if (plan.trackingStart < booking.checkIn || plan.trackingStart >= financialEnd(booking)) throw new Error('The first tracked date must be within the stay.');
   if (plan.firstDueDate < booking.checkIn) throw new Error('First rent due date cannot be before arrival. Use a booking deposit for pre-arrival collection.');
   if (!Number.isInteger(Number(plan.dueDay)) || plan.dueDay < 1 || plan.dueDay > 31) throw new Error('Rent due day must be between 1 and 31.');
@@ -103,10 +108,16 @@ export function buildSchedule(booking, plan) {
   const push = (charge) => charges.push({ paidVnd: 0, creditVnd: 0, refundedVnd: 0, deductedVnd: 0, ...charge });
   if (plan.billing === 'monthly') {
     const from = max(booking.checkIn, plan.trackingStart);
-    let month = `${from.slice(0, 7)}-01`;
-    for (let index = 0; month < financialEnd(booking); index++, month = monthAfter(month.slice(0, 7))) {
+    const anniversary = plan.periodBasis === 'anniversary';
+    const cycleDay = Number(plan.cycleAnchor?.slice(8));
+    let month = anniversary ? monthDue(from.slice(0, 7), cycleDay) : `${from.slice(0, 7)}-01`;
+    if (month > from) {
+      const previous = addDays(`${from.slice(0, 7)}-01`, -1);
+      month = monthDue(previous.slice(0, 7), cycleDay);
+    }
+    for (let index = 0; month < financialEnd(booking); index++, month = anniversary ? monthDue(monthAfter(month.slice(0, 7)).slice(0, 7), cycleDay) : monthAfter(month.slice(0, 7))) {
       if (index >= 120) throw new Error('Track at most ten years in one billing plan.');
-      const end = monthAfter(month.slice(0, 7));
+      const end = anniversary ? monthDue(monthAfter(month.slice(0, 7)).slice(0, 7), cycleDay) : monthAfter(month.slice(0, 7));
       const amounts = new Map();
       for (const segment of segments) {
         const start = max(month, segment.start, from), until = min(end, segment.end);
@@ -117,8 +128,8 @@ export function buildSchedule(booking, plan) {
         amounts.set(segment.channel, item);
       }
       for (const [channel, item] of amounts) {
-        const dueDate = index === 0 ? max(plan.firstDueDate, item.start) : max(item.start, monthDue(month.slice(0, 7), plan.dueDay));
-        push({ id: `rent_${month.slice(0, 7)}_${channel}`, type: 'rent', channel, prepaid: channel === 'airbnb', title: `Rent · ${month.slice(0, 7)}`, coverageStart: item.start, coverageEnd: item.end, dueDate, amountVnd: money(item.amountVnd) });
+        const dueDate = index === 0 ? max(plan.firstDueDate, item.start) : anniversary ? item.start : max(item.start, monthDue(month.slice(0, 7), plan.dueDay));
+        push({ id: anniversary ? `cycle_${month}_${channel}` : `rent_${month.slice(0, 7)}_${channel}`, type: 'rent', channel, prepaid: channel === 'airbnb', title: anniversary ? `Rent · ${item.start} → ${item.end}` : `Rent · ${month.slice(0, 7)}`, coverageStart: item.start, coverageEnd: item.end, dueDate, amountVnd: money(item.amountVnd) });
       }
     }
   } else {
@@ -261,6 +272,24 @@ export function addCharge(source, input) {
   account.charges.push({ id: input.id, type: 'extra', title: input.title.trim(), dueDate: input.dueDate, amountVnd: Number(input.amountVnd), paidVnd: 0, creditVnd: 0, refundedVnd: 0, deductedVnd: 0 });
   account.version++;
   return { account, event: { kind: 'charge', amountVnd: Number(input.amountVnd), chargeId: input.id, note: input.title.trim() } };
+}
+// Explicit correction of an unreceived rent schedule; never reinterpret receipts.
+export function reviseBillingPlan(booking, source, plan, today, correction = false) {
+  const structural = ['billing', 'trackingStart', 'periodBasis', 'cycleAnchor'].some((key) => (source.plan[key] || (key === 'periodBasis' ? 'calendar' : '')) !== (plan[key] || (key === 'periodBasis' ? 'calendar' : '')));
+  if (!structural) return syncSchedule(booking, { ...source, plan }, today);
+  if (!correction) throw new Error('Confirm replacement of the existing rent schedule.');
+  if (source.charges.some((c) => c.type === 'rent' && c.id !== 'opening' && !c.voided && (c.paidVnd || c.creditVnd))) throw new Error('This rent schedule has payments or credits. Reverse those allocations before changing its billing periods.');
+  const account = structuredClone(source);
+  for (const charge of account.charges) {
+    if (charge.type === 'rent' && charge.id !== 'opening') charge.voided = true;
+  }
+  const next = buildSchedule(booking, plan);
+  for (const charge of next.filter((c) => c.type === 'rent' && c.id !== 'opening')) {
+    const old = account.charges.find((c) => c.id === charge.id);
+    if (old) Object.assign(old, charge, { voided: false });
+    else account.charges.push(charge);
+  }
+  return syncSchedule(booking, { ...account, plan }, today);
 }
 export function syncSchedule(booking, source, today) {
   const account = structuredClone(source);

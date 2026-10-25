@@ -1,7 +1,7 @@
 import { collection, doc, onSnapshot, runTransaction } from 'firebase/firestore';
 import {
   addCharge, applyCredit, applyDepositMovement, applyPayment, buildAlerts,
-  createAccount, money, propertyToday, remaining, reversePayment, syncSchedule, validDate,
+  createAccount, reviseBillingPlan, money, propertyToday, remaining, reversePayment, syncSchedule, validDate,
 } from '../../functions/lib/crmFinance.mjs';
 
 export function subscribeToCrm(db, onData, onError) {
@@ -50,14 +50,15 @@ export async function saveCrmAction({ db, user, bookingId, actionId, kind, input
         if (Number(input.expectedVersion) !== source.version) throw new Error('Another staff member updated this account. Reopen billing settings.');
         const old = source.charges.find((c) => c.id === 'security');
         if (old && money(input.plan.securityDepositVnd) < money(old.paidVnd)) throw new Error('The deposit requirement cannot be reduced below its received amount. Record a refund instead.');
-        account = syncSchedule(booking, { ...source, plan: input.plan }, today);
+        if (input.correctSchedule && !String(input.note || '').trim()) throw new Error('Enter a reason for correcting the rent schedule.');
+        account = reviseBillingPlan(booking, source, input.plan, today, input.correctSchedule);
         const security = account.charges.find((c) => c.id === 'security');
         if (security) {
           security.amountVnd = money(input.plan.securityDepositVnd);
           security.dueDate = input.plan.securityDepositDue;
           security.voided = security.amountVnd === 0;
         }
-        event = { kind: 'plan_update', amountVnd: 0, note: 'Changed billing settings; existing due and paid rent preserved' };
+        event = { kind: 'plan_update', amountVnd: 0, note: input.correctSchedule ? input.note.trim() : 'Changed billing settings; existing due and paid rent preserved', previousPlan: source.plan, plan: input.plan, previousCharges: source.charges };
       } else if (kind === 'adjustment' || kind === 'due_date') {
         account = structuredClone(source);
         const charge = account.charges.find((c) => c.id === input.chargeId && !c.voided);
