@@ -249,8 +249,29 @@ export function applyDepositMovement(booking, source, input) {
   return { account, event: { kind: `security_${input.kind}`, amountVnd, note: input.note.trim(), chargeId: charge.id, bookingId: booking.id } };
 }
 export function reversePayment(booking, source, payment, reason) {
-  if (!['payment', 'credit_allocation'].includes(payment.kind) || payment.reversedBy || !String(reason || '').trim()) throw new Error('Only an unreversed payment or credit allocation can be reversed, with a reason.');
+  if (!['payment', 'credit_allocation', 'adjustment', 'charge', 'due_date', 'security_refund', 'security_deduction'].includes(payment.kind) || payment.reversedBy || !String(reason || '').trim()) throw new Error('Choose an action that has not already been undone and enter a reason.');
   const account = structuredClone(source);
+  if (['adjustment', 'charge', 'due_date', 'security_refund', 'security_deduction'].includes(payment.kind)) {
+    const charge = account.charges.find((c) => c.id === payment.chargeId && !c.voided);
+    if (!charge) throw new Error('This charge is no longer active. Correct the billing schedule first.');
+    if (payment.kind === 'adjustment') {
+      if (!Number.isSafeInteger(payment.amountVnd) || payment.amountVnd <= 0 || money(charge.creditVnd) < payment.amountVnd) throw new Error('This credit is no longer available to undo.');
+      charge.creditVnd -= payment.amountVnd;
+    } else if (payment.kind === 'charge') {
+      if (charge.type !== 'extra' || charge.paidVnd || charge.creditVnd) throw new Error('Undo this charge’s payments and credits first.');
+      charge.voided = true;
+    } else if (payment.kind === 'due_date') {
+      if (!validDate(payment.previousDueDate)) throw new Error('This older action has no saved previous date. Use Change due date instead.');
+      if (charge.dueDate !== payment.dueDate) throw new Error('The due date has changed again. Undo the more recent date change first.');
+      charge.dueDate = payment.previousDueDate;
+    } else {
+      const field = payment.kind === 'security_refund' ? 'refundedVnd' : 'deductedVnd';
+      if (!Number.isSafeInteger(payment.amountVnd) || payment.amountVnd <= 0 || money(charge[field]) < payment.amountVnd) throw new Error('This deposit movement is no longer available to undo.');
+      charge[field] -= payment.amountVnd;
+    }
+    account.version++;
+    return { account, event: { kind: 'reversal', amountVnd: money(payment.amountVnd), chargeId: charge.id, reverses: payment.id, reversedKind: payment.kind, note: reason.trim(), bookingId: booking.id } };
+  }
   if (payment.kind === 'credit_allocation') {
     const charge = account.charges.find((c) => c.id === payment.chargeId);
     if (!charge || money(charge.creditVnd) < payment.amountVnd) throw new Error('The allocated credit is no longer available to reverse.');

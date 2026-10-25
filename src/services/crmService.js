@@ -63,6 +63,7 @@ export async function saveCrmAction({ db, user, bookingId, actionId, kind, input
         account = structuredClone(source);
         const charge = account.charges.find((c) => c.id === input.chargeId && !c.voided);
         if (!charge || !String(input.note || '').trim()) throw new Error('Choose a charge and enter a reason.');
+        const previousDueDate = charge.dueDate;
         if (kind === 'adjustment') {
           if (charge.type === 'security' || !Number.isSafeInteger(Number(input.amountVnd)) || Number(input.amountVnd) <= 0 || Number(input.amountVnd) > remaining(charge, booking)) throw new Error('Credit must be within this charge’s outstanding amount.');
           charge.creditVnd = money(charge.creditVnd) + Number(input.amountVnd);
@@ -71,7 +72,7 @@ export async function saveCrmAction({ db, user, bookingId, actionId, kind, input
           charge.dueDate = input.dueDate;
         }
         account.version++;
-        event = { kind, amountVnd: kind === 'adjustment' ? Number(input.amountVnd) : 0, chargeId: charge.id, note: input.note.trim(), ...(kind === 'due_date' ? { dueDate: input.dueDate } : {}) };
+        event = { kind, amountVnd: kind === 'adjustment' ? Number(input.amountVnd) : 0, chargeId: charge.id, note: input.note.trim(), ...(kind === 'due_date' ? { dueDate: input.dueDate, previousDueDate } : {}) };
       } else if (kind === 'reverse') {
         const originalRef = doc(db, 'crmPayments', input.paymentId);
         const originalSnap = await transaction.get(originalRef);

@@ -132,7 +132,7 @@ test('reversal restores arrears without deleting payment history', () => {
   account = reversePayment(booking, result.account, { ...result.event, id: 'receipt' }, 'Wrong guest').account;
   assert.equal(remaining(account.charges.find((c) => c.id === 'rent_2026-10_direct'), booking), 9300000);
   assert.equal(result.event.amountVnd, 9300000);
-  assert.throws(() => reversePayment(booking, account, { ...result.event, id: 'receipt', reversedBy: 'reversal' }, 'Again'), /unreversed/);
+  assert.throws(() => reversePayment(booking, account, { ...result.event, id: 'receipt', reversedBy: 'reversal' }, 'Again'), /already been undone/);
 });
 
 test('refunded security money cannot be reversed into a negative held amount', () => {
@@ -396,4 +396,47 @@ test('switching an unreceived standard plan to no deposit requires correction an
   const corrected = reviseBillingPlan(upcoming, source, plan, today, true);
   assert.equal(accountSummary(upcoming, corrected, today).bookingDepositRequired, 0);
   assert.equal(accountSummary(upcoming, corrected, today).totalOutstanding, accountSummary(upcoming, source, today).totalOutstanding);
+});
+
+test('undoing a legacy waiver restores rent without adding account credit or changing receipts', () => {
+  const account = accountFor();
+  const charge = account.charges[0];
+  charge.creditVnd = charge.amountVnd;
+  const action = { id: 'old-adjustment', kind: 'adjustment', chargeId: charge.id, amountVnd: charge.amountVnd };
+  const before = accountSummary(booking, account, today).totalOutstanding;
+  const result = reversePayment(booking, account, action, 'Waived by mistake');
+  assert.equal(result.account.charges[0].creditVnd, 0);
+  assert.equal(result.account.charges[0].paidVnd, 0);
+  assert.equal(result.account.unallocatedVnd, 0);
+  assert.equal(accountSummary(booking, result.account, today).totalOutstanding, before + charge.amountVnd);
+  assert.equal(result.event.reverses, action.id);
+  assert.equal(account.charges[0].creditVnd, charge.amountVnd);
+  assert.throws(() => reversePayment(booking, result.account, action, 'Again'), /no longer available/);
+  assert.throws(() => reversePayment(booking, account, { ...action, reversedBy: 'undo' }, 'Again'), /already been undone/);
+});
+test('undoing a custom charge requires its payments and credits to be undone first', () => {
+  const account = addCharge(accountFor(), { id: 'extra-test', title: 'Extra', amountVnd: 100000, dueDate: today }).account;
+  const action = { id: 'charge-event', kind: 'charge', chargeId: 'extra-test', amountVnd: 100000 };
+  const paid = applyPayment(booking, account, receipt('extra-test', 100000), today).account;
+  assert.throws(() => reversePayment(booking, paid, action, 'Mistake'), /payments and credits first/);
+  const result = reversePayment(booking, account, action, 'Mistake');
+  assert.equal(result.account.charges.find((c) => c.id === 'extra-test').voided, true);
+});
+test('undoing due dates restores the saved date and rejects an outdated change', () => {
+  const account = accountFor();
+  const charge = account.charges[0];
+  const previousDueDate = charge.dueDate;
+  charge.dueDate = '2026-10-30';
+  const action = { id: 'date-event', kind: 'due_date', chargeId: charge.id, previousDueDate, dueDate: charge.dueDate };
+  assert.equal(reversePayment(booking, account, action, 'Wrong date').account.charges[0].dueDate, previousDueDate);
+  assert.throws(() => reversePayment(booking, account, { ...action, dueDate: '2026-10-29' }, 'Wrong date'), /more recent/);
+  assert.throws(() => reversePayment(booking, account, { ...action, previousDueDate: '' }, 'Wrong date'), /older action/);
+});
+test('undoing a recorded security movement restores the ledger without fabricating a payment', () => {
+  let account = accountFor(booking, { securityDepositVnd: 1000000, securityDepositDue: today });
+  account = applyPayment(booking, account, receipt('security', 1000000), today).account;
+  const movement = applyDepositMovement(booking, account, { kind: 'refund', amountVnd: 300000, note: 'Recorded refund' });
+  const result = reversePayment(booking, movement.account, { ...movement.event, id: 'refund' }, 'Refund never happened');
+  assert.equal(heldDeposit(result.account.charges.find((c) => c.id === 'security')), 1000000);
+  assert.equal(result.account.charges.find((c) => c.id === 'security').paidVnd, 1000000);
 });

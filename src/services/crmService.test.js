@@ -97,7 +97,7 @@ test('payment reversal preserves the original and restores its collection alert'
   assert.equal(db.documents.get('crmPayments/receipt').amountVnd, 10000000);
   assert.equal(db.account().charges[0].paidVnd, 0);
   assert.equal([...db.documents.values()].some((entry) => entry.resolved === false && entry.type === 'payment'), true);
-  await assert.rejects(db.action('reverse', { paymentId: 'receipt', note: 'Again' }, 'undo-again'), /unreversed/);
+  await assert.rejects(db.action('reverse', { paymentId: 'receipt', note: 'Again' }, 'undo-again'), /already been undone/);
 });
 
 test('billing correction audits replaced overdue rent and resolves its old alert atomically', async () => {
@@ -134,4 +134,37 @@ test('simultaneous reservation receipts cannot exceed the standard 25% requireme
   assert.equal(outcomes.filter((outcome) => outcome.status === 'rejected').length, 1);
   assert.equal(finance.accountSummary(booking, db.account(), today).bookingDepositLeft, 500000);
   assert.equal(finance.accountSummary(booking, db.account(), today).arrivalBalanceVnd, 7500000);
+});
+
+test('legacy adjustment undo restores the obligation, records a reversal and cannot run twice', async () => {
+  const db = database();
+  await db.setup();
+  const target = db.account().charges[0].id;
+  await db.action('adjustment', { chargeId: target, amountVnd: 10000000, note: 'Mistake' }, 'waiver');
+  assert.equal(finance.accountSummary(booking, db.account(), today).totalOutstanding, 0);
+  await Promise.all([db.action('reverse', { paymentId: 'waiver', note: 'Restore rent owed' }, 'undo-waiver'), db.action('reverse', { paymentId: 'waiver', note: 'Restore rent owed' }, 'undo-waiver')]);
+  assert.equal(finance.accountSummary(booking, db.account(), today).totalOutstanding, 10000000);
+  assert.equal(db.documents.get('crmPayments/waiver').reversedBy, 'undo-waiver');
+  assert.equal(db.documents.get('crmPayments/undo-waiver').reverses, 'waiver');
+  assert.ok([...db.documents.values()].some((entry) => entry.resolved === false && entry.amountVnd === 10000000));
+  await assert.rejects(db.action('reverse', { paymentId: 'waiver', note: 'Again' }, 'second-undo'), /already been undone/);
+});
+test('concurrent attempts with different action IDs reverse a waiver only once', async () => {
+  const db = database();
+  await db.setup();
+  const target = db.account().charges[0].id;
+  await db.action('adjustment', { chargeId: target, amountVnd: 1000000, note: 'Mistake' }, 'waiver');
+  const outcomes = await Promise.allSettled([db.action('reverse', { paymentId: 'waiver', note: 'Undo' }, 'undo-a'), db.action('reverse', { paymentId: 'waiver', note: 'Undo' }, 'undo-b')]);
+  assert.equal(outcomes.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(db.account().charges[0].creditVnd, 0);
+});
+test('new due-date changes store the previous date for undo', async () => {
+  const db = database();
+  await db.setup();
+  const target = db.account().charges[0].id;
+  const originalDate = db.account().charges[0].dueDate;
+  await db.action('due_date', { chargeId: target, dueDate: '2026-10-30', note: 'Changed date' }, 'date');
+  assert.equal(db.documents.get('crmPayments/date').previousDueDate, originalDate);
+  await db.action('reverse', { paymentId: 'date', note: 'Wrong date' }, 'undo-date');
+  assert.equal(db.account().charges[0].dueDate, originalDate);
 });
