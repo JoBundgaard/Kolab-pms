@@ -21,6 +21,7 @@ export function buildHousekeepingWhatsappMessage({ tasks = [], recurringDueByRoo
 
   const typeLabel = (type) => {
     if (type === 'checkout') return 'Checkout clean';
+    if (type === 'check_room') return 'Check room';
     if (type === 'weekly') return 'Weekly clean';
     if (type === 'recurring') return 'Recurring clean';
     if (type === 'touchup') return 'Touch-up';
@@ -183,6 +184,7 @@ export default function HousekeepingTaskManager({
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <span className="px-2 py-1 rounded-full border border-slate-200 bg-white">Check-ins: {checkins.length}</span>
           <span className="px-2 py-1 rounded-full border border-slate-200 bg-white">Check-outs: {checkouts.length}</span>
+          <span className="px-2 py-1 rounded-full border border-slate-200 bg-white">Check rooms: {safeTasks.filter((task) => task.type === 'check_room').length}</span>
           <span className="px-2 py-1 rounded-full border border-slate-200 bg-white">Tasks: {safeTasks.length}</span>
         </div>
         <div className="flex items-center gap-2 text-sm ml-auto">
@@ -300,7 +302,7 @@ export default function HousekeepingTaskManager({
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-xs font-semibold text-slate-700 uppercase">{task.type}</td>
+                      <td className="px-4 py-3 text-xs font-semibold text-slate-700 uppercase">{task.type === 'check_room' ? 'Check room' : task.type}</td>
                       <td className="px-4 py-3">
                         <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${statusClass}`}>
                           {statusLabel[statusKey] || statusKey}

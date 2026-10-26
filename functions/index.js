@@ -7,6 +7,9 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 setGlobalOptions({ maxInstances: 10 });
 admin.initializeApp();
 
+// Internal guest payment alerts. No guest emails or messages are sent.
+Object.assign(exports, require('./crmAlerts'));
+
 // ─── Property structure (mirrors App.jsx) ────────────────────────────────────
 
 const PROPERTIES = [
@@ -75,8 +78,8 @@ function dateRange(start, end) {
 function isInBreak(booking, dateStr) {
   const breaks = booking.guestBreakPeriods || [];
   return breaks.some((bp) => {
-    const s = toDateStr(bp.start || bp.from);
-    const e = toDateStr(bp.end || bp.to);
+    const s = toDateStr(bp.startDate || bp.start || bp.from);
+    const e = toDateStr(bp.endDate || bp.end || bp.to);
     return s && e && dateStr >= s && dateStr < e;
   });
 }

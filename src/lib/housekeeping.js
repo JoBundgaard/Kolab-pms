@@ -30,7 +30,7 @@ const normalizeBookingBreaks = (breaksInput = []) => {
 const isDateOnBookingBreak = (booking, dateStr) => {
   const breaks = normalizeBookingBreaks(booking?.guestBreakPeriods || booking?.breakPeriods || booking?.breaks || []);
   if (!breaks.length) return false;
-  return breaks.some((brk) => dateStr >= brk.startDate && dateStr <= brk.endDate);
+  return breaks.some((brk) => dateStr >= brk.startDate && dateStr < brk.endDate);
 };
 
 export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDate, overrides = {} }) {
@@ -46,6 +46,9 @@ export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDa
   const tasks = [];
   const safeBookings = Array.isArray(bookings) ? bookings : [];
   const weekday = weekdayKey(dateStr);
+  const checkoutRooms = new Set(safeBookings
+    .filter((booking) => booking && booking.status !== 'cancelled' && safeFormatDate(booking.checkOut) === dateStr)
+    .map((booking) => booking.roomId));
 
   safeBookings.forEach((booking) => {
     if (!booking || booking.status === 'cancelled') return;
@@ -61,6 +64,11 @@ export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDa
       assignedTo: null,
       sourceBookingId: booking.sourceBookingId || booking.id || null,
       dueDate: dateStr,
+      guestName: booking.guestName || '',
+      stayCategory: booking.stayCategory || '',
+      isLongTerm: !!booking.isLongTerm,
+      checkInTime: booking.checkInTime || '',
+      checkOutTime: booking.checkOutTime || '',
     };
 
     // Checkout task
@@ -73,6 +81,20 @@ export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDa
         type: 'checkout',
         status: override.status || 'dirty',
         priority: override.priority ?? 1,
+        assignedTo: override.assignedTo ?? null,
+      });
+    }
+
+    // A room without a same-day checkout still needs an arrival inspection.
+    if (checkIn === dateStr && !checkoutRooms.has(booking.roomId) && !isDateOnBookingBreak(booking, dateStr)) {
+      const id = `hk_${booking.id || booking.roomId || 'unknown'}_${dateStr}_check_room`;
+      const override = overrides[id] || {};
+      tasks.push({
+        ...base,
+        id,
+        type: 'check_room',
+        status: override.status || 'dirty',
+        priority: override.priority ?? 2,
         assignedTo: override.assignedTo ?? null,
       });
     }
