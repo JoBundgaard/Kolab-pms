@@ -37,11 +37,12 @@ export const PROPERTIES = [
   },
   {
     id: 'prop_3',
-    name: 'The Hem',
+    name: 'Roamr',
     openingDate: '2026-10-17',
     rooms: Array.from({ length: 8 }, (_, index) => ({
+      // Keep persisted IDs stable for existing bookings and operational records.
       id: `H${index + 1}`,
-      name: `H${index + 1}`,
+      name: `R${index + 1}`,
       type: 'Studio',
     })),
     commonAreas: [
