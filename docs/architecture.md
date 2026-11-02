@@ -35,7 +35,7 @@ Booking-date tests now import the real helpers from `src/lib/bookingDates.js`, r
 
 Add screens and dialogs under `src/features/<feature>/`. Keep calculations that need no React or Firebase in plain JavaScript modules, and put database operations in services or lifecycle hooks. Import shared configuration instead of duplicating room definitions or defaults. Avoid having features import App or each other's screen components.
 
-A future Finance area can follow these boundaries within the same application. It should own its finance-specific loading and services and reference existing booking/guest IDs. New persistence, permissions, financial rules and subscription scope should be designed as separate changes with their own validation.
+The first Finance increment lives in `src/features/finance/`, using `src/services/propertyFinanceService.js` for month-scoped records and `src/lib/propertyFinance.js` for reporting. It references existing booking IDs and CRM receipts. See [Finance implementation](finance-implementation.md) for net-income semantics, access requirements, validation and the remaining integration work.
 
 ## Verification
 

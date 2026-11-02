@@ -1,5 +1,5 @@
 import { COLORS } from '../../config/pms.js';
-import { BarChart2, Bed, Calendar, FileText, Home, Users, Wrench, X } from 'lucide-react';
+import { BarChart2, Bed, Calendar, FileText, Home, Users, Wallet, Wrench, X } from 'lucide-react';
 
 const Sidebar = ({ activeTab, setActiveTab, isOpen, setIsOpen }) => {
   const menuItems = [
@@ -8,6 +8,7 @@ const Sidebar = ({ activeTab, setActiveTab, isOpen, setIsOpen }) => {
     { id: 'bookings', label: 'Bookings List', icon: <Users size={20} /> },
     { id: 'crm', label: 'Guests & CRM', icon: <Users size={20} /> },
     { id: 'stats', label: 'Statistics', icon: <BarChart2 size={20} /> },
+    { id: 'finance', label: 'Finance', icon: <Wallet size={20} /> },
     { id: 'invoices', label: 'Invoices', icon: <FileText size={20} /> },
     { id: 'housekeeping', label: 'Housekeeping', icon: <Bed size={20} /> },
     { id: 'maintenance', label: 'Maintenance', icon: <Wrench size={20} /> },
