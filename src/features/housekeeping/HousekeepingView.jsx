@@ -232,6 +232,7 @@ export default function HousekeepingView({
               setWeekPlanningStart((prev) => addDays(prev, dir === 'next' ? 7 : -7))
             }
             onChangeCleaningDay={handleChangeWeeklyCleaningDay}
+            onUpdateTask={handleHousekeepingTaskUpdate}
           />
         </div>
       ) : ENABLE_HOUSEKEEPING_V2 ? (

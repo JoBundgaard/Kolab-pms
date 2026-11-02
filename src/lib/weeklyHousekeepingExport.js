@@ -10,8 +10,7 @@ export function buildWeeklyExportDays(tasksByDay, mode) {
       propertyName: task.propertyName,
       guestName: task.guestName || 'Guest',
       type: 'weekly',
-    } : { ...task })
-    .sort((a, b) => (a.priority ?? 3) - (b.priority ?? 3) || `${a.propertyName} ${a.roomLabel}`.localeCompare(`${b.propertyName} ${b.roomLabel}`)));
+    } : { ...task }));
 }
 
 function wrappedLines(ctx, text, width) {

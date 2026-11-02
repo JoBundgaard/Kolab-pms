@@ -23,10 +23,10 @@ test('housekeeping export retains every task and its assignment and completion d
   const tasks = [{ type: 'check_room', priority: 2, status: 'clean', assignedTo: 'Staff', guestName: 'Guest', roomLabel: 'T1' }, { type: 'checkout', priority: 1, checkOutTime: '11:00', roomLabel: 'T2' }];
   const [day] = buildWeeklyExportDays([tasks], 'housekeeping');
   assert.equal(day.length, 2);
-  assert.equal(day[0].type, 'checkout');
-  assert.equal(day[0].checkOutTime, '11:00');
-  assert.equal(day[1].assignedTo, 'Staff');
-  assert.equal(day[1].status, 'clean');
+  assert.equal(day[0].type, 'check_room');
+  assert.equal(day[1].checkOutTime, '11:00');
+  assert.equal(day[0].assignedTo, 'Staff');
+  assert.equal(day[0].status, 'clean');
   assert.equal(tasks[0].type, 'check_room');
 });
 

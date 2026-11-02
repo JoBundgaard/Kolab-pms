@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useState } from 'react';
 import { normalizeHousekeepingTasks } from '../lib/housekeeping';
 import { downloadWeeklyHousekeepingImage } from '../lib/weeklyHousekeepingExport';
 
+import { reorderWeeklyTasks, sortWeeklyTasks, weeklyOrderKey } from '../lib/weeklyPlanningOrder.js';
+
 const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -46,6 +48,7 @@ export default function WeeklyPlanningView({
   weekStart,
   onWeekChange,
   onChangeCleaningDay,
+  onUpdateTask,
 }) {
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
@@ -66,6 +69,7 @@ export default function WeeklyPlanningView({
   const plannerRef = useRef(null);
   const [draggedTask, setDraggedTask] = useState(null);
   const [dragOverDay, setDragOverDay] = useState(null);
+  const [dropTargetId, setDropTargetId] = useState(null);
   const [moveConfirm, setMoveConfirm] = useState(null); // { taskId, guestName, roomLabel, fromDay, toDay, sourceBookingId }
 
   const today = new Date().toISOString().slice(0, 10);
@@ -74,23 +78,24 @@ export default function WeeklyPlanningView({
 
   const tasksByDay = useMemo(() => {
     return weekDates.map((dateStr) =>
-      normalizeHousekeepingTasks({ bookings, rooms, targetDate: dateStr, overrides })
+      sortWeeklyTasks(normalizeHousekeepingTasks({ bookings, rooms, targetDate: dateStr, overrides }), overrides[weeklyOrderKey(dateStr)]?.taskOrder)
     );
   }, [bookings, rooms, overrides, weekDates]);
 
   const totalTasks = useMemo(() => tasksByDay.reduce((sum, t) => sum + t.length, 0), [tasksByDay]);
 
   const handleDragStart = (e, task, dayIndex) => {
-    if (task.type !== 'weekly' || !task.sourceBookingId) return;
     setDraggedTask({ ...task, fromDayIndex: dayIndex });
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', task.id);
   };
 
   const handleDragOver = (e, dayIndex) => {
-    if (!draggedTask) return;
+    if (!draggedTask || (draggedTask.fromDayIndex !== dayIndex && (draggedTask.type !== 'weekly' || !draggedTask.sourceBookingId))) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
+    const card = e.target.closest('[data-cleaning-task]');
+    setDropTargetId(card && e.clientY < card.getBoundingClientRect().top + card.getBoundingClientRect().height / 2 ? card.dataset.cleaningTask : card?.nextElementSibling?.dataset.cleaningTask || null);
     if (dragOverDay !== dayIndex) setDragOverDay(dayIndex);
   };
 
@@ -100,8 +105,15 @@ export default function WeeklyPlanningView({
     }
   };
 
-  const requestMove = (task, dayIndex) => {
-    if (task && dayIndex !== null && task.fromDayIndex !== dayIndex) {
+  const requestMove = (task, dayIndex, targetId = null) => {
+    if (task && dayIndex === task.fromDayIndex) {
+      const date = weekDates[dayIndex];
+      onUpdateTask?.(weeklyOrderKey(date), {
+        taskOrder: reorderWeeklyTasks(tasksByDay[dayIndex], task.id, targetId),
+      });
+    }
+
+    if (task?.type === 'weekly' && task.sourceBookingId && dayIndex !== null && task.fromDayIndex !== dayIndex) {
       setMoveConfirm({
         taskId: task.id,
         roomLabel: task.roomLabel,
@@ -115,11 +127,12 @@ export default function WeeklyPlanningView({
     }
     setDraggedTask(null);
     setDragOverDay(null);
+    setDropTargetId(null);
   };
 
   const handleDrop = (e, dayIndex) => {
     e.preventDefault();
-    requestMove(draggedTask, dayIndex);
+    requestMove(draggedTask, dayIndex, dropTargetId);
   };
 
   const dayAtPointer = (e) => {
@@ -133,19 +146,20 @@ export default function WeeklyPlanningView({
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     const movingTask = { ...task, fromDayIndex: dayIndex };
-    touchDrag.current = { task: movingTask, pointerId: e.pointerId };
-    setDraggedTask(movingTask);
+    touchDrag.current = { task: movingTask, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, moved: false };
   };
 
   const cancelTouchDrag = () => {
     touchDrag.current = null;
     setDraggedTask(null);
     setDragOverDay(null);
+    setDropTargetId(null);
   };
 
   const handleDragEnd = () => {
     setDraggedTask(null);
     setDragOverDay(null);
+    setDropTargetId(null);
   };
 
   const confirmMove = () => {
@@ -193,7 +207,7 @@ export default function WeeklyPlanningView({
       {/* Header row */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-xs text-slate-500">
-          Drag the handle or use “Move to…” on <span className="font-semibold text-sky-700">weekly cleans</span> to reschedule ·{' '}
+          Drag any handle to reorder a day. Default: Townhouse → Neighbours → Roamr. Drag between days or use “Move to…” on <span className="font-semibold text-sky-700">weekly cleans</span> to reschedule ·{' '}
           <span className="font-semibold text-amber-700">Checkout</span> dates are fixed
         </div>
         <div className="flex items-center gap-2 ml-auto">
@@ -241,7 +255,7 @@ export default function WeeklyPlanningView({
           {weekDates.map((dateStr, dayIndex) => {
             const dayTasks = tasksByDay[dayIndex];
             const isToday = dateStr === today;
-            const isActive = draggedTask && draggedTask.fromDayIndex !== dayIndex;
+            const isActive = draggedTask && (draggedTask.fromDayIndex === dayIndex || (draggedTask.type === 'weekly' && !!draggedTask.sourceBookingId));
             const isDropTarget = dragOverDay === dayIndex && isActive;
             const weeklyCount = dayTasks.filter((t) => t.type === 'weekly').length;
             const checkoutCount = dayTasks.filter((t) => t.type === 'checkout').length;
@@ -272,6 +286,13 @@ export default function WeeklyPlanningView({
                   <div className={`text-sm font-semibold mt-0.5 ${isToday ? 'text-[#26402E]' : 'text-slate-700'}`}>
                     {formatDayLabel(dateStr)}
                   </div>
+                  {overrides[weeklyOrderKey(dateStr)]?.taskOrder?.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => onUpdateTask?.(weeklyOrderKey(dateStr), { taskOrder: [] })}
+                      className="mt-1 text-[10px] text-slate-600 underline"
+                    >Reset order</button>
+                  )}
                   {dayTasks.length > 0 && (
                     <div className="flex items-center justify-center gap-1 mt-1 flex-wrap">
                       {checkoutCount > 0 && (
@@ -300,56 +321,69 @@ export default function WeeklyPlanningView({
                   )}
 
                   {dayTasks.map((task) => {
-                    const isDraggable = task.type === 'weekly' && !!task.sourceBookingId;
+                    const canReschedule = task.type === 'weekly' && !!task.sourceBookingId;
                     const isBeingDragged = draggedTask?.id === task.id;
+                    const isInsertionTarget = dragOverDay === dayIndex && dropTargetId === task.id && !isBeingDragged;
                     const style = TYPE_STYLE[task.type] || TYPE_STYLE.recurring;
 
                     return (
                       <div
                         key={task.id}
-                        draggable={isDraggable}
+                        data-cleaning-task={task.id}
+                        draggable
                         onDragStart={(e) => handleDragStart(e, task, dayIndex)}
                         onDragEnd={handleDragEnd}
-                        title={
-                          isDraggable
-                            ? 'Drag to move cleaning to another day'
-                            : task.type === 'checkout'
-                            ? 'Checkout date is fixed – cannot be moved'
-                            : task.type === 'check_room' ? 'Room check is fixed to the arrival date' : ''
-                        }
+                        title="Drag to reorder within this day; weekly cleans can also move between days"
                         className={[
                           'rounded-lg border p-2 text-xs transition-opacity select-none',
                           style.card,
-                          isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
+                          'cursor-grab active:cursor-grabbing',
+                          isInsertionTarget ? 'border-t-4 border-t-[#26402E]' : '',
                           isBeingDragged ? 'opacity-30' : 'opacity-100',
                         ].join(' ')}
                       >
                         <div className="flex items-start gap-1">
-                          {isDraggable && (
-                            <span
-                              aria-label="Drag cleaning to another day"
-                              onPointerDown={(e) => handlePointerDown(e, task, dayIndex)}
-                              onPointerMove={(e) => {
-                                if (touchDrag.current?.pointerId === e.pointerId) setDragOverDay(dayAtPointer(e));
-                              }}
-                              onPointerUp={(e) => {
-                                if (touchDrag.current?.pointerId !== e.pointerId) return;
-                                const movingTask = touchDrag.current.task;
-                                touchDrag.current = null;
-                                requestMove(movingTask, dayAtPointer(e));
-                              }}
-                              onPointerCancel={cancelTouchDrag}
-                              onLostPointerCapture={() => { if (touchDrag.current) cancelTouchDrag(); }}
-                              style={{ touchAction: 'none' }}
-                              className="text-slate-500 text-lg min-w-6 min-h-11 flex items-center justify-center shrink-0"
-                            >⋮⋮</span>
-                          )}
+                          <button
+                            type="button"
+                            aria-label={`Reorder ${task.roomLabel}; use arrow keys to move up or down`}
+                            onKeyDown={(e) => {
+                              if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+                              e.preventDefault();
+                              const index = dayTasks.findIndex((item) => item.id === task.id);
+                              if ((e.key === 'ArrowUp' && index === 0) || (e.key === 'ArrowDown' && index === dayTasks.length - 1)) return;
+                              requestMove({ ...task, fromDayIndex: dayIndex }, dayIndex,
+                                e.key === 'ArrowUp' ? dayTasks[index - 1].id : dayTasks[index + 2]?.id || null);
+                            }}
+                            onPointerDown={(e) => handlePointerDown(e, task, dayIndex)}
+                            onPointerMove={(e) => {
+                              if (touchDrag.current?.pointerId === e.pointerId) {
+                                const drag = touchDrag.current;
+                                if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 8) return;
+                                drag.moved = true;
+                                setDraggedTask(drag.task);
+                                setDragOverDay(dayAtPointer(e));
+                                const card = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-cleaning-task]');
+                                setDropTargetId(card && e.clientY < card.getBoundingClientRect().top + card.getBoundingClientRect().height / 2 ? card.dataset.cleaningTask : card?.nextElementSibling?.dataset.cleaningTask || null);
+                              }
+                            }}
+                            onPointerUp={(e) => {
+                              if (touchDrag.current?.pointerId !== e.pointerId) return;
+                              if (!touchDrag.current.moved) { cancelTouchDrag(); return; }
+                              const movingTask = touchDrag.current.task;
+                              touchDrag.current = null;
+                              requestMove(movingTask, dayAtPointer(e), dropTargetId);
+                            }}
+                            onPointerCancel={cancelTouchDrag}
+                            onLostPointerCapture={() => { if (touchDrag.current) cancelTouchDrag(); }}
+                            style={{ touchAction: 'none' }}
+                            className="text-slate-500 text-lg min-w-6 min-h-11 flex items-center justify-center shrink-0"
+                          >⋮⋮</button>
                           <div className="min-w-0 flex-1">
                             <div className="font-semibold text-slate-800 truncate">{task.roomLabel}</div>
                             <div className="text-slate-500 truncate text-[10px]">{task.propertyName}</div>
                           </div>
                         </div>
-                        {isDraggable && (
+                        {canReschedule && (
                           <select
                             aria-label={`Move ${task.roomLabel} weekly cleaning to another day`}
                             value=""
@@ -374,7 +408,7 @@ export default function WeeklyPlanningView({
 
                   {isDropTarget && (
                     <div className="border-2 border-dashed border-[#26402E]/50 rounded-lg py-3 text-[11px] text-center text-[#26402E] font-semibold mt-1">
-                      Move here →
+                      {draggedTask?.fromDayIndex === dayIndex ? 'Drop to reorder' : 'Move here →'}
                     </div>
                   )}
                 </div>
@@ -395,7 +429,7 @@ export default function WeeklyPlanningView({
           <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-800 font-bold">
             <span>⋮⋮</span> weekly
           </span>
-          draggable — updates recurring cleaning day
+          drag within a day to reorder; between days to reschedule
         </span>
         <span className="flex items-center gap-1.5">
           <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold">checkout</span>
