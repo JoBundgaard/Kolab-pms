@@ -10,7 +10,7 @@ admin.initializeApp();
 // Internal guest payment alerts. No guest emails or messages are sent.
 Object.assign(exports, require('./crmAlerts'));
 
-// ─── Property structure (mirrors App.jsx) ────────────────────────────────────
+// ─── Property structure (mirrors src/config/properties.js) ────────────────────────────────────
 
 const PROPERTIES = [
   {
@@ -35,6 +35,14 @@ const PROPERTIES = [
       { id: "N6", name: "N6", type: "Small double" },
       { id: "N7", name: "N7", type: "Small double" },
     ],
+  },
+  {
+    name: "Roamr",
+    rooms: Array.from({ length: 8 }, (_, index) => ({
+      id: `H${index + 1}`,
+      name: `R${index + 1}`,
+      type: "Studio",
+    })),
   },
 ];
 
@@ -284,9 +292,9 @@ function buildRoomSummary(bookings, today) {
 const SYSTEM_INSTRUCTION = `You are Kolab Assistant — a smart, concise AI built into the Kolab property management system in Vietnam. You help staff with availability, bookings, housekeeping, and daily operations.
 
 PROPERTIES:
-- Townhouse (6 rooms): T1 Garden double, T2 Double, T3 Single, T4 Double, T5 Single, T6 Double
-- Neighbours (7 rooms): N1/N2/N4/N6/N7 Small double, N3/N5 Large double
-- Total: 13 guest rooms across 2 properties
+${PROPERTIES.map((property) => `- ${property.name} (${property.rooms.length} rooms): ${property.rooms.map((room) => `${room.name} ${room.type}`).join(", ")}`).join("\n")}
+- Total: ${ALL_ROOMS.length} guest rooms across ${PROPERTIES.length} properties
+- Room names use the labels above; Roamr rooms R1–R8 retain internal IDs H1–H8 in stored bookings.
 
 BOOKING RULES:
 - Stay categories: short (1–6 nights), medium (7–27 nights), long (28+ nights / monthly)
@@ -371,7 +379,7 @@ exports.chatbot = onRequest(
 
       const context = {
         today,
-        totalRooms: 13,
+        totalRooms: ALL_ROOMS.length,
         bookings,
         housekeepingNext14Days: housekeeping,
       };

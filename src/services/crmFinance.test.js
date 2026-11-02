@@ -489,3 +489,19 @@ test('anniversary periods use both dated rates when an overdue unpaid cycle span
   assert.equal(updated.charges[0].amountVnd, 10 * 300000 + 21 * 400000);
   assert.equal(updated.charges[0].dueDate, '2026-10-12');
 });
+
+test('postponed arrival aligns tracked rent and its first due date without losing paid history', () => {
+  const stay = { ...booking, checkIn: '2026-11-15', checkOut: '2027-02-28' };
+  const plan = planFor(stay, { periodBasis: 'anniversary', cycleAnchor: stay.checkIn });
+  const account = createAccount(stay, plan, today);
+  const changed = { ...stay, checkIn: '2026-11-17' };
+  const updated = syncSchedule(changed, account, today);
+  assert.equal(updated.plan.trackingStart, '2026-11-17');
+  assert.equal(updated.plan.firstDueDate, '2026-11-17');
+  assert.equal(updated.charges[0].coverageStart, '2026-11-17');
+  assert.equal(updated.charges[0].dueDate, '2026-11-17');
+  assert.equal(updated.charges[0].amountVnd, Math.round(9300000 * 28 / 30));
+  assert.equal(updated.charges[0].paidVnd, 0);
+  assert.equal(account.plan.trackingStart, '2026-11-15');
+  assert.deepEqual(syncSchedule(changed, updated, today).charges, updated.charges);
+});

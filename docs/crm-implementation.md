@@ -1,6 +1,6 @@
 # Guests & CRM implementation
 
-Implemented locally on 25 October 2026. No live financial records were migrated and no Firebase deployment was performed.
+Initially implemented locally on 25 October 2026. Deployed to Firebase on 2 November 2026; see [deployment notes](firebase-deployment.md). Existing account schedules were refreshed with their recorded payments preserved.
 
 ## Trying the workspace
 

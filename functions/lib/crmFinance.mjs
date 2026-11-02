@@ -344,6 +344,12 @@ export function reviseBillingPlan(booking, source, plan, today, correction = fal
 }
 export function syncSchedule(booking, source, today) {
   const account = structuredClone(source);
+  // A postponed arrival can leave the saved paid-through date before check-in.
+  // No tracked rent may begin before the guest's revised arrival.
+  if (validDate(booking.checkIn) && account.plan.trackingStart < booking.checkIn) {
+    account.plan.trackingStart = booking.checkIn;
+    account.plan.firstDueDate = max(account.plan.firstDueDate, booking.checkIn);
+  }
   if (account.plan.useBookingRate) account.plan.monthlyRentVnd = money(booking.monthlyRentVnd);
   if (account.plan.useBookingTotal) account.plan.totalVnd = money(booking.price);
   const next = cancelled(booking) ? [] : buildSchedule(booking, account.plan);
@@ -354,7 +360,8 @@ export function syncSchedule(booking, source, today) {
     else if (!old.paidVnd && !old.creditVnd && old.type !== 'security') {
       // Rent can already be due when a room move changes the current period.
       // Reprice that open period without changing its collection date or receipts.
-      const currentRent = old.type === 'rent' && old.coverageEnd > today && charge.coverageEnd > today;
+      const currentRent = old.type === 'rent' && old.coverageStart <= today && old.coverageEnd > today
+        && charge.coverageStart <= today && charge.coverageEnd > today;
       if (old.dueDate > today || currentRent) {
         const dueDate = old.dueDate;
         Object.assign(old, charge, { voided: false, ...(currentRent ? { dueDate } : {}) });
