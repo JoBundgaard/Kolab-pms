@@ -20,7 +20,7 @@ async function refreshBookingAlerts(bookingId) {
       if (account.fingerprint !== bookingFingerprint(booking)) {
         account = syncSchedule(booking, account, propertyToday());
         transaction.set(accountRef, { ...account, updatedAt: now, updatedBy: 'crm-scheduler' });
-        transaction.set(db.collection('crmPayments').doc(`${bookingId}__schedule_${account.version}`), { kind: 'schedule_update', bookingId, guestId: booking.guestId || '', amountVnd: 0, note: 'Booking changed; updated unpaid future charges and preserved posted history', createdAt: now, createdBy: 'crm-scheduler', createdByName: 'PMS' });
+        transaction.set(db.collection('crmPayments').doc(`${bookingId}__schedule_${account.version}`), { kind: 'schedule_update', bookingId, guestId: booking.guestId || '', amountVnd: 0, note: 'Booking changed; updated unpaid current and future rent and preserved paid, credited and completed-period charges', createdAt: now, createdBy: 'crm-scheduler', createdByName: 'PMS' });
       }
       alerts = buildAlerts(booking, account, propertyToday());
     }

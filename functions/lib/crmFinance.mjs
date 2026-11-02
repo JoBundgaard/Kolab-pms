@@ -34,12 +34,18 @@ export function staySegments(booking, plan = {}) {
   let current = { start: booking.checkIn, roomId: booking.roomId, channel: (booking.channel || 'airbnb').toLowerCase(), rate: money(plan.monthlyRentVnd ?? booking.monthlyRentVnd) };
   const result = [];
   for (const move of [...(booking.roomMoves || [])].sort((a, b) => String(a.moveDate).localeCompare(String(b.moveDate)))) {
-    if (!validDate(move.moveDate) || move.moveDate <= current.start || move.moveDate >= end) continue;
-    result.push({ ...current, end: move.moveDate });
+    if (!validDate(move.moveDate) || move.moveDate < current.start || move.moveDate >= end) continue;
+    if (move.moveDate > current.start) result.push({ ...current, end: move.moveDate });
     current = { ...current, start: move.moveDate, roomId: move.roomId || current.roomId, channel: move.useDifferentChannel && move.channel ? move.channel.toLowerCase() : current.channel, rate: move.useDifferentMonthlyRent ? money(move.monthlyRentVnd) : current.rate };
   }
   result.push({ ...current, end });
   return result;
+}
+export function monthlyRentAt(booking, date, plan = {}) {
+  const effectivePlan = plan.useBookingRate ? { ...plan, monthlyRentVnd: booking.monthlyRentVnd } : plan;
+  const segments = staySegments(booking, effectivePlan);
+  return (segments.find((segment) => segment.start <= date && date < segment.end)
+    || (date < booking.checkIn ? segments[0] : segments.at(-1)))?.rate ?? money(effectivePlan.monthlyRentVnd ?? booking.monthlyRentVnd);
 }
 export const airbnbOnly = (booking) => {
   const segments = staySegments(booking);
@@ -173,7 +179,7 @@ export function buildSchedule(booking, plan) {
   return !(plan.paymentTerms === 'standard_25_75' || plan.splitReservation) ? charges : charges.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || (a.role === 'reservation' ? -1 : b.role === 'reservation' ? 1 : 0));
 }
 export function bookingFingerprint(booking) {
-  return JSON.stringify([booking.checkIn, booking.checkOut, occupancyEnd(booking), !!booking.earlyTerminationReimbursed, booking.monthlyRentVnd ?? null, booking.price ?? null, booking.channel || 'airbnb', booking.status || '', booking.roomMoves || [], !!booking.sellRoomDuringBreak, booking.guestBreakPeriods || booking.breakPeriods || booking.breaks || [], extraEntries(booking)]);
+  return JSON.stringify(['rent-schedule-v2', booking.checkIn, booking.checkOut, occupancyEnd(booking), !!booking.earlyTerminationReimbursed, booking.monthlyRentVnd ?? null, booking.price ?? null, booking.channel || 'airbnb', booking.status || '', booking.roomMoves || [], !!booking.sellRoomDuringBreak, booking.guestBreakPeriods || booking.breakPeriods || booking.breaks || [], extraEntries(booking)]);
 }
 export function createAccount(booking, plan, today) {
   const charges = buildSchedule(booking, plan);
@@ -345,7 +351,15 @@ export function syncSchedule(booking, source, today) {
   for (const charge of next) {
     const old = existing.get(charge.id);
     if (!old) account.charges.push(charge);
-    else if (old.dueDate > today && !old.paidVnd && !old.creditVnd && old.type !== 'security') Object.assign(old, charge, { voided: false });
+    else if (!old.paidVnd && !old.creditVnd && old.type !== 'security') {
+      // Rent can already be due when a room move changes the current period.
+      // Reprice that open period without changing its collection date or receipts.
+      const currentRent = old.type === 'rent' && old.coverageEnd > today && charge.coverageEnd > today;
+      if (old.dueDate > today || currentRent) {
+        const dueDate = old.dueDate;
+        Object.assign(old, charge, { voided: false, ...(currentRent ? { dueDate } : {}) });
+      }
+    }
   }
   const nextIds = new Set(next.map((c) => c.id));
   for (const charge of account.charges) {

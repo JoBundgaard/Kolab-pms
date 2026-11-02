@@ -45,7 +45,7 @@ export async function saveCrmAction({ db, user, bookingId, actionId, kind, input
       else if (kind === 'credit') ({ account, event } = applyCredit(booking, source, input.chargeId));
       else if (kind === 'sync') {
         account = syncSchedule(booking, source, today);
-        event = { kind: 'schedule_update', amountVnd: 0, note: 'Updated unpaid future charges from booking; historical charges preserved' };
+        event = { kind: 'schedule_update', amountVnd: 0, note: 'Updated unpaid current and future rent from booking; paid, credited and completed-period charges preserved' };
       } else if (kind === 'plan') {
         if (Number(input.expectedVersion) !== source.version) throw new Error('Another staff member updated this account. Reopen billing settings.');
         const old = source.charges.find((c) => c.id === 'security');

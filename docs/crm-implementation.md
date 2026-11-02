@@ -102,3 +102,10 @@ New custom plans use `splitReservation: true`; saved legacy custom terms remain 
 Activity & receipts now offers **Undo** for payments, account-credit allocations, credits/waivers (`adjustment`, including existing records), manual charges, recorded security refunds/deductions, and new due-date changes. Enter a reason before undoing. The original event is retained and linked to the reversal, with staff and timestamp. The same action cannot be undone twice, including concurrent requests, and affected balances and alerts update in the same transaction.
 
 Undoing a waiver restores the amount owed without generating account credit or changing money received. Added charges can be undone after their payments/credits are reversed. New due-date events retain the previous due date; old events lack that information and must be corrected with Change due date. A more recent due-date change must be undone first. Voided charges cannot be modified by undo. Recorded deposit movements affect the ledger only: undo does not transfer or refund money. Setup and billing configuration continue to use the existing reviewed billing-settings correction workflow.
+
+
+### Dated room rent changes
+
+The CRM monthly rate follows the room-move rate effective on the property-local date. A mid-period move prorates the charge across the old and new rates using the actual calendar month or anniversary-cycle length. Arrival-day changes apply from the first night.
+
+Schedule synchronization also recalculates wholly unpaid, uncredited rent covering the current date even when its due date has passed. It preserves that charge's due date, paid/credited charges, completed billing periods, opening balances, and security deposits. The fingerprint includes a schedule revision so existing accounts are eligible for a one-time refresh through the booking/account triggers, daily job, or the CRM's Review schedule update action. Deploy the updated Firebase functions as well as the frontend for automatic server-side refreshes.

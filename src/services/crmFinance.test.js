@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   accountSummary, addCharge, airbnbOnly, applyCredit, applyDepositMovement, applyPayment,
   buildAlerts, buildSchedule, createAccount, defaultPlan, heldDeposit, lifecycle,
-  propertyToday, reviseBillingPlan, remaining, reversePayment, roomAt, stayCategory, syncSchedule,
+  monthlyRentAt, propertyToday, reviseBillingPlan, remaining, reversePayment, roomAt, stayCategory, syncSchedule,
   weeklyLaundryStatus,
 } from '../../functions/lib/crmFinance.mjs';
 
@@ -155,12 +155,13 @@ test('opening extras import once, with credits netted and no duplicated booking 
   assert.equal(syncSchedule(stay, account, today).charges.filter((c) => c.id === 'legacy_extras').length, 1);
 });
 
-test('schedule updates preserve due and paid charges, update future rates and add extensions', () => {
+test('schedule updates reprice unpaid current rent, preserve paid and completed periods, and add extensions', () => {
   let account = accountFor();
   account = applyPayment(booking, account, receipt('rent_2026-12_direct', 1000000), today).account;
   const next = { ...booking, monthlyRentVnd: 12400000, checkOut: '2027-02-01' };
   const updated = syncSchedule(next, account, today);
-  assert.equal(updated.charges.find((c) => c.id === 'rent_2026-10_direct').amountVnd, 9300000);
+  assert.equal(updated.charges.find((c) => c.id === 'rent_2026-10_direct').amountVnd, 12400000);
+  assert.equal(updated.charges.find((c) => c.id === 'rent_2026-09_direct').amountVnd, account.charges.find((c) => c.id === 'rent_2026-09_direct').amountVnd);
   assert.equal(updated.charges.find((c) => c.id === 'rent_2026-11_direct').amountVnd, 12400000);
   assert.equal(updated.charges.find((c) => c.id === 'rent_2026-12_direct').amountVnd, 9300000);
   assert.equal(updated.charges.find((c) => c.id === 'rent_2027-01_direct').amountVnd, 12400000);
@@ -439,4 +440,52 @@ test('undoing a recorded security movement restores the ledger without fabricati
   const result = reversePayment(booking, movement.account, { ...movement.event, id: 'refund' }, 'Refund never happened');
   assert.equal(heldDeposit(result.account.charges.find((c) => c.id === 'security')), 1000000);
   assert.equal(result.account.charges.find((c) => c.id === 'security').paidVnd, 1000000);
+});
+
+test('room rent changes reprice the already-due unpaid period and refresh its collection alert', () => {
+  const stay = { ...booking, checkIn: '2026-10-01', checkOut: '2026-12-01' };
+  const account = accountFor(stay);
+  const changed = { ...stay, roomMoves: [{ moveDate: '2026-10-16', roomId: 'N3', useDifferentMonthlyRent: true, monthlyRentVnd: 12400000 }] };
+  const updated = syncSchedule(changed, account, today);
+  const october = updated.charges.find((charge) => charge.id === 'rent_2026-10_direct');
+  assert.equal(october.amountVnd, 15 * 300000 + 16 * 400000);
+  assert.equal(october.dueDate, '2026-10-01');
+  assert.equal(updated.charges.find((charge) => charge.id === 'rent_2026-11_direct').amountVnd, 12400000);
+  assert.equal(accountSummary(changed, updated, today).overdueVnd, october.amountVnd);
+  assert.equal(buildAlerts(changed, updated, today).find((alert) => alert.id === `${stay.id}__${october.id}`).amountVnd, october.amountVnd);
+  assert.deepEqual(syncSchedule(changed, updated, today).charges, updated.charges);
+  assert.equal(account.charges[0].amountVnd, 9300000);
+});
+
+test('current rent label follows successive dated rates rather than the original booking rent', () => {
+  const stay = { ...booking, roomMoves: [
+    { moveDate: '2026-10-16', roomId: 'N3', useDifferentMonthlyRent: true, monthlyRentVnd: 12400000 },
+    { moveDate: '2026-11-01', roomId: 'T1', useDifferentMonthlyRent: true, monthlyRentVnd: 11000000 },
+    { moveDate: '2026-12-01', roomId: 'N1' },
+  ] };
+  assert.equal(monthlyRentAt(stay, '2026-10-15'), 9300000);
+  assert.equal(monthlyRentAt(stay, '2026-10-16'), 12400000);
+  assert.equal(monthlyRentAt(stay, '2026-11-01'), 11000000);
+  assert.equal(monthlyRentAt(stay, '2026-12-01'), 11000000);
+  assert.equal(monthlyRentAt(stay, '2026-10-15', { monthlyRentVnd: 1, useBookingRate: true }), 9300000);
+  assert.equal(monthlyRentAt(stay, '2026-10-15', { monthlyRentVnd: 10000000, useBookingRate: false }), 10000000);
+});
+
+test('arrival-day room and rate changes apply from the first night', () => {
+  const stay = { ...booking, checkIn: '2026-10-01', checkOut: '2026-11-01', roomMoves: [
+    { moveDate: '2026-10-01', roomId: 'N3', useDifferentMonthlyRent: true, monthlyRentVnd: 12400000 },
+  ] };
+  assert.equal(monthlyRentAt(stay, stay.checkIn), 12400000);
+  assert.equal(roomAt(stay, stay.checkIn), 'N3');
+  assert.equal(buildSchedule(stay, planFor(stay))[0].amountVnd, 12400000);
+});
+
+test('anniversary periods use both dated rates when an overdue unpaid cycle spans a move', () => {
+  const stay = { ...booking, checkIn: '2026-10-12', checkOut: '2026-12-12' };
+  const plan = planFor(stay, { periodBasis: 'anniversary', cycleAnchor: stay.checkIn });
+  const account = createAccount(stay, plan, today);
+  const changed = { ...stay, roomMoves: [{ moveDate: '2026-10-22', roomId: 'N3', useDifferentMonthlyRent: true, monthlyRentVnd: 12400000 }] };
+  const updated = syncSchedule(changed, account, today);
+  assert.equal(updated.charges[0].amountVnd, 10 * 300000 + 21 * 400000);
+  assert.equal(updated.charges[0].dueDate, '2026-10-12');
 });

@@ -168,3 +168,20 @@ test('new due-date changes store the previous date for undo', async () => {
   await db.action('reverse', { paymentId: 'date', note: 'Wrong date' }, 'undo-date');
   assert.equal(db.account().charges[0].dueDate, originalDate);
 });
+
+test('reviewing a room-rate change updates already-due unpaid rent and its alert atomically', async () => {
+  const db = database();
+  await db.setup();
+  db.documents.set(`bookings/${booking.id}`, { ...booking, roomMoves: [
+    { moveDate: '2026-10-16', roomId: 'N3', useDifferentMonthlyRent: true, monthlyRentVnd: 6200000 },
+  ] });
+  await db.action('sync', {}, 'room-rate-sync');
+  const account = db.account();
+  const charge = account.charges[0];
+  assert.equal(charge.amountVnd, Math.round(10000000 * 15 / 31 + 6200000 * 16 / 31));
+  assert.equal(charge.paidVnd, 0);
+  assert.equal(charge.dueDate, '2026-10-05');
+  assert.equal(db.documents.get(`crmAlerts/${booking.id}__${charge.id}`).amountVnd, charge.amountVnd);
+  assert.equal(db.documents.get('crmPayments/room-rate-sync').kind, 'schedule_update');
+  assert.equal([...db.documents.values()].filter((entry) => entry.kind === 'payment').length, 0);
+});
