@@ -37,3 +37,12 @@ The staff portal adds repository-managed Firestore rules, indexes, and an authen
 On 3 November 2026, `staffPortal`, the authenticated `chatbot`, staff indexes, Firestore rules, and Hosting were deployed using `--account jobundgaard19@gmail.com`. Use the explicit account argument: another locally signed-in Firebase account lacks the required deployment permissions. The approved manager list is Jonas, Van Anh, and Kolab Living only. Live manager sign-in and Staff & pay were verified; housekeeping onboarding awaits her Google email.
 
 Final staff rollout checks: both functions ACTIVE, staffDays/staffPurchases indexes READY, rules and Hosting asset matched the local files, and unauthenticated staff API requests returned HTTP 401. Validation: 120 unit/service tests and 111 Firestore emulator permission checks passed.
+
+
+## Vercel production URL
+
+The PMS address used by staff and managers is also hosted at https://kolab-pms.vercel.app. Firebase Hosting and Vercel are separate frontend releases; deploying Firebase does not update that Vercel address.
+
+On 3 November 2026, staff portal commit `cc5c141` was built successfully on Vercel as a Preview, while production still served `8c3f435`. Promoting the staff portal preview created production deployment `HPFqsPNdZnBnByCL1y3nLfVsC782`. The main Vercel URL was verified to serve the new staff portal and Staff & pay code.
+
+For future releases, verify the exact commit on Vercel production as well as Firebase. Pushes to `codex/early-contract-end-handling` currently create Preview builds; use Promote to Production on the intended ready build to update the production domain. Redeploying an older production build retains that older commit. Vercel may require email reauthentication for promotion.
