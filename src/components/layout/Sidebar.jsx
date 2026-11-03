@@ -10,6 +10,7 @@ const Sidebar = ({ activeTab, setActiveTab, isOpen, setIsOpen }) => {
     { id: 'stats', label: 'Statistics', icon: <BarChart2 size={20} /> },
     { id: 'finance', label: 'Finance', icon: <Wallet size={20} /> },
     { id: 'invoices', label: 'Invoices', icon: <FileText size={20} /> },
+    { id: 'staff', label: 'Staff & pay', icon: <Users size={20} /> },
     { id: 'housekeeping', label: 'Housekeeping', icon: <Bed size={20} /> },
     { id: 'maintenance', label: 'Maintenance', icon: <Wrench size={20} /> },
   ];

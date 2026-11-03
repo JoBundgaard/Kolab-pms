@@ -40,3 +40,7 @@ The first Finance increment lives in `src/features/finance/`, using `src/service
 ## Verification
 
 Run `npm test` and `npm run build` after changes. The structural refactor was also checked with isolated fictitious data across all eight signed-in screens, login, booking and other dialogs, CRM details, weekly housekeeping, and desktop/mobile layouts. Browser comparisons included subscription counts and recorded writes; no live Firebase records were used for those checks.
+
+## Staff workspace
+
+`src/features/auth/AccessGate.jsx` resolves server-authorized access before mounting the manager application or the staff portal. Staff screens live under `src/features/staff/`, using a scoped callable API in `functions/staffPortal.js` and shared domain/transaction code in `functions/lib/staff*.mjs`. See [Staff portal](staff-portal.md) for workflows, accounting, access rules, and the required manager-bootstrap/deployment order.

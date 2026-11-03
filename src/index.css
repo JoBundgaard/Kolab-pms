@@ -18,3 +18,9 @@ html {
 		width: calc(100% / 0.7);
 	}
 }
+
+/* Staff use the portal at native phone scale for readable text and tap targets. */
+html:has(.staff-workspace) { zoom: 1; }
+@supports not (zoom: 1) {
+  body:has(.staff-workspace) { transform: none; width: auto; }
+}

@@ -65,3 +65,12 @@ test('month subscriptions deduplicate period and payment matches and clean up bo
   assert.equal(outputs.at(-1).entries.length, 1);
   stop(); assert.ok(listeners.every((l) => l.stopped));
 });
+
+test('linked staff expenses cannot be separately paid or voided through Finance', async () => {
+  const { context, records } = database();
+  records.set('staff-expense', { ...input, status: 'active', sourceType: 'staff_day', sourceId: 'worker_2026-11-03' });
+  await assert.rejects(context.settleFinanceEntry({ db: {}, user, entryId: 'staff-expense', paymentDate: '2026-11-03', method: 'Cash' }), /Staff & pay/);
+  await assert.rejects(context.voidFinanceEntry({ db: {}, user, entryId: 'staff-expense', reason: 'Mistake' }), /Staff & pay/);
+  assert.equal(records.get('staff-expense').status, 'active');
+  assert.equal(records.get('staff-expense').paymentDate, undefined);
+});

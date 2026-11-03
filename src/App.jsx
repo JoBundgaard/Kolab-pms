@@ -43,6 +43,7 @@ const MaintenanceView = lazy(() => import('./features/maintenance/MaintenanceVie
 const StatisticsView = lazy(() => import('./features/statistics/StatisticsView.jsx'));
 const InvoicesView = lazy(() => import('./features/invoices/InvoicesView.jsx'));
 const GuestCRM = lazy(() => import('./components/GuestCRM.jsx'));
+const StaffManager = lazy(() => import('./features/staff/StaffManager.jsx'));
 const FinanceView = lazy(() => import('./features/finance/FinanceView.jsx'));
 
 export default function App() {
@@ -2324,7 +2325,7 @@ export default function App() {
                    </button>
                  </div>
                  <div className="flex justify-end">
-                    {activeTab !== 'maintenance' && activeTab !== 'stats' && activeTab !== 'invoices' && activeTab !== 'finance' && (
+                    {activeTab !== 'maintenance' && activeTab !== 'stats' && activeTab !== 'invoices' && activeTab !== 'finance' && activeTab !== 'staff' && (
                         <button onClick={() => { setEditingBooking(null); setIsModalOpen(true); }} className="px-6 py-3 rounded-full flex items-center shadow-lg transform hover:-translate-y-0.5 transition-all font-bold text-sm uppercase tracking-wide" style={{ backgroundColor: COLORS.lime, color: COLORS.darkGreen }}>
                             <Plus size={20} className="mr-2" /> New Booking
                         </button>
@@ -2399,6 +2400,7 @@ export default function App() {
                  setIsModalOpen={setIsModalOpen}
                />}
                {(activeTab === 'crm' || activeTab === 'longTerm') && <GuestCRM bookings={bookings} guests={guests} rooms={ALL_ROOMS} {...crm} onSaveProfile={handleSaveCrmProfile} onUpdateOps={updateLongTermOps} onEditBooking={(booking) => { setEditingBooking(booking); setIsModalOpen(true); }} onCreateBooking={openBookingForGuest} />}
+               {activeTab === 'staff' && <StaffManager user={user} bookings={bookings} housekeepingOverrides={housekeepingOverrides} dataError={dataError} />}
                {activeTab === 'finance' && <FinanceView db={db} user={user} bookings={bookingsWithWithholding} crm={crm} bookingsError={dataError} />}
                {activeTab === 'stats' && <StatisticsView
                  customStatsEnd={customStatsEnd}

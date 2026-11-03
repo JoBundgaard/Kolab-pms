@@ -9,6 +9,7 @@ admin.initializeApp();
 
 // Internal guest payment alerts. No guest emails or messages are sent.
 Object.assign(exports, require('./crmAlerts'));
+Object.assign(exports, require('./staffPortal'));
 
 // ─── Property structure (mirrors src/config/properties.js) ────────────────────────────────────
 
@@ -336,6 +337,15 @@ exports.chatbot = onRequest(
     if (req.method === "OPTIONS") {
       res.status(204).send("");
       return;
+    }
+
+    try {
+      const token = (req.headers.authorization || '').replace(/^Bearer /, '');
+      const decoded = await admin.auth().verifyIdToken(token);
+      const access = await admin.firestore().doc(`pmsAccess/${decoded.uid}`).get();
+      if (!decoded.email_verified || !access.exists || access.data().role !== 'manager' || !access.data().active) return res.status(403).json({ error: 'Manager access required.' });
+    } catch {
+      return res.status(401).json({ error: 'Sign in with a manager account.' });
     }
 
     const { question, history = [] } = req.body || {};

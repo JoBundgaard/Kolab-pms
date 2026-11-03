@@ -1,5 +1,7 @@
 const safeFormatDate = (val) => {
   const input = val && val.toDate ? val.toDate() : val;
+  // Booking date keys are calendar dates, independent of the manager's device timezone.
+  if (typeof input === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
   const d = input instanceof Date ? input : new Date(input);
   if (isNaN(d.getTime())) return '';
   const y = d.getFullYear();
@@ -11,7 +13,7 @@ const safeFormatDate = (val) => {
 const weekdayKey = (dateStr) => {
   const d = new Date(dateStr);
   const keys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  return keys[d.getDay ? d.getDay() : 0] || 'sunday';
+  return keys[d.getUTCDay()] || 'sunday';
 };
 
 const normalizeBookingBreaks = (breaksInput = []) => {

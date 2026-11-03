@@ -33,6 +33,7 @@ export async function voidFinanceEntry({ db, user, entryId, reason }) {
   return runTransaction(db, async (tx) => {
     const snapshot = await tx.get(ref);
     if (!snapshot.exists()) throw new Error('Entry no longer exists.');
+    if (snapshot.data().sourceType) throw new Error('Manage staff expenses in Staff & pay.');
     if (snapshot.data().status === 'void') return;
     tx.update(ref, { status: 'void', voidReason: reason.trim().slice(0, 500), voidedAt: new Date().toISOString(), voidedBy: user.uid });
   });
@@ -45,6 +46,7 @@ export async function settleFinanceEntry({ db, user, entryId, paymentDate, metho
     const snapshot = await tx.get(ref);
     if (!snapshot.exists() || snapshot.data().status !== 'active') throw new Error('This entry is no longer active.');
     const existing = snapshot.data();
+    if (existing.sourceType) throw new Error('Manage staff payments in Staff & pay.');
     if (existing.paymentDate) throw new Error('Payment already recorded. Refresh the list.');
     const entry = normalizeFinanceEntry({ ...existing, paymentDate, method, reference });
     if (!entry.paymentDate) throw new Error('Enter a receipt/payment date.');

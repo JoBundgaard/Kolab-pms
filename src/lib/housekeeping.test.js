@@ -44,3 +44,16 @@ test('no inspection while guest is away and weekly cleans remain available', () 
   assert.deepEqual(tasks([{ ...arriving, guestBreakPeriods: [{ startDate: '2026-10-23', endDate: '2026-10-25' }] }]), []);
   assert.equal(tasks([{ ...departing, checkOut: '2026-10-30', isLongTerm: true, weeklyCleaningDay: 'friday' }])[0].type, 'weekly');
 });
+
+test('calendar task dates and weekly weekdays do not shift on devices west of UTC', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const output = execFileSync(process.execPath, ['--input-type=module', '-e', `
+    import { normalizeHousekeepingTasks } from './src/lib/housekeeping.js';
+    const tasks = normalizeHousekeepingTasks({ bookings: [{ id: 'weekly', roomId: 'T1', checkIn: '2026-10-01', checkOut: '2026-12-01', isLongTerm: true, weeklyCleaningDay: 'tuesday' }], rooms: [{ id: 'T1' }], targetDate: '2026-11-03' });
+    console.log(JSON.stringify(tasks));
+  `], { cwd: new URL('../../', import.meta.url), env: { ...process.env, TZ: 'America/Los_Angeles' }, encoding: 'utf8' });
+  const tasks = JSON.parse(output);
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].dueDate, '2026-11-03');
+  assert.equal(tasks[0].type, 'weekly');
+});
