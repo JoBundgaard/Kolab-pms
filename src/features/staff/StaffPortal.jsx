@@ -303,7 +303,7 @@ function Today({ board, date, run, disabled, t, language }) {
             locked={locked}
             t={t}
             language={language}
-            onUpdate={(status, reason = "") =>
+            onUpdate={(status, reason = "", recurringChecks = []) =>
               run(
                 staffOperation("task", {
                   uid,
@@ -311,6 +311,7 @@ function Today({ board, date, run, disabled, t, language }) {
                   taskId: task.id,
                   status,
                   reason,
+                  recurringChecks,
                   revision: day.revision,
                 }),
               )
@@ -415,7 +416,20 @@ function Today({ board, date, run, disabled, t, language }) {
 
 function TaskCard({ task, locked, onUpdate, t, language }) {
   const [reasonOpen, setReasonOpen] = useState(false),
-    [reason, setReason] = useState(task.reason || "");
+    [reason, setReason] = useState(task.reason || ""),
+    [checklistOpen, setChecklistOpen] = useState(false),
+    [checks, setChecks] = useState({}),
+    [checklistError, setChecklistError] = useState(false);
+  const recurring = task.recurringTodos || [];
+  const pendingRecurring = recurring.filter((todo) => todo.status !== 'done');
+  const checklistReady = pendingRecurring.every((todo) => checks[todo.id]?.completed || checks[todo.id]?.reason?.trim());
+  const requestComplete = () => {
+    if (task.status === 'done') return onUpdate('pending');
+    if (!pendingRecurring.length) return onUpdate('done');
+    setChecks(Object.fromEntries(pendingRecurring.map((todo) => [todo.id, { completed: false, reason: todo.reason || '' }])));
+    setChecklistError(false);
+    setChecklistOpen(true);
+  };
   return (
     <article
       className={`rounded-2xl border p-5 ${task.status === "done" ? "bg-green-50 border-green-200" : "bg-white border-slate-200"}`}
@@ -434,12 +448,53 @@ function TaskCard({ task, locked, onUpdate, t, language }) {
           aria-label={`${task.status === "done" ? t("Undo", "Bỏ hoàn tất") : t("Complete", "Hoàn thành")} ${task.label}`}
           aria-pressed={task.status === "done"}
           disabled={locked}
-          onClick={() => onUpdate(task.status === "done" ? "pending" : "done")}
+          onClick={requestComplete}
           className={`h-12 w-12 shrink-0 grid place-items-center rounded-full border-2 disabled:opacity-50 ${task.status === "done" ? "bg-[#26402E] border-[#26402E] text-white" : "border-slate-300 text-slate-400"}`}
         >
           <Check size={24} />
         </button>
       </div>
+      {recurring.length > 0 && (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-2">
+          <p className="font-semibold text-sm">{t('Recurring room tasks', 'Công việc định kỳ trong phòng')}</p>
+          {recurring.map((todo) => <p key={todo.id} className="text-sm">
+            {todo.status === 'done' ? '✓ ' : '○ '}{todo.description}
+            {todo.status === 'done' ? ` · ${t('Completed', 'Đã hoàn tất')}` : ` · ${t('Due', 'Đến hạn')} ${todo.dueDate}`}
+            {todo.reason && <span className="block text-amber-900">{todo.reason}</span>}
+          </p>)}
+        </div>
+      )}
+      {checklistOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <section role="dialog" aria-modal="true" aria-label={t('Confirm recurring room tasks', 'Xác nhận công việc định kỳ')}
+            className="bg-white rounded-3xl shadow-xl max-w-lg w-full p-5 space-y-4 max-h-[90dvh] overflow-y-auto">
+            <h3 className="font-semibold text-xl">{task.label} · {t('Room cleaned?', 'Đã dọn phòng?')}</h3>
+            <p className="text-sm text-slate-600">{t('Also completed these tasks? Tick each one, or explain why it could not be done. Only tick work you completed.', 'Bạn đã làm các việc này chưa? Tích từng việc đã làm, hoặc ghi lý do chưa thể làm. Chỉ tích việc bạn đã hoàn tất.')}</p>
+            {pendingRecurring.map((todo) => <div key={todo.id} className="rounded-xl border p-3 space-y-2">
+              <label className="flex items-center gap-3 min-h-11 font-semibold">
+                <input type="checkbox" className="h-6 w-6" checked={!!checks[todo.id]?.completed} disabled={locked}
+                  onChange={(e) => setChecks((old) => ({ ...old, [todo.id]: { ...old[todo.id], completed: e.target.checked } }))} />
+                {todo.description}?
+              </label>
+              {!checks[todo.id]?.completed && <label className="block text-sm">
+                {t('If not completed, why?', 'Nếu chưa làm, lý do là gì?')}
+                <textarea className={inputClass} maxLength={500} disabled={locked} value={checks[todo.id]?.reason || ''}
+                  onChange={(e) => setChecks((old) => ({ ...old, [todo.id]: { ...old[todo.id], reason: e.target.value } }))} />
+              </label>}
+            </div>)}
+            <p className="text-xs text-slate-500">{t('Completed items restart their interval from today. Items not completed remain due. Undoing the room clean does not undo these separately confirmed items.', 'Việc đã hoàn tất sẽ tính lại chu kỳ từ hôm nay. Việc chưa làm vẫn đến hạn. Bỏ hoàn tất dọn phòng không hủy các việc định kỳ đã xác nhận riêng.')}</p>
+            {checklistError && <p role="alert" className="text-red-800 text-sm">{t('Could not save. Close this dialog to review the error and refresh the checklist before retrying.', 'Chưa lưu được. Đóng hộp thoại để xem lỗi và tải lại danh sách trước khi thử lại.')}</p>}
+            <div className="flex gap-3 justify-end">
+              <button type="button" className={secondaryClass} disabled={locked} onClick={() => setChecklistOpen(false)}>{t('Cancel', 'Hủy')}</button>
+              <button type="button" className={buttonClass} disabled={locked || !checklistReady} onClick={async () => {
+                const decisions = pendingRecurring.map((todo) => ({ id: todo.id, completed: !!checks[todo.id]?.completed, reason: checks[todo.id]?.reason || '' }));
+                if (await onUpdate('done', '', decisions)) setChecklistOpen(false);
+                else setChecklistError(true);
+              }}>{t('Confirm room and checklist', 'Xác nhận phòng và danh sách')}</button>
+            </div>
+          </section>
+        </div>
+      )}
       {(task.availableAfter || task.dueBy) && (
         <p className="text-sm mt-3 text-slate-600">
           {task.availableAfter && `${t("After", "Sau")} ${task.availableAfter}`}{" "}

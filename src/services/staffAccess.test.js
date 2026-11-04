@@ -158,3 +158,15 @@ test("API errors retain the CommonJS callable HTTP error type", async () => {
   await assert.rejects(f.call(null, 'session'), (error) => error instanceof HttpsError && error.httpErrorCode.status === 401);
   await assert.rejects(f.call('worker', 'team'), (error) => error instanceof HttpsError && error.httpErrorCode.status === 403);
 });
+
+test('staff board includes due room checks for existing assignments without exposing other rooms', async () => {
+  const f = fixture();
+  f.documents.set('staffDays/worker_2026-11-03', { uid: 'worker', date: '2026-11-03', status: 'draft', tasks: [{ id: 'clean', roomId: 'T1', type: 'weekly', status: 'pending' }] });
+  f.documents.set('recurringCleaningTasks/ac', { roomId: 'T1', description: 'Clean AC filters', nextDue: '2026-10-30', frequency: 'monthly', privateManagerNote: 'not for staff' });
+  f.documents.set('recurringCleaningTasks/other', { roomId: 'N1', description: 'Other room private task', nextDue: '2026-10-30' });
+  const board = await f.call('worker', 'board', { date: '2026-11-03' });
+  assert.equal(board.day.tasks[0].recurringTodos[0].description, 'Clean AC filters');
+  assert.equal(board.day.tasks[0].recurringTodos.length, 1);
+  assert.equal(JSON.stringify(board).includes('privateManagerNote'), false);
+  assert.equal(JSON.stringify(board).includes('Other room private task'), false);
+});

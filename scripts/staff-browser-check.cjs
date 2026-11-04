@@ -29,10 +29,13 @@ if (!["127.0.0.1", "localhost"].includes(new URL(baseUrl).hostname))
   const records = new Map([["staffProfiles/demo", profile]]);
   const db = {
     doc: (p) => p,
+    collection: (collection) => ({ where: (field, op, value) => ({ collection, field, value }) }),
     runTransaction: async (callback) => {
       const writes = [];
       const result = await callback({
-        get: async (p) => ({
+        get: async (p) => typeof p === 'object' ? ({ docs: [...records]
+          .filter(([key, value]) => key.startsWith(p.collection + '/') && value[p.field] === p.value)
+          .map(([key, value]) => ({ id: key.split('/')[1], data: () => structuredClone(value) })) }) : ({
           exists: records.has(p),
           data: () => structuredClone(records.get(p)),
         }),

@@ -18,6 +18,7 @@ function database() {
   };
   const db = {
     doc: (path) => path,
+    collection: (collection) => ({ where: (field, op, value) => ({ collection, field, op, value }) }),
     runTransaction: async (callback) => {
       for (let retry = 0; retry < 30; retry++) {
         const reads = new Map(),
@@ -29,6 +30,11 @@ function database() {
               0,
               "Firestore requires every read before writes",
             );
+            if (typeof path === 'object') {
+              const docs = [...records].filter(([key, value]) => key.startsWith(path.collection + '/') && value[path.field] === path.value)
+                .map(([key, value]) => { reads.set(key, versions.get(key)); return { id: key.split('/')[1], data: () => structuredClone(value) }; });
+              return { docs };
+            }
             reads.set(path, versions.get(path));
             return {
               exists: records.has(path),
@@ -418,4 +424,93 @@ test("payment rejects future dates, duplicate records and another worker’s rec
     /no longer payable/,
   );
   assert.equal(db.day().status, "approved");
+});
+
+const recurringTemplate = (patch = {}) => ({ roomId: 'T1', description: 'Clean AC filters', frequency: 'monthly', nextDue: '2026-10-30', ...patch });
+const acCheck = { id: 'hk_rec_ac_2026-10-30', completed: true };
+
+test('publishing attaches only due recurring cleaning for the assigned room', async () => {
+  const db = database();
+  db.seed('recurringCleaningTasks/ac', recurringTemplate());
+  db.seed('recurringCleaningTasks/drain', recurringTemplate({ nextDue: '2026-11-04', description: 'Drain cleaning' }));
+  db.seed('recurringCleaningTasks/other', recurringTemplate({ roomId: 'N1' }));
+  await db.perform('publish', { tasks });
+  assert.deepEqual(db.day().tasks[0].recurringTodos.map((todo) => todo.id), [acCheck.id]);
+  assert.deepEqual(db.day().tasks[1].recurringTodos, []);
+  assert.equal(db.day().tasks[0].rateVnd, 100000);
+});
+
+test('completing a room requires separate recurring confirmation and atomically resets its interval', async () => {
+  const db = database();
+  db.seed('recurringCleaningTasks/ac', recurringTemplate());
+  await db.perform('publish', { tasks });
+  await assert.rejects(db.own('task', { taskId: tasks[0].id, status: 'done' }), /Confirm Clean AC filters/);
+  assert.equal(db.day().tasks[0].status, 'pending');
+  assert.equal(db.records.get('recurringCleaningTasks/ac').nextDue, '2026-10-30');
+  const input = { taskId: tasks[0].id, status: 'done', recurringChecks: [acCheck], actionId: 'confirm_ac' };
+  await db.own('task', input);
+  assert.equal(db.day().tasks[0].status, 'done');
+  assert.equal(db.day().tasks[0].recurringTodos[0].status, 'done');
+  assert.equal(db.records.get('recurringCleaningTasks/ac').nextDue, '2026-12-03');
+  assert.equal(db.records.get('recurringCleaningTasks/ac').lastCompleted, '2026-11-03T12:00:00.000Z');
+  assert.equal(db.records.get('housekeepingOverrides/' + acCheck.id).status, 'clean');
+  assert.equal(db.records.get('housekeepingOverrides/' + tasks[0].id).status, 'clean');
+  assert.equal(db.day().amountVnd, 100000);
+  await db.own('task', input);
+  assert.equal(db.records.get('recurringCleaningTasks/ac').nextDue, '2026-12-03');
+  assert.equal(db.records.get('staffAudit/staff_confirm_ac').recurringCompleted.length, 1);
+});
+
+test('an explained unfinished AC clean stays due while the room clean can be completed', async () => {
+  const db = database();
+  db.seed('recurringCleaningTasks/ac', recurringTemplate());
+  await db.perform('publish', { tasks });
+  await db.own('task', { taskId: tasks[0].id, status: 'done', recurringChecks: [{ ...acCheck, completed: false, reason: 'Guest asked us to return tomorrow' }] });
+  assert.equal(db.day().tasks[0].status, 'done');
+  assert.equal(db.day().tasks[0].recurringTodos[0].status, 'blocked');
+  assert.equal(db.records.get('recurringCleaningTasks/ac').nextDue, '2026-10-30');
+  assert.equal(db.records.has('housekeepingOverrides/' + acCheck.id), false);
+});
+
+test('already-published rooms pick up newly due templates before completion', async () => {
+  const db = database();
+  await db.perform('publish', { tasks });
+  db.seed('recurringCleaningTasks/ac', recurringTemplate());
+  await assert.rejects(db.own('task', { taskId: tasks[0].id, status: 'done' }), /Confirm/);
+  await db.own('task', { taskId: tasks[0].id, status: 'done', recurringChecks: [acCheck] });
+  assert.equal(db.records.get('recurringCleaningTasks/ac').nextDue, '2026-12-03');
+});
+
+test('staff cannot complete another room template, stale occurrences or duplicate checklist items', async () => {
+  const db = database();
+  db.seed('recurringCleaningTasks/ac', recurringTemplate());
+  db.seed('recurringCleaningTasks/private', recurringTemplate({ roomId: 'N1' }));
+  await db.perform('publish', { tasks });
+  for (const checks of [[{ id: 'hk_rec_private_2026-10-30', completed: true }], [acCheck, acCheck]]) {
+    await assert.rejects(db.own('task', { taskId: tasks[0].id, status: 'done', recurringChecks: checks }), /checklist changed/);
+  }
+  db.seed('recurringCleaningTasks/ac', recurringTemplate({ nextDue: '2026-12-03' }));
+  await assert.rejects(db.own('task', { taskId: tasks[0].id, status: 'done', recurringChecks: [acCheck] }), /checklist changed/);
+  assert.equal(db.records.get('recurringCleaningTasks/private').nextDue, '2026-10-30');
+});
+
+test('concurrent room completions cannot reset the same recurring occurrence twice', async () => {
+  const db = database();
+  const second = { ...tasks[0], id: 'second_clean_same_room' };
+  db.seed('recurringCleaningTasks/ac', recurringTemplate());
+  await db.perform('publish', { tasks: [tasks[0], second] });
+  const results = await Promise.allSettled([tasks[0], second].map((task) => db.own('task', { taskId: task.id, status: 'done', recurringChecks: [acCheck] })));
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(db.records.get('recurringCleaningTasks/ac').nextDue, '2026-12-03');
+});
+
+test('undoing room completion preserves separately confirmed recurring work and its next due date', async () => {
+  const db = database();
+  db.seed('recurringCleaningTasks/ac', recurringTemplate());
+  await db.perform('publish', { tasks });
+  await db.own('task', { taskId: tasks[0].id, status: 'done', recurringChecks: [acCheck] });
+  await db.own('task', { taskId: tasks[0].id, status: 'pending' });
+  await db.own('task', { taskId: tasks[0].id, status: 'done' });
+  assert.equal(db.records.get('recurringCleaningTasks/ac').nextDue, '2026-12-03');
+  assert.equal(db.day().tasks[0].recurringTodos[0].status, 'done');
 });

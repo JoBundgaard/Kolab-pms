@@ -1,3 +1,4 @@
+import { withRoomRecurring } from "./staffRecurring.mjs";
 import { createRequire } from "node:module";
 
 // The callable entry point uses CommonJS. Use its HttpsError constructor too:
@@ -114,7 +115,7 @@ export async function staffApi({ db, authAdmin, request }) {
       if (!staff.exists) throw new Error("Staff member not found.");
       return {
         profile: { ...staff.data(), uid },
-        day: day.exists ? { ...day.data(), id: day.id } : null,
+        day: day.exists ? await withRoomRecurring(db, { ...day.data(), id: day.id }) : null,
         days: days.docs.map((d) => ({ ...d.data(), id: d.id })),
         purchases: purchases.docs.map((d) => ({ ...d.data(), id: d.id })),
       };

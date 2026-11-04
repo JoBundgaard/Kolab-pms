@@ -417,6 +417,12 @@ function ManagerBoard({ profile, bookings, overrides, dataError }) {
                       ? "Rate not set"
                       : money(task.rateVnd)}
                   </p>
+                  {task.recurringTodos?.map((todo) => (
+                    <p key={todo.id} className={`text-sm mt-2 ${todo.status === 'done' ? 'text-green-800' : 'text-amber-800'}`}>
+                      {todo.status === 'done' ? '✓' : '○'} {todo.description} · {todo.status}
+                      {todo.reason ? ` · ${todo.reason}` : ''}
+                    </p>
+                  ))}
                   {task.reason && (
                     <p className="text-amber-800 mt-2">{task.reason}</p>
                   )}

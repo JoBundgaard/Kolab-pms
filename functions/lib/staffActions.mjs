@@ -1,3 +1,4 @@
+import { nextRoomCleaningDue, readRoomRecurring, roomRecurringChecklist } from "./staffRecurring.mjs";
 import { Buffer } from "node:buffer";
 import {
   amount,
@@ -114,6 +115,9 @@ export async function staffAction({
               `${additions[i].label} is already assigned. Remove its pending assignment before assigning it again.`,
             );
         });
+        const recurring = new Map(await Promise.all([...new Set(additions.filter((task) => task.type !== 'shared').map((task) => task.roomId).filter(Boolean))]
+          .map(async (roomId) => [roomId, await readRoomRecurring(db, roomId, tx)])));
+        additions.forEach((task) => { task.recurringTodos = roomRecurringChecklist(task, recurring.get(task.roomId) || [], date); });
         additions.forEach((t) =>
           tx.set(db.doc(`staffTaskClaims/${t.id}`), {
             uid,
@@ -144,7 +148,30 @@ export async function staffAction({
         const task = tasks.find((t) => t.id === input.taskId);
         if (!task || !["done", "blocked", "pending"].includes(input.status))
           throw new Error("Task unavailable. Refresh your day.");
-        detail = { taskBefore: { ...task } };
+        detail = { taskBefore: structuredClone(task) };
+        const templates = task.type !== 'shared' ? await readRoomRecurring(db, task.roomId, tx) : [];
+        const todos = roomRecurringChecklist(task, templates, date);
+        const updates = [];
+        if (input.status === 'done') {
+          const checks = input.recurringChecks || [];
+          if (!Array.isArray(checks) || checks.length > 100 || new Set(checks.map((check) => check.id)).size !== checks.length
+            || checks.some((check) => !todos.some((todo) => todo.id === check.id && todo.status !== 'done')))
+            throw new Error('The recurring checklist changed. Refresh your day and try again.');
+          for (const todo of todos.filter((item) => item.status !== 'done')) {
+            const check = checks.find((item) => item.id === todo.id);
+            if (!check || (check.completed !== true && !textValue(check.reason)))
+              throw new Error(`Confirm ${todo.description}, or explain why it was not completed.`);
+            if (check.completed === true) {
+              const template = templates.find((item) => item.id === todo.templateId);
+              if (!template || template.nextDue !== todo.dueDate)
+                throw new Error('This recurring task was already updated. Refresh your day.');
+              const nextDue = nextRoomCleaningDue(today, template.frequency || 'monthly');
+              updates.push({ todo, nextDue });
+              Object.assign(todo, { status: 'done', reason: '', completedAt: now });
+            } else Object.assign(todo, { status: 'blocked', reason: textValue(check.reason) });
+          }
+        }
+        task.recurringTodos = todos;
         const reason = textValue(input.reason);
         if (input.status === "blocked" && !reason)
           throw new Error("Explain why the task could not be completed.");
@@ -155,7 +182,16 @@ export async function staffAction({
           updatedAt: now,
           updatedBy: actor.uid,
         });
-        detail.taskAfter = { ...task };
+        detail.taskAfter = structuredClone(task);
+        detail.recurringCompleted = updates.map(({ todo, nextDue }) => ({ templateId: todo.templateId, previousDue: todo.dueDate, nextDue }));
+        for (const { todo, nextDue } of updates) {
+          tx.update(db.doc(`recurringCleaningTasks/${todo.templateId}`), {
+            nextDue, lastCompleted: now, updatedAt: now, updatedBy: actor.uid,
+          });
+          tx.set(db.doc(`housekeepingOverrides/${todo.id}`), {
+            status: 'clean', assignedTo: profile.name, completedAt: now, updatedAt: now, updatedBy: actor.uid,
+          }, { merge: true });
+        }
         if (task.type !== "shared")
           tx.set(
             db.doc(`housekeepingOverrides/${task.id}`),
