@@ -1,16 +1,26 @@
-# React + Vite
+# Kolab PMS
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Kolab Living's property management system, built with React, Vite and Firebase.
 
-Currently, two official plugins are available:
+## Local development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+```sh
+npm ci
+npm run dev
+```
 
-## React Compiler
+Firebase initialization lives in `src/firebase.js`. The normal development app connects to the configured Firebase project, so changes made through its forms affect that project's records.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Checks
 
-## Expanding the ESLint configuration
+```sh
+npm test
+npm run build
+npm run lint
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+The test suite covers booking dates, room transfers, housekeeping and CRM finance. Some existing lint findings remain; the structural refactor does not change their underlying behavior.
+
+## Code organization
+
+See [the architecture guide](docs/architecture.md) for module boundaries and guidance on adding features. [The CRM implementation notes](docs/crm-implementation.md) describe billing behavior and backend requirements.

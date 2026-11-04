@@ -1,0 +1,12 @@
+{
+  "indexes": [
+    { "collectionGroup": "staffDays", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "uid", "order": "ASCENDING" }, { "fieldPath": "week", "order": "ASCENDING" }] },
+    { "collectionGroup": "staffPurchases", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "uid", "order": "ASCENDING" }, { "fieldPath": "week", "order": "ASCENDING" }] }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "staffReceipts", "fieldPath": "data", "indexes": [] },
+    { "collectionGroup": "staffDays", "fieldPath": "tasks", "indexes": [] },
+    { "collectionGroup": "staffAudit", "fieldPath": "day", "indexes": [] },
+    { "collectionGroup": "staffAudit", "fieldPath": "previousDay", "indexes": [] }
+  ]
+}
