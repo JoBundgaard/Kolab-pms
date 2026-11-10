@@ -1,5 +1,5 @@
 import { PROPERTIES } from '../config/properties.js';
-import { getBookingFinancialDateKeys, getBookingRoomStays, isCancelledStatus, isDateOnBookingBreak } from './bookingDates.js';
+import { getBookingFinancialCheckOut, getBookingFinancialDateKeys, getBookingRoomStays, isCancelledStatus, isDateOnBookingBreak } from './bookingDates.js';
 import { getDisplayPriceForBooking } from './airbnb.js';
 import { validDate } from '../../functions/lib/crmFinance.mjs';
 
@@ -47,18 +47,26 @@ export function bookingIncomeRows(bookings, month) {
   for (const booking of bookings) {
     if (isCancelledStatus(booking.status)) continue;
     const dates = getBookingFinancialDateKeys(booking);
-    const isLong = booking.stayCategory?.toLowerCase() === 'long' || booking.isLongTerm;
+    const category = booking.stayCategory?.toLowerCase();
+    const hasRent = (value) => value != null && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0;
+    const stays = getBookingRoomStays({ ...booking, monthlyRentVnd: hasRent(booking.monthlyRentVnd) ? booking.monthlyRentVnd : undefined }, { mode: 'financial' });
+    const hasMonthlyRate = hasRent(booking.monthlyRentVnd) || stays.some((stay) => hasRent(stay.monthlyRentVnd));
+    // Explicit short/medium categories take precedence over legacy flags.
+    // Older monthly bookings may have a rate without a category or flag.
+    const usesMonthlyRent = category === 'long' || (!category && (booking.isLongTerm || hasMonthlyRate));
     const total = Math.round(getDisplayPriceForBooking(booking));
     const base = dates.length ? Math.floor(total / dates.length) : 0;
     const remainder = total - base * dates.length;
     const groups = new Map();
-    for (const stay of getBookingRoomStays(booking, { mode: 'financial' })) {
+    // A missing room assignment must not remove priced bookings from group income.
+    const incomeStays = stays.length ? stays : dates.length ? [{ startDate: dates[0], endDate: getBookingFinancialCheckOut(booking), monthlyRentVnd: booking.monthlyRentVnd }] : [];
+    for (const stay of incomeStays) {
       const propertyId = propertyForRoom(stay.roomId);
       for (let day = 1; day <= 31; day++) {
         const date = `${month}-${String(day).padStart(2, '0')}`;
         if (!validDate(date) || date < stay.startDate || date >= stay.endDate) continue;
         let amount;
-        if (isLong) {
+        if (usesMonthlyRent && hasRent(stay.monthlyRentVnd)) {
           if (booking.sellRoomDuringBreak && isDateOnBookingBreak(booking, date)) continue;
           const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
           amount = (Number(stay.monthlyRentVnd) || 0) / daysInMonth;

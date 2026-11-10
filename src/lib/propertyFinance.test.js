@@ -5,6 +5,39 @@ import { bookingIncomeRows, buildFinanceReport, normalizeFinanceEntry } from './
 const booking = { id: 'guest', guestName: 'Test guest', channel: 'direct', roomId: 'T1', checkIn: '2026-09-29', checkOut: '2026-10-03', price: 4000001 };
 const entry = (patch = {}) => normalizeFinanceEntry({ kind: 'expense', category: 'rent', propertyId: 'prop_1', amountVnd: 1000000, date: '2026-10-01', description: 'Rent', ...patch }, '2026-11-02');
 
+test('long bookings without monthly rent count their total price instead of zero', () => {
+  for (const monthlyRentVnd of [undefined, null, '']) {
+    for (const flags of [{ stayCategory: 'long' }, { isLongTerm: true }]) {
+      const priced = { ...booking, ...flags, monthlyRentVnd };
+      const september = buildFinanceReport({ bookings: [priced], month: '2026-09' });
+      const october = buildFinanceReport({ bookings: [priced], month: '2026-10' });
+      assert.equal(september.netAccommodation, 2000001);
+      assert.equal(october.netAccommodation, 2000000);
+      assert.equal(september.netAccommodation + october.netAccommodation, priced.price);
+    }
+  }
+});
+
+test('monthly rates count without legacy category fields and explicit categories override stale flags', () => {
+  const monthly = { ...booking, checkIn: '2026-10-01', checkOut: '2026-11-01', price: 0, monthlyRentVnd: 31000000 };
+  assert.equal(buildFinanceReport({ bookings: [monthly], month: '2026-10' }).netAccommodation, 31000000);
+  const medium = { ...booking, stayCategory: 'medium', isLongTerm: true, monthlyRentVnd: 31000000 };
+  assert.equal(buildFinanceReport({ bookings: [medium], month: '2026-10' }).netAccommodation, 2000000);
+});
+
+test('unassigned room income remains in consolidated totals', () => {
+  const unassigned = { ...booking, roomId: '' };
+  const report = buildFinanceReport({ bookings: [unassigned], month: '2026-10', propertyId: 'unassigned' });
+  assert.equal(report.netAccommodation, 2000000);
+  assert.equal(report.incomeRows[0].propertyId, 'unassigned');
+});
+
+test('explicit zero monthly rent stays free and total-only Airbnb long stays retain net pricing', () => {
+  assert.equal(buildFinanceReport({ bookings: [{ ...booking, stayCategory: 'long', monthlyRentVnd: 0 }], month: '2026-10' }).netAccommodation, 0);
+  const airbnb = { ...booking, stayCategory: 'long', monthlyRentVnd: null, channel: 'airbnb', _withholding: { status: 'computed', finalCountedIncome: 3600000 } };
+  assert.equal(buildFinanceReport({ bookings: [airbnb], month: '2026-10' }).netAccommodation, 1800000);
+});
+
 test('net booking income follows stay dates, checkout exclusive and exact VND remainder', () => {
   assert.equal(bookingIncomeRows([booking], '2026-09')[0].amountVnd, 2000001);
   assert.equal(bookingIncomeRows([booking], '2026-10')[0].amountVnd, 2000000);

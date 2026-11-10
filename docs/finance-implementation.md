@@ -14,6 +14,10 @@ The Finance sidebar workspace adds provisional management reporting and manual e
 
 ## Persistence and access
 
+### Booking pricing compatibility
+
+Finance recognises monthly rates on older bookings even when category/long-term flags are absent. Explicit short/medium categories override stale long-term flags. Long stays without a configured monthly rate use the net booking total, allocated across financial nights; an explicitly configured zero rent remains zero. Bookings without a room assignment appear under Unassigned. Cancelled bookings remain excluded. Bookings still need valid stay dates and a recorded price or rent to contribute income.
+
 `financeEntries/{actionId}` contains `kind`, `category`, `propertyId`, `amountVnd`, `date`, `month`, `paymentDate`, `paymentMonth`, `method`, `reference`, description, creator and creation timestamp. An optional later settlement adds payment attribution/timestamp. Voiding adds status, reason, actor and timestamp without deleting the document.
 
 Creation uses a stable form action ID and a transaction, so retries cannot write a duplicate. Settlement/void transactions read current state to protect against concurrent changes. Finance reads are scoped to the selected reporting month OR payment month through two simple queries, deduplicated by document ID. Listeners exist only while Finance is mounted and unsubscribe on leaving the screen or changing month/user.
