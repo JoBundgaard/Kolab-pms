@@ -281,7 +281,6 @@ export default function CalendarView({
                           const isBookingTruncatedAtStart = !!booking && dateIndex === 0 && bookingOccupiesDate(booking, previousDateStr, room.id);
                           const isBlockStart = !!calendarBlock && !calendarBlockOccupiesDate(calendarBlock, previousDateStr, room.id);
                           const isBlockTruncatedAtStart = !!calendarBlock && dateIndex === 0 && calendarBlockOccupiesDate(calendarBlock, previousDateStr, room.id);
-                          const lastDateStr = formatDate(dates[dates.length - 1]);
                           const hasLongTermCleaningToday = calendarBookings.some((b) => {
                             if (!b.isLongTerm) return false;
                             if (isCancelledStatus(b.status)) return false;
@@ -310,9 +309,12 @@ export default function CalendarView({
                           }
                           const shouldRenderBookingBlock = booking && (isBookingStart || (isBookingTruncatedAtStart && dateIndex === 0));
                           const shouldRenderPmsBlock = calendarBlock && (isBlockStart || (isBlockTruncatedAtStart && dateIndex === 0));
-                          const gapPx = 4; // Small gap so adjacent bookings touch without overlap
-                          const bookingWidthCalc = `calc(${bookingColSpan * 100}% - ${gapPx}px)`;
-                          const pmsBlockWidthCalc = `calc(${blockColSpan * 100}% - ${gapPx}px)`;
+                          const gapPx = 4; // Small gap between adjacent bookings
+                          // Absolute widths use the cell's padding box, excluding its 1px
+                          // right border. Include crossed borders so long stays don't
+                          // progressively end earlier than their checkout column.
+                          const bookingWidthCalc = `calc(${bookingColSpan * 100}% + ${Math.max(0, bookingColSpan - 1)}px - ${gapPx}px)`;
+                          const pmsBlockWidthCalc = `calc(${blockColSpan * 100}% + ${Math.max(0, blockColSpan - 1)}px - ${gapPx}px)`;
                           const leftOffset = '0%';
                           const isTodayCol = dateStr === TODAY_STR;
                           const todayCellHighlight = isTodayCol
