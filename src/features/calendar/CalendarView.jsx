@@ -3,6 +3,7 @@ import { PROPERTIES, isRoomOpenOnDate } from '../../config/properties.js';
 import { getDisplayPriceForBooking } from '../../lib/airbnb.js';
 import { bookingOccupiesDate, isCancelledStatus } from '../../lib/bookingDates.js';
 import { calendarBlockOccupiesDate, getCalendarBlockLabel, getCalendarBlockStatusClass, getCalendarPmsBlockClass } from '../../lib/calendarBlocks.js';
+import { roomDropHandlers, startRoomDrag } from '../../lib/calendarRoomDrag.js';
 import { addDays, formatDate, getWeekdayKey } from '../../lib/dates.js';
 import { formatCompactCurrencyVND } from '../../lib/formatting.js';
 import { getDaySummaryForDate } from '../../lib/housekeepingSchedule.js';
@@ -132,6 +133,7 @@ export default function CalendarView({
                   {prop.rooms.map((room) => (
                     <div
                       key={room.id}
+                      {...roomDropHandlers(room.id, draggedRoomStay, savingBookingId, prepareRoomTransfer)}
                       className="h-16 border-b border-slate-100 flex flex-col justify-center px-4 bg-white hover:bg-[#F9F8F2] transition-colors"
                     >
                       <span className="font-bold text-sm" style={{ color: COLORS.darkGreen }}>{room.name}</span>
@@ -266,8 +268,7 @@ export default function CalendarView({
 
                       {prop.rooms.map((room, roomIndex) => (
                         <div key={room.id}
-                          onDragOver={(event) => { if (draggedRoomStay.current && !savingBookingId) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }}
-                          onDrop={(event) => { event.preventDefault(); event.stopPropagation(); const payload = draggedRoomStay.current; draggedRoomStay.current = null; prepareRoomTransfer(room.id, payload); }}
+                          {...roomDropHandlers(room.id, draggedRoomStay, savingBookingId, prepareRoomTransfer)}
                           className={`flex border-b border-slate-200 h-16 relative transition-colors group ${roomIndex % 2 === 0 ? 'bg-white/70' : 'bg-slate-50/70'} hover:bg-[#F9F8F2]/80`}>
                         {dates.map(date => {
                           const dateStr = formatDate(date);
@@ -365,9 +366,7 @@ export default function CalendarView({
                                     <div draggable={!savingBookingId}
                                       title="Drag to another room to move or swap guests; dates stay the same"
                                       onDragStart={(event) => {
-                                        draggedRoomStay.current = { bookingId: booking.sourceBookingId || booking.id, fromRoomId: room.id, date: dateStr };
-                                        event.dataTransfer.effectAllowed = 'move';
-                                        event.dataTransfer.setData('text/plain', booking.guestName || 'Guest');
+                                        startRoomDrag(event, draggedRoomStay, { bookingId: booking.sourceBookingId || booking.id, fromRoomId: room.id, date: dateStr });
                                       }}
                                       onDragEnd={() => { draggedRoomStay.current = null; }}
                                       className={`absolute top-2.5 bottom-2.5 rounded-lg z-30 cursor-grab active:cursor-grabbing text-xs px-3 py-1 overflow-hidden whitespace-nowrap shadow-sm flex items-center gap-1.5 transition-all hover:scale-[1.02] hover:shadow-md hover:z-40 ${getCalendarBlockStatusClass(booking.status)} ${catBorder}`}
