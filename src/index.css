@@ -6,10 +6,21 @@ html {
 	zoom: 0.7;
 }
 
+.app-shell {
+	height: calc(100vh / 0.7);
+	height: calc(100dvh / 0.7);
+}
+
 @supports not (zoom: 0.7) {
 	body {
 		transform: scale(0.7);
 		transform-origin: top left;
 		width: calc(100% / 0.7);
 	}
+}
+
+/* Staff use the portal at native phone scale for readable text and tap targets. */
+html:has(.staff-workspace) { zoom: 1; }
+@supports not (zoom: 1) {
+  body:has(.staff-workspace) { transform: none; width: auto; }
 }

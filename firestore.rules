@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function manager() {
+      return request.auth != null && request.auth.token.email_verified == true
+        && get(/databases/$(database)/documents/pmsAccess/$(request.auth.uid)).data.role == 'manager'
+        && get(/databases/$(database)/documents/pmsAccess/$(request.auth.uid)).data.active == true;
+    }
+    // Staff operations use the authenticated callable API. Financial approvals,
+    // assignments, receipts, profiles and audit records are never client-writable.
+    match /{collection}/{id} {
+      allow read, write: if manager() && collection in [
+        'bookings', 'calendarBlocks', 'guests', 'maintenance', 'recurringTasks',
+        'recurringCleaningTasks', 'roomStatuses', 'housekeepingOverrides',
+        'crmAccounts', 'crmPayments', 'crmAlerts'
+      ];
+    }
+    match /financeEntries/{id} {
+      allow read: if manager();
+      allow create: if manager() && !request.resource.data.keys().hasAny(['sourceType', 'sourceId']);
+      allow update: if manager() && !resource.data.keys().hasAny(['sourceType', 'sourceId'])
+        && !request.resource.data.keys().hasAny(['sourceType', 'sourceId']);
+    }
+  }
+}
