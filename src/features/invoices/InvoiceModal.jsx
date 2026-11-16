@@ -1,3 +1,4 @@
+import GuestBookingSelect from '../../components/GuestBookingSelect.jsx';
 import { ALL_ROOMS } from '../../config/properties.js';
 import { getBookingInvoiceAmount } from '../../lib/airbnb.js';
 import { getLongStayCalendarMonthCount } from '../../lib/bookingDates.js';
@@ -88,17 +89,7 @@ const InvoiceModal = ({ isOpen, onClose, bookings }) => {
         <div className="p-6 print:p-0">
           {/* Booking selector */}
           <div className="mb-6 print:hidden">
-            <label className="block text-xs font-bold uppercase tracking-wider mb-2 text-slate-500">Select Booking</label>
-            <select
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#E2F05D] outline-none"
-              value={selectedBookingId}
-              onChange={e => setSelectedBookingId(e.target.value)}
-            >
-              <option value="">-- Select a Guest --</option>
-              {bookings.map(b => (
-                <option key={b.id} value={b.id}>{b.guestName} — {b.checkIn}</option>
-              ))}
-            </select>
+            <GuestBookingSelect bookings={bookings} value={selectedBookingId} onChange={setSelectedBookingId} />
           </div>
 
           {invoiceData ? (
