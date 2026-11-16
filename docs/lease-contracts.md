@@ -1,6 +1,8 @@
 # Guest lease contracts
 
-Open **Guests & CRM**, select a guest and stay, then choose **Lease contract**.
+Open **Invoices** and click **Generate Lease Contract**, beside **Create Invoice**.
+Select a guest booking. You can also open **Guests & CRM**, select a guest and stay,
+then choose **Lease contract**.
 Set the contract start, check-out and agreement dates. Review the autofilled details,
 complete missing information, confirm review, and download the PDF.
 

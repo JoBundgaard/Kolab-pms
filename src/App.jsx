@@ -2412,6 +2412,7 @@ export default function App() {
                  statsRange={statsRange}
                />}
                {activeTab === 'invoices' && <InvoicesView
+                 bookings={bookings} guests={guests} rooms={ALL_ROOMS} crm={crm}
                  setIsInvoiceModalOpen={setIsInvoiceModalOpen}
                />}
                {activeTab === 'housekeeping' && <HousekeepingView
