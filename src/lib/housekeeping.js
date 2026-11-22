@@ -35,7 +35,7 @@ const isDateOnBookingBreak = (booking, dateStr) => {
   return breaks.some((brk) => dateStr >= brk.startDate && dateStr < brk.endDate);
 };
 
-export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDate, overrides = {} }) {
+export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDate, overrides = {}, includeSkipped = false }) {
   const dateStr = safeFormatDate(targetDate);
   if (!dateStr) return [];
 
@@ -118,5 +118,9 @@ export function normalizeHousekeepingTasks({ bookings = [], rooms = [], targetDa
     }
   });
 
-  return tasks;
+  return tasks.map((task) => {
+    const override = overrides[task.id] || {};
+    const type = ['checkout', 'check_room', 'weekly', 'custom'].includes(override.type) ? override.type : task.type;
+    return { ...task, scheduledType: task.type, skipped: override.skipped === true, type, description: type === 'custom' ? override.description || '' : '' };
+  }).filter((task) => includeSkipped || !task.skipped);
 }

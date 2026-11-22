@@ -1,4 +1,4 @@
-const LABELS = { checkout: 'Checkout clean', weekly: 'Weekly clean', check_room: 'Check room', recurring: 'Recurring clean' };
+const LABELS = { custom: 'Custom clean', checkout: 'Checkout clean', weekly: 'Weekly clean', check_room: 'Check room', recurring: 'Recurring clean' };
 const COLORS = { checkout: '#fff2d7', weekly: '#e7f2ff', check_room: '#e7f5ec', recurring: '#f1eafd' };
 
 // Community images contain only long-term weekly cleans and public schedule details.

@@ -1,4 +1,6 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import TaskOrderControls from './TaskOrderControls.jsx';
+import TaskTypeEditor from './TaskTypeEditor.jsx';
 import { normalizeHousekeepingTasks } from '../lib/housekeeping';
 import { downloadWeeklyHousekeepingImage } from '../lib/weeklyHousekeepingExport';
 
@@ -65,8 +67,6 @@ export default function WeeklyPlanningView({
       setExporting(false);
     }
   };
-  const touchDrag = useRef(null);
-  const plannerRef = useRef(null);
   const [draggedTask, setDraggedTask] = useState(null);
   const [dragOverDay, setDragOverDay] = useState(null);
   const [dropTargetId, setDropTargetId] = useState(null);
@@ -76,34 +76,15 @@ export default function WeeklyPlanningView({
 
   const weekDates = useMemo(() => DAY_KEYS.map((_, i) => addDays(weekStart, i)), [weekStart]);
 
-  const tasksByDay = useMemo(() => {
+  const planningTasksByDay = useMemo(() => {
     return weekDates.map((dateStr) =>
-      sortWeeklyTasks(normalizeHousekeepingTasks({ bookings, rooms, targetDate: dateStr, overrides }), overrides[weeklyOrderKey(dateStr)]?.taskOrder)
+      sortWeeklyTasks(normalizeHousekeepingTasks({ bookings, rooms, targetDate: dateStr, overrides, includeSkipped: true }), overrides[weeklyOrderKey(dateStr)]?.taskOrder)
     );
   }, [bookings, rooms, overrides, weekDates]);
 
+  const tasksByDay = useMemo(() => planningTasksByDay.map((tasks) => tasks.filter((task) => !task.skipped)), [planningTasksByDay]);
+
   const totalTasks = useMemo(() => tasksByDay.reduce((sum, t) => sum + t.length, 0), [tasksByDay]);
-
-  const handleDragStart = (e, task, dayIndex) => {
-    setDraggedTask({ ...task, fromDayIndex: dayIndex });
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', task.id);
-  };
-
-  const handleDragOver = (e, dayIndex) => {
-    if (!draggedTask || (draggedTask.fromDayIndex !== dayIndex && (draggedTask.type !== 'weekly' || !draggedTask.sourceBookingId))) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const card = e.target.closest('[data-cleaning-task]');
-    setDropTargetId(card && e.clientY < card.getBoundingClientRect().top + card.getBoundingClientRect().height / 2 ? card.dataset.cleaningTask : card?.nextElementSibling?.dataset.cleaningTask || null);
-    if (dragOverDay !== dayIndex) setDragOverDay(dayIndex);
-  };
-
-  const handleDragLeave = (e, dayIndex) => {
-    if (!e.currentTarget.contains(e.relatedTarget)) {
-      setDragOverDay((prev) => (prev === dayIndex ? null : prev));
-    }
-  };
 
   const requestMove = (task, dayIndex, targetId = null) => {
     if (task && dayIndex === task.fromDayIndex) {
@@ -113,7 +94,7 @@ export default function WeeklyPlanningView({
       });
     }
 
-    if (task?.type === 'weekly' && task.sourceBookingId && dayIndex !== null && task.fromDayIndex !== dayIndex) {
+    if (task?.scheduledType === 'weekly' && task.sourceBookingId && dayIndex !== null && task.fromDayIndex !== dayIndex) {
       setMoveConfirm({
         taskId: task.id,
         roomLabel: task.roomLabel,
@@ -125,38 +106,6 @@ export default function WeeklyPlanningView({
         toDayLabel: DAY_SHORT[dayIndex],
       });
     }
-    setDraggedTask(null);
-    setDragOverDay(null);
-    setDropTargetId(null);
-  };
-
-  const handleDrop = (e, dayIndex) => {
-    e.preventDefault();
-    requestMove(draggedTask, dayIndex, dropTargetId);
-  };
-
-  const dayAtPointer = (e) => {
-    const column = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-cleaning-day]');
-    return column && plannerRef.current?.contains(column)
-      ? Number(column.dataset.cleaningDay) : null;
-  };
-
-  const handlePointerDown = (e, task, dayIndex) => {
-    if (e.pointerType === 'mouse' || !e.isPrimary) return;
-    e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const movingTask = { ...task, fromDayIndex: dayIndex };
-    touchDrag.current = { task: movingTask, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, moved: false };
-  };
-
-  const cancelTouchDrag = () => {
-    touchDrag.current = null;
-    setDraggedTask(null);
-    setDragOverDay(null);
-    setDropTargetId(null);
-  };
-
-  const handleDragEnd = () => {
     setDraggedTask(null);
     setDragOverDay(null);
     setDropTargetId(null);
@@ -207,8 +156,8 @@ export default function WeeklyPlanningView({
       {/* Header row */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-xs text-slate-500">
-          Drag any handle to reorder a day. Default: Townhouse → Neighbours → Roamr. Drag between days or use “Move to…” on <span className="font-semibold text-sky-700">weekly cleans</span> to reschedule ·{' '}
-          <span className="font-semibold text-amber-700">Checkout</span> dates are fixed
+          Drag a handle or tap arrows to reorder a day. Default: Townhouse → Neighbours → Roamr. Drag between days or use “Move to…” on <span className="font-semibold text-sky-700">weekly cleans</span> to reschedule ·{' '}
+          <span className="font-semibold text-amber-700">Checkout</span> dates are fixed. Skip a cleaning for this date only; restore it below the day’s schedule.
         </div>
         <div className="flex items-center gap-2 ml-auto">
           <button
@@ -250,12 +199,12 @@ export default function WeeklyPlanningView({
       </div>
 
       {/* 7-day grid */}
-      <div ref={plannerRef} className="overflow-x-auto -mx-0">
-        <div className="grid grid-cols-7 gap-2 min-w-[700px]">
+      <div data-order-scope data-order-scroll className="overflow-x-auto -mx-0">
+        <div className="grid grid-cols-7 gap-2 min-w-[1540px]">
           {weekDates.map((dateStr, dayIndex) => {
             const dayTasks = tasksByDay[dayIndex];
             const isToday = dateStr === today;
-            const isActive = draggedTask && (draggedTask.fromDayIndex === dayIndex || (draggedTask.type === 'weekly' && !!draggedTask.sourceBookingId));
+            const isActive = draggedTask && (draggedTask.fromDayIndex === dayIndex || (draggedTask.scheduledType === 'weekly' && !!draggedTask.sourceBookingId));
             const isDropTarget = dragOverDay === dayIndex && isActive;
             const weeklyCount = dayTasks.filter((t) => t.type === 'weekly').length;
             const checkoutCount = dayTasks.filter((t) => t.type === 'checkout').length;
@@ -264,10 +213,7 @@ export default function WeeklyPlanningView({
             return (
               <div
                 key={dateStr}
-                data-cleaning-day={dayIndex}
-                onDragOver={(e) => handleDragOver(e, dayIndex)}
-                onDragLeave={(e) => handleDragLeave(e, dayIndex)}
-                onDrop={(e) => handleDrop(e, dayIndex)}
+                data-order-group={dayIndex}
                 className={[
                   'rounded-xl border p-2 min-h-[200px] flex flex-col transition-colors duration-100',
                   isDropTarget
@@ -321,7 +267,7 @@ export default function WeeklyPlanningView({
                   )}
 
                   {dayTasks.map((task) => {
-                    const canReschedule = task.type === 'weekly' && !!task.sourceBookingId;
+                    const canReschedule = task.scheduledType === 'weekly' && !!task.sourceBookingId;
                     const isBeingDragged = draggedTask?.id === task.id;
                     const isInsertionTarget = dragOverDay === dayIndex && dropTargetId === task.id && !isBeingDragged;
                     const style = TYPE_STYLE[task.type] || TYPE_STYLE.recurring;
@@ -329,10 +275,7 @@ export default function WeeklyPlanningView({
                     return (
                       <div
                         key={task.id}
-                        data-cleaning-task={task.id}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, task, dayIndex)}
-                        onDragEnd={handleDragEnd}
+                        data-order-task={task.id}
                         title="Drag to reorder within this day; weekly cleans can also move between days"
                         className={[
                           'rounded-lg border p-2 text-xs transition-opacity select-none',
@@ -342,42 +285,14 @@ export default function WeeklyPlanningView({
                           isBeingDragged ? 'opacity-30' : 'opacity-100',
                         ].join(' ')}
                       >
-                        <div className="flex items-start gap-1">
-                          <button
-                            type="button"
-                            aria-label={`Reorder ${task.roomLabel}; use arrow keys to move up or down`}
-                            onKeyDown={(e) => {
-                              if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-                              e.preventDefault();
-                              const index = dayTasks.findIndex((item) => item.id === task.id);
-                              if ((e.key === 'ArrowUp' && index === 0) || (e.key === 'ArrowDown' && index === dayTasks.length - 1)) return;
-                              requestMove({ ...task, fromDayIndex: dayIndex }, dayIndex,
-                                e.key === 'ArrowUp' ? dayTasks[index - 1].id : dayTasks[index + 2]?.id || null);
-                            }}
-                            onPointerDown={(e) => handlePointerDown(e, task, dayIndex)}
-                            onPointerMove={(e) => {
-                              if (touchDrag.current?.pointerId === e.pointerId) {
-                                const drag = touchDrag.current;
-                                if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 8) return;
-                                drag.moved = true;
-                                setDraggedTask(drag.task);
-                                setDragOverDay(dayAtPointer(e));
-                                const card = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-cleaning-task]');
-                                setDropTargetId(card && e.clientY < card.getBoundingClientRect().top + card.getBoundingClientRect().height / 2 ? card.dataset.cleaningTask : card?.nextElementSibling?.dataset.cleaningTask || null);
-                              }
-                            }}
-                            onPointerUp={(e) => {
-                              if (touchDrag.current?.pointerId !== e.pointerId) return;
-                              if (!touchDrag.current.moved) { cancelTouchDrag(); return; }
-                              const movingTask = touchDrag.current.task;
-                              touchDrag.current = null;
-                              requestMove(movingTask, dayAtPointer(e), dropTargetId);
-                            }}
-                            onPointerCancel={cancelTouchDrag}
-                            onLostPointerCapture={() => { if (touchDrag.current) cancelTouchDrag(); }}
-                            style={{ touchAction: 'none' }}
-                            className="text-slate-500 text-lg min-w-6 min-h-11 flex items-center justify-center shrink-0"
-                          >⋮⋮</button>
+                        <div className="flex flex-col gap-1">
+                          <TaskOrderControls task={task} tasks={dayTasks} group={dayIndex}
+                            onMove={(targetId, group) => requestMove({ ...task, fromDayIndex: dayIndex }, Number(group), targetId)}
+                            onPreview={(target) => {
+                              setDraggedTask(target ? { ...task, fromDayIndex: dayIndex } : null);
+                              setDragOverDay(target ? Number(target.group) : null);
+                              setDropTargetId(target?.targetId || null);
+                            }} />
                           <div className="min-w-0 flex-1">
                             <div className="font-semibold text-slate-800 truncate">{task.roomLabel}</div>
                             <div className="text-slate-500 truncate text-[10px]">{task.propertyName}</div>
@@ -397,14 +312,34 @@ export default function WeeklyPlanningView({
                             ))}
                           </select>
                         )}
+                        {onUpdateTask && (
+                          <button
+                            type="button"
+                            onClick={() => onUpdateTask(task.id, { skipped: true })}
+                            className="mt-1 min-h-11 text-xs text-slate-600 underline"
+                            aria-label={`Skip ${task.roomLabel} cleaning on ${dateStr}`}
+                          >Skip this cleaning</button>
+                        )}
                         <div className="mt-1.5">
-                          <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide ${style.badge}`}>
-                            {task.type === 'checkout' ? 'checkout' : task.type === 'weekly' ? 'weekly' : task.type === 'check_room' ? 'Check room' : task.type}
-                          </span>
+                          <TaskTypeEditor task={task} onUpdateTask={onUpdateTask} />
+                          {task.description && <p className="mt-1 text-slate-600 whitespace-normal">{task.description}</p>}
                         </div>
                       </div>
                     );
                   })}
+
+                  {planningTasksByDay[dayIndex].filter((task) => task.skipped).map((task) => (
+                    <div key={task.id} className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-2 text-xs text-slate-500">
+                      <div className="font-semibold">{task.roomLabel} · Skipped</div>
+                      <div>{task.guestName}</div>
+                      <button
+                        type="button"
+                        onClick={() => onUpdateTask?.(task.id, { skipped: false })}
+                        className="min-h-11 underline text-slate-700"
+                        aria-label={`Restore ${task.roomLabel} cleaning on ${dateStr}`}
+                      >Restore cleaning</button>
+                    </div>
+                  ))}
 
                   {isDropTarget && (
                     <div className="border-2 border-dashed border-[#26402E]/50 rounded-lg py-3 text-[11px] text-center text-[#26402E] font-semibold mt-1">

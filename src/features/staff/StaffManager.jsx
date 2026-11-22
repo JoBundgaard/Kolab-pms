@@ -621,8 +621,8 @@ function AssignmentForm({
         label: task.roomLabel,
         roomId: task.roomId,
         propertyId: task.propertyId,
-        type: task.type,
-        instructions,
+        type: task.type === 'custom' ? 'recurring' : task.type,
+        instructions: [task.description, instructions].filter(Boolean).join(' · '),
         availableAfter:
           task.type === "checkout" ? task.checkOutTime || "12:00" : "",
         dueBy: task.type === "check_room" ? task.checkInTime || "15:00" : "",
@@ -647,7 +647,7 @@ function AssignmentForm({
         Publish work from the housekeeping schedule
       </h3>
       <p className="text-sm text-slate-500">
-        Select the rooms she will clean. Existing completions and assignments
+        Select the rooms she will clean. Custom room work uses the Special cleaning rate and includes its instructions. Existing completions and assignments
         are preserved. A task cannot be assigned to two staff members.
       </p>
       {dataError && (

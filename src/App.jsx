@@ -1532,11 +1532,14 @@ export default function App() {
           }
         }
       }
+      return true;
     } catch (error) {
       console.error('Error updating housekeeping override:', { taskId, patch, error });
+      setHousekeepingOverrides((prev) => ({ ...prev, [taskId]: housekeepingOverrides[taskId] || {} }));
       pushAlert({ title: 'Housekeeping update failed', message: error?.message || 'Could not save housekeeping status', code: error?.code, raw: error });
+      return false;
     }
-  }, [user, pushAlert, housekeepingTasks, recurringCleaningTasks, recurringDueByRoomId, housekeepingDate, findNextRoomCleaningDate]);
+  }, [user, pushAlert, housekeepingOverrides, housekeepingTasks, recurringCleaningTasks, recurringDueByRoomId, housekeepingDate, findNextRoomCleaningDate]);
 
   const handleChangeWeeklyCleaningDay = useCallback(async (sourceBookingId, newDayKey) => {
     if (!sourceBookingId || !newDayKey) return;

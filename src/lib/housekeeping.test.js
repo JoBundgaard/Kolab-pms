@@ -57,3 +57,50 @@ test('calendar task dates and weekly weekdays do not shift on devices west of UT
   assert.equal(tasks[0].dueDate, '2026-11-03');
   assert.equal(tasks[0].type, 'weekly');
 });
+
+test('day-specific type edits retain stable task identity, completion and booking dates', () => {
+  const [original] = tasks([arriving]);
+  const overrides = { [original.id]: { type: 'custom', description: 'Clean balcony', status: 'clean', assignedTo: 'Thanh', priority: 7 } };
+  const [edited] = tasks([arriving], arriving.checkIn, overrides);
+  assert.equal(edited.id, original.id);
+  assert.equal(edited.scheduledType, 'check_room');
+  assert.equal(edited.type, 'custom');
+  assert.equal(edited.description, 'Clean balcony');
+  assert.equal(edited.status, 'clean');
+  assert.equal(edited.assignedTo, 'Thanh');
+  assert.equal(arriving.checkOut, '2026-10-27');
+  assert.equal(tasks([arriving], arriving.checkOut, overrides)[0].type, 'checkout');
+  overrides[original.id].type = null;
+  assert.equal(tasks([arriving], arriving.checkIn, overrides)[0].type, 'check_room');
+  assert.equal(tasks([arriving], arriving.checkIn, overrides)[0].description, '');
+});
+
+test('changing an arrival check to weekly does not make the booking reschedulable', () => {
+  const [original] = tasks([arriving]);
+  const [edited] = tasks([arriving], arriving.checkIn, { [original.id]: { type: 'weekly' } });
+  assert.equal(edited.type, 'weekly');
+  assert.equal(edited.scheduledType, 'check_room');
+});
+
+test('skipping a cleaning excludes only that occurrence and allows restoring its overrides', () => {
+  const booking = { ...departing, checkOut: '2026-12-01', isLongTerm: true, weeklyCleaningDay: 'friday' };
+  const [original] = tasks([booking]);
+  const overrides = { [original.id]: { skipped: true, assignedTo: 'Thanh', priority: 7 } };
+  assert.deepEqual(tasks([booking], '2026-10-23', overrides), []);
+  const [skipped] = normalizeHousekeepingTasks({ bookings: [booking], targetDate: '2026-10-23', overrides, includeSkipped: true });
+  assert.equal(skipped.skipped, true);
+  assert.equal(skipped.assignedTo, 'Thanh');
+  assert.equal(tasks([booking], '2026-10-30', overrides).length, 1);
+  overrides[original.id].skipped = false;
+  const [restored] = tasks([booking], '2026-10-23', overrides);
+  assert.equal(restored.id, original.id);
+  assert.equal(restored.assignedTo, 'Thanh');
+  assert.equal(restored.priority, 7);
+  assert.equal(booking.weeklyCleaningDay, 'friday');
+});
+
+test('skipping one room leaves other cleaning and inspection tasks available', () => {
+  const checkout = { ...departing, checkOut: arriving.checkIn, roomId: 'b' };
+  const [cleaning] = tasks([checkout]);
+  assert.deepEqual(tasks([checkout, arriving], arriving.checkIn, { [cleaning.id]: { skipped: true } }).map((task) => task.type), ['check_room']);
+});

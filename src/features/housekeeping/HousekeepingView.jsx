@@ -239,6 +239,7 @@ export default function HousekeepingView({
         <HousekeepingErrorBoundary>
           <HousekeepingTaskManager
             tasks={housekeepingTasks}
+            overrides={housekeepingOverrides}
             onUpdateTask={handleHousekeepingTaskUpdate}
             recurringDueByRoomId={recurringDueByRoomId}
             onCompleteRecurringTodo={handleCompleteRecurringRoomTodo}
