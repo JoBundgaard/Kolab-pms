@@ -1,224 +1,81 @@
+import { useState } from 'react';
+import { Download, Plus, Trash2, X } from 'lucide-react';
 import GuestBookingSelect from '../../components/GuestBookingSelect.jsx';
-import { ALL_ROOMS } from '../../config/properties.js';
-import { getBookingInvoiceAmount } from '../../lib/airbnb.js';
-import { getLongStayCalendarMonthCount } from '../../lib/bookingDates.js';
-import { parseLocalDateString } from '../../lib/dates.js';
-import { Download, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { downloadInvoice, invoiceAddress, invoiceFromBooking, invoiceMoney, invoicePeriod, invoiceSubtotal } from '../../lib/invoice.js';
 
-const InvoiceModal = ({ isOpen, onClose, bookings }) => {
+const inputClass = 'w-full rounded border border-slate-300 bg-white p-2 text-sm text-slate-800';
+export default function InvoiceModal({ isOpen, onClose, bookings }) {
   const [selectedBookingId, setSelectedBookingId] = useState('');
-  const [invoiceData, setInvoiceData] = useState(null);
-
-  useEffect(() => {
-    if (!selectedBookingId) { setInvoiceData(null); return; }
-    const booking = bookings.find(b => b.id === selectedBookingId);
-    if (!booking) return;
-
-    const roomObj = ALL_ROOMS.find(r => r.id === booking.roomId);
-    const roomId = roomObj?.name || booking.roomId || '';
-    const roomType = roomObj?.type || '';
-    const propertyName = roomObj?.propertyName || '';
-    const nights = Number(booking.nights) || 0;
-    const isLong = booking.isLongTerm || booking.stayCategory === 'long';
-
-    let duration;
-    if (isLong) {
-      const fullCalendarMonths = getLongStayCalendarMonthCount(booking.checkIn, booking.checkOut);
-      const invoiceStart = parseLocalDateString(booking.checkIn);
-      const invoiceEnd = parseLocalDateString(booking.checkOut);
-      const hasPartialCalendarMonth = invoiceStart.getDate() !== 1 || invoiceEnd.getDate() !== 1;
-      duration = fullCalendarMonths > 0
-        ? `${fullCalendarMonths} FULL CALENDAR MONTH${fullCalendarMonths === 1 ? '' : 'S'}${hasPartialCalendarMonth ? ' + PRORATED DAYS' : ''}`
-        : `${nights} DAYS (PRORATED)`;
-    } else {
-      duration = String(nights);
-    }
-
-    const ci = (booking.checkIn || '').split('-');
-    const ref = ci.length === 3
-      ? `${ci[2]}${ci[1]}${roomId}`.toUpperCase()
-      : `INV-${Date.now().toString().slice(-6)}`;
-
-    setInvoiceData({
-      guestName: booking.guestName || '',
-      guestPhone: booking.guestPhone || booking.phone || '',
-      roomId,
-      roomType,
-      propertyName,
-      checkIn: booking.checkIn || '',
-      checkOut: booking.checkOut || '',
-      nights,
-      duration,
-      price: getBookingInvoiceAmount(booking),
-      invoiceNumber: ref,
-    });
-  }, [selectedBookingId, bookings]);
-
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [downloading, setDownloading] = useState(false);
   if (!isOpen) return null;
-
-  const fmtAmount = (amount) => {
-    const n = Number(amount);
-    if (!n) return '0';
-    return n >= 10000
-      ? `${n.toLocaleString('vi-VN')} ₫`
-      : `${n.toLocaleString('en-US')} USD`;
+  const selectBooking = (id) => {
+    setSelectedBookingId(id);
+    const booking = bookings.find((b) => b.id === id);
+    setData(booking ? invoiceFromBooking(booking) : null);
+    setError('');
   };
-
-  const fmtInvoiceDate = (dateStr, includeYear = false) => {
-    if (!dateStr) return '';
-    const d = new Date(dateStr + 'T00:00:00Z');
-    const opts = includeYear
-      ? { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }
-      : { month: 'long', day: 'numeric', timeZone: 'UTC' };
-    return d.toLocaleDateString('en-US', opts).toUpperCase();
+  const update = (key, value) => setData((current) => ({ ...current, [key]: value }));
+  const updateItem = (index, key, value) => setData((current) => ({ ...current, items: current.items.map((item, i) => i === index ? { ...item, [key]: value } : item) }));
+  const subtotal = data ? invoiceSubtotal(data) : 0;
+  const money = (value) => invoiceMoney(value, data.currency);
+  const download = async () => {
+    setError('');
+    setDownloading(true);
+    try { await downloadInvoice(data); } catch (err) { setError(err.message || 'Unable to download invoice. Please try again.'); }
+    finally { setDownloading(false); }
   };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print:bg-white print:p-0">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden print:shadow-none print:rounded-none print:w-full print:max-w-none">
-
-        {/* Screen header */}
-        <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50 print:hidden">
-          <h3 className="font-bold text-lg text-slate-800">Create Invoice</h3>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-700 p-1 rounded hover:bg-slate-100">
-            <X size={22} />
-          </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+      <div role="dialog" aria-modal="true" aria-labelledby="invoice-title" className="flex max-h-[95vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b bg-slate-50 px-6 py-4">
+          <h3 id="invoice-title" className="text-lg font-bold text-slate-800">Create Invoice</h3>
+          <button onClick={onClose} aria-label="Close invoice" className="rounded p-1 text-slate-500 hover:bg-slate-100"><X size={22} /></button>
         </div>
-
-        <div className="p-6 print:p-0">
-          {/* Booking selector */}
-          <div className="mb-6 print:hidden">
-            <GuestBookingSelect bookings={bookings} value={selectedBookingId} onChange={setSelectedBookingId} />
-          </div>
-
-          {invoiceData ? (
-            <div className="invoice-content">
-
-              {/* ── Top banner ── */}
-              <div className="flex items-center justify-between px-8 py-5" style={{ backgroundColor: '#26402E' }}>
-                {/* Logo */}
-                <div className="flex items-center justify-center w-14 h-14 rounded-full border-2 border-[#c8d89a]" style={{ backgroundColor: '#F5F0DC' }}>
-                  <div className="text-center leading-none">
-                    <span className="block font-bold text-xl" style={{ color: '#26402E' }}>ko</span>
-                    <span className="block text-[7px] font-semibold tracking-widest uppercase" style={{ color: '#26402E' }}>living</span>
-                  </div>
+        <div className="overflow-y-auto p-4 sm:p-6">
+          <GuestBookingSelect bookings={bookings} value={selectedBookingId} onChange={selectBooking} />
+          {data ? <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm">Invoice for<input className={inputClass} value={data.guestName} onChange={(e) => update('guestName', e.target.value)} /></label>
+                <label className="text-sm">Invoice number<input className={inputClass} value={data.invoiceNumber} onChange={(e) => update('invoiceNumber', e.target.value)} /></label>
+                <label className="text-sm">Currency<select className={inputClass} value={data.currency} onChange={(e) => update('currency', e.target.value)}>{Array.from(new Set([data.currency, 'VND', 'USD', 'EUR', 'GBP'])).map((currency) => <option key={currency}>{currency}</option>)}</select></label>
+              </div>
+              <p className="text-xs text-slate-500">Confirm the currency and agreed amounts before downloading. Changing currency does not convert amounts.</p>
+              {data.items.map((item, index) => <fieldset key={index} className="space-y-3 rounded-lg border p-3">
+                <legend className="px-1 text-sm font-semibold">Line item {index + 1}</legend>
+                <label className="block text-sm">Description<input className={inputClass} value={item.description} onChange={(e) => updateItem(index, 'description', e.target.value)} /></label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-sm">From<input type="date" className={inputClass} value={item.startDate} onChange={(e) => updateItem(index, 'startDate', e.target.value)} /></label>
+                  <label className="text-sm">To<input type="date" className={inputClass} value={item.endDate} onChange={(e) => updateItem(index, 'endDate', e.target.value)} /></label>
+                  <label className="text-sm">Qty (nights)<input type="number" min="1" step="1" className={inputClass} value={item.quantity} onChange={(e) => updateItem(index, 'quantity', e.target.value)} /></label>
+                  <label className="text-sm">Total price ({data.currency})<input type="number" min="0" step={data.currency === 'VND' ? '1' : '0.01'} className={inputClass} value={item.amount} onChange={(e) => updateItem(index, 'amount', e.target.value)} /></label>
                 </div>
-                <h1 className="text-5xl font-light tracking-wide" style={{ color: '#F5F0DC' }}>Invoice</h1>
-              </div>
-
-              {/* ── Billed to ── */}
-              <div className="px-8 pt-7 pb-2">
-                <p className="text-xl font-bold text-slate-800 mb-3">BILLED TO:</p>
-                <hr className="border-slate-300 mb-3" />
-                <p className="text-sm text-slate-700 mb-1">
-                  <span className="font-semibold">GUEST NAME:</span> {invoiceData.guestName}
-                </p>
-                {invoiceData.guestPhone && (
-                  <p className="text-sm text-slate-700 mb-1">
-                    <span className="font-semibold">CONTACT INFO:</span> {invoiceData.guestPhone}
-                  </p>
-                )}
-                <p className="text-sm text-slate-700">
-                  <span className="font-semibold">INVOICE REF:</span> {invoiceData.invoiceNumber}
-                </p>
-                <hr className="border-slate-300 mt-3" />
-              </div>
-
-              {/* ── Line items ── */}
-              <table className="w-full mt-2">
-                <thead>
-                  <tr style={{ backgroundColor: '#d4edaa' }}>
-                    <th className="px-8 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-700">Room Info</th>
-                    <th className="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-slate-700 w-36">Duration (Days)</th>
-                    <th className="px-8 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-700 w-28">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td className="px-8 py-5 text-sm">
-                      <p className="font-bold text-slate-800">{invoiceData.roomType} ROOM {invoiceData.roomId}</p>
-                      <p className="text-slate-500 mt-1">
-                        {fmtInvoiceDate(invoiceData.checkIn)} – {fmtInvoiceDate(invoiceData.checkOut, true)}
-                      </p>
-                      <p className="text-slate-400 text-xs mt-1">Included all listed services as mentioned in the contract</p>
-                    </td>
-                    <td className="px-4 py-5 text-center text-sm text-slate-700">{invoiceData.duration}</td>
-                    <td className="px-8 py-5 text-right text-sm text-slate-700">{fmtAmount(invoiceData.price)}</td>
-                  </tr>
-                </tbody>
-              </table>
-
-              {/* ── Totals ── */}
-              <div className="px-8 pt-4 pb-8">
-                <table className="w-full text-sm">
-                  <tbody>
-                    <tr className="border-t border-slate-200">
-                      <td className="py-3 text-slate-700">TOTAL AMOUNT</td>
-                      <td className="py-3 text-right text-slate-700">{fmtAmount(invoiceData.price)}</td>
-                    </tr>
-                    <tr className="border-t border-slate-200">
-                      <td className="py-3 text-slate-700">VAT (8%)</td>
-                      <td className="py-3 text-right text-slate-700">0</td>
-                    </tr>
-                    <tr className="border-t border-slate-200">
-                      <td className="py-2" colSpan={2}>
-                        <table className="w-full" style={{ backgroundColor: '#d4edaa' }}>
-                          <tbody>
-                            <tr>
-                              <td className="px-3 py-3 font-bold text-slate-800">TOTAL</td>
-                              <td className="px-3 py-3 text-right font-bold text-slate-800">{fmtAmount(invoiceData.price)}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
+                <div className="flex items-center justify-between text-xs text-slate-500"><span>Unit price: {money(item.quantity > 0 ? item.amount / item.quantity : 0)}</span><button disabled={data.items.length === 1} onClick={() => update('items', data.items.filter((_, i) => i !== index))} aria-label={`Remove line item ${index + 1}`} className="p-1 text-red-600 disabled:opacity-30"><Trash2 size={16} /></button></div>
+              </fieldset>)}
+              <button onClick={() => update('items', [...data.items, { description: '', startDate: '', endDate: '', quantity: 1, amount: 0 }])} className="flex items-center gap-2 text-sm font-semibold text-[#30492f]"><Plus size={16} />Add line item</button>
+              <label className="block text-sm">Payable now ({data.currency})<input type="number" min="0" max={subtotal} step={data.currency === 'VND' ? '1' : '0.01'} placeholder="Enter agreed deposit" className={inputClass} value={data.payableNow} onChange={(e) => update('payableNow', e.target.value)} /></label>
+              <label className="block text-sm">Cancellation Policy<textarea rows={9} className={inputClass} value={data.policy} onChange={(e) => update('policy', e.target.value)} /></label>
             </div>
-          ) : (
-            <div className="text-center py-12 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl print:hidden">
-              Select a booking above to generate an invoice preview.
+            <div className="overflow-x-auto rounded border bg-slate-100 p-3">
+              <article className="min-w-[430px] bg-[#fffbe3] text-[11px] text-black shadow-sm">
+                <header className="bg-[#30492f] px-10 py-8 text-[#fffbe3]"><h1 className="text-xl font-bold">INVOICE</h1><p className="text-sm">Kolab Living</p><p className="mt-1 whitespace-pre-line text-[10px]">{invoiceAddress}</p></header>
+                <div className="px-8 py-7">
+                  <div className="grid grid-cols-[1fr_1.2fr_0.8fr] gap-4 break-words"><div><b>Invoice for</b><p className="mt-1">{data.guestName}</p></div><div><b>Payable to</b><p className="mt-1">Kolab Living Company Limited</p><p className="whitespace-pre-line">{invoiceAddress}</p></div><div><b>Invoice #</b><p className="mt-1">{data.invoiceNumber}</p></div></div>
+                  <table className="mt-9 w-full border-t border-[#c7c7b9] text-left"><thead><tr>{['Description', 'Qty', 'Unit price', 'Total price'].map((label, i) => <th key={label} className={`py-4 ${i ? 'text-right pl-2' : ''}`}>{label}</th>)}</tr></thead><tbody>{data.items.map((item, i) => <tr key={i}><td className="pb-3 pr-2"><p className="break-words">{item.description}</p><p className="text-[9px]">{invoicePeriod(item)}</p></td><td className="pb-3 text-right">{item.quantity}</td><td className="pb-3 pl-2 text-right whitespace-nowrap">{money(item.quantity > 0 ? item.amount / item.quantity : 0)}</td><td className="pb-3 pl-2 text-right whitespace-nowrap">{money(item.amount)}</td></tr>)}</tbody></table>
+                  <dl className="ml-auto mt-9 w-fit min-w-[55%] border-t border-[#c7c7b9] pt-1 text-right font-bold">{[['Subtotal', money(subtotal)], ['Payable now:', data.payableNow === '' ? '—' : money(data.payableNow)], ['Payment on arrival:', data.payableNow === '' ? '—' : money(subtotal - Number(data.payableNow))]].map(([label, value]) => <div key={label} className="flex justify-between gap-5 py-0.5"><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+                  <div className="mt-3 min-h-48 border-t border-[#c7c7b9] pt-2"><b>Cancellation Policy:</b><p className="mt-4 whitespace-pre-line text-[10px] leading-relaxed">{data.policy}</p></div>
+                </div>
+              </article>
             </div>
-          )}
+          </div> : <p className="py-16 text-center text-slate-400">Select a booking above to generate an invoice preview.</p>}
         </div>
-
-        {/* Action buttons */}
-        <div className="px-6 py-4 bg-slate-50 border-t flex justify-end space-x-3 print:hidden">
-          <button onClick={onClose} className="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center transition-colors">
-            <X size={16} className="mr-2" /> Close
-          </button>
-          <button
-            onClick={() => window.print()}
-            disabled={!invoiceData}
-            className={`px-6 py-2 rounded-lg flex items-center transition-colors ${
-              invoiceData ? 'bg-[#26402E] text-white hover:bg-[#1a2e20] shadow-md' : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-            }`}
-          >
-            <Download size={16} className="mr-2" /> Download PDF
-          </button>
+        <div className="border-t bg-slate-50 px-6 py-4">
+          {error && <p role="alert" className="mb-3 text-sm text-red-600">{error}</p>}
+          <div className="flex justify-end gap-3"><button onClick={onClose} className="rounded-lg bg-slate-100 px-4 py-2 text-slate-600">Close</button><button disabled={!data || downloading} onClick={download} className="flex items-center gap-2 rounded-lg bg-[#30492f] px-5 py-2 text-white disabled:opacity-40"><Download size={16} />{downloading ? 'Generating…' : 'Download PDF'}</button></div>
         </div>
       </div>
-
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          .fixed.inset-0, .fixed.inset-0 * { visibility: visible; }
-          .fixed.inset-0 {
-            position: absolute; left: 0; top: 0;
-            width: 100%; height: 100%;
-            background: white; padding: 0;
-          }
-          .bg-slate-900\\/60 { background: white !important; }
-          .print\\:hidden { display: none !important; }
-          .print\\:shadow-none { box-shadow: none !important; }
-          .invoice-content { padding: 0 !important; }
-        }
-      `}</style>
     </div>
   );
-};
-
-export default InvoiceModal;
+}
