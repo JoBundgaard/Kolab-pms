@@ -1,3 +1,4 @@
+import { classifyStay } from '../functions/lib/rentMonths.mjs';
 import Chatbot from './components/Chatbot.jsx';
 // Keep the original CSS order while loading the CRM screen code on demand.
 import './components/GuestCRM.css';
@@ -105,22 +106,7 @@ export default function App() {
   const [customStatsEnd, setCustomStatsEnd] = useState(formatDate(new Date()));
   const [calendarView, setCalendarView] = useState('guestName');
 
-  const deriveStayCategory = useCallback((nights) => {
-    if (nights >= 31) return 'long';
-    if (nights >= 7) return 'medium';
-    return 'short';
-  }, []);
-
-  const getBookingStayCategory = useCallback((b) => {
-    const nights = b?.nights || calculateNights(b?.checkIn, b?.checkOut);
-    if (b?.stayCategory) return b.stayCategory;
-    if (b?.isLongTerm) {
-      // Backward compat: legacy long-term flag follows updated thresholds.
-      if (nights >= 31) return 'long';
-      if (nights >= 7) return 'medium';
-    }
-    return deriveStayCategory(nights);
-  }, [deriveStayCategory]);
+  const getBookingStayCategory = useCallback((booking) => classifyStay(booking), []);
 
   const formatStayCategoryLabel = (cat) => {
     if (cat === 'medium') return 'Medium Term';
@@ -767,7 +753,7 @@ export default function App() {
 
   const getExportNightValueForBooking = useCallback((booking, dateStr) => {
     if (!booking || !dateStr) return null;
-    if (getBookingStayCategory(booking) === 'long') {
+    if (getBookingStayCategory(booking) === 'long' && booking.monthlyRentVnd != null && booking.monthlyRentVnd !== '') {
       return calculateLongTermRentForRange(booking, dateStr, addDays(dateStr, 1)) || null;
     }
 

@@ -1,3 +1,4 @@
+import { rentDuration, rentMonthPeriods } from '../../functions/lib/rentMonths.mjs';
 import { calculateNights, formatDate, parseLocalDateString } from './dates.js';
 import { randomId } from './shared.js';
 
@@ -214,67 +215,31 @@ export const expandBookingToRoomStays = (booking) => {
 };
 
 export const calculateLongTermRentForRange = (booking, startDate, endDate) => {
-  // Use parseLocalDateString so all boundaries are local midnight — prevents a
-  // timezone-mismatch bug where new Date('YYYY-MM-DD') is UTC midnight but
-  // new Date(y,m,d) is local midnight, causing a spurious extra month iteration
-  // on the last day of a 31-day month (visible as a doubled value in Excel exports).
   const rangeStart = parseLocalDateString(startDate);
   const rangeEnd = parseLocalDateString(endDate);
   if (isNaN(rangeStart.getTime()) || isNaN(rangeEnd.getTime()) || rangeStart >= rangeEnd) return 0;
-
   let totalRent = 0;
-
-  // A full calendar month always costs exactly the configured monthly rent.
-  // Partial months and sellable break days use that calendar month's actual
-  // length (28/29/30/31 days), never a fixed 30-day billing cycle.
-  let currentMonthStart = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
-
-  while (currentMonthStart < rangeEnd) {
-    const currentMonthEnd = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 1);
-    const daysInMonth = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0).getDate();
-
-    const monthOverlapStart = currentMonthStart < rangeStart ? rangeStart : currentMonthStart;
-    const monthOverlapEnd = currentMonthEnd > rangeEnd ? rangeEnd : currentMonthEnd;
-
-    getBookingRoomStays(booking, { mode: 'financial' }).forEach(stay => {
-      const stayStart = parseLocalDateString(stay.startDate);
-      const stayEnd = parseLocalDateString(stay.endDate);
-
-      const segmentOverlapStart = stayStart > monthOverlapStart ? stayStart : monthOverlapStart;
-      const segmentOverlapEnd = stayEnd < monthOverlapEnd ? stayEnd : monthOverlapEnd;
-
+  // Keep the original arrival anchor through report boundaries, room moves and
+  // early departures. Only agreed billable nights contribute to each cycle.
+  for (const period of rentMonthPeriods(booking.checkIn, getBookingFinancialCheckOut(booking), booking.rentPeriodBasis)) {
+    const monthOverlapStart = new Date(Math.max(parseLocalDateString(period.start), rangeStart));
+    const monthOverlapEnd = new Date(Math.min(parseLocalDateString(period.end), rangeEnd));
+    if (monthOverlapStart >= monthOverlapEnd) continue;
+    getBookingRoomStays(booking, { mode: 'financial' }).forEach((stay) => {
+      const segmentOverlapStart = new Date(Math.max(parseLocalDateString(stay.startDate), monthOverlapStart));
+      const segmentOverlapEnd = new Date(Math.min(parseLocalDateString(stay.endDate), monthOverlapEnd));
       const overlapNights = calculateNights(segmentOverlapStart, segmentOverlapEnd);
       if (overlapNights <= 0) return;
-
-      const deductedBreakNights = countBookingBreakNightsForRange(booking, segmentOverlapStart, segmentOverlapEnd);
-      const billableNights = Math.max(0, overlapNights - deductedBreakNights);
-
+      const billableNights = Math.max(0, overlapNights - countBookingBreakNightsForRange(booking, segmentOverlapStart, segmentOverlapEnd));
       const rent = Number(stay.monthlyRentVnd);
-      if (billableNights <= 0 || !Number.isFinite(rent) || rent <= 0) return;
-
-      totalRent += rent * (billableNights / daysInMonth);
+      if (billableNights > 0 && Number.isFinite(rent) && rent > 0) totalRent += rent * billableNights / period.days;
     });
-
-    currentMonthStart = currentMonthEnd;
   }
 
   return Math.round(totalRent);
 };
 
-export const getLongStayCalendarMonthCount = (checkIn, checkOut) => {
-  const start = parseLocalDateString(checkIn);
-  const end = parseLocalDateString(checkOut);
-  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) return 0;
-
-  let count = 0;
-  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
-  while (cursor < end) {
-    const nextMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-    if (cursor >= start && nextMonth <= end) count += 1;
-    cursor = nextMonth;
-  }
-  return count;
-};
+export const getLongStayCalendarMonthCount = (checkIn, checkOut) => rentDuration(checkIn, checkOut).months;
 
 export const normalizeBookingBreaks = (breaksInput = []) => {
   if (!Array.isArray(breaksInput)) return [];

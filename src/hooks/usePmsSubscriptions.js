@@ -1,3 +1,4 @@
+import { classifyStay } from '../../functions/lib/rentMonths.mjs';
 import { auth, db } from '../firebase.js';
 import { normalizeCalendarBlock } from '../lib/calendarBlocks.js';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -41,7 +42,11 @@ export default function usePmsSubscriptions({
         (snapshot) => {
           console.log('[Firestore] bookings snapshot size:', snapshot.size);
           setDataError(null);
-          setBookings(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+          setBookings(snapshot.docs.map((d) => {
+            const booking = { id: d.id, ...d.data() };
+            const stayCategory = classifyStay(booking);
+            return { ...booking, stayCategory, isLongTerm: ['medium', 'long'].includes(stayCategory) };
+          }));
         },
         (error) => {
           console.error('Error listening to bookings:', error);

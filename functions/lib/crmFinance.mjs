@@ -1,3 +1,4 @@
+import { classifyStay } from './rentMonths.mjs';
 // Shared by the React workspace and Firebase jobs. Dates are property-local
 // calendar keys; UTC is used only for calendar arithmetic (never device time).
 export const PROPERTY_TIMEZONE = 'Asia/Ho_Chi_Minh';
@@ -18,11 +19,7 @@ export function occupancyEnd(booking) {
   return validDate(actual) && actual > booking.checkIn && actual < booking.checkOut ? actual : booking.checkOut;
 }
 export const financialEnd = (booking) => booking.earlyTerminationReimbursed ? occupancyEnd(booking) : booking.checkOut;
-export function stayCategory(booking) {
-  if (['short', 'medium', 'long'].includes(booking.stayCategory)) return booking.stayCategory;
-  const nights = daysBetween(booking.checkIn, booking.checkOut);
-  return nights >= 31 ? 'long' : nights >= 7 ? 'medium' : 'short';
-}
+export const stayCategory = classifyStay;
 export function lifecycle(booking, today) {
   if (cancelled(booking)) return 'cancelled';
   if (occupancyEnd(booking) <= today || /^(checked[-_]out|completed)$/.test(booking.status)) return 'past';

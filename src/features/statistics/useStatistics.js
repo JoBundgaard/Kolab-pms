@@ -1,3 +1,4 @@
+import { classifyStay } from '../../../functions/lib/rentMonths.mjs';
 import { ALL_ROOMS, countAvailableRoomNights } from '../../config/properties.js';
 import { KOLAB_2025_FINANCIALS, KOLAB_2025_KPIS, NEIGHBOURS_2025_FINANCIALS, NEIGHBOURS_2025_KPIS, TOWNHOUSE_2025_FINANCIALS, TOWNHOUSE_2025_KPIS } from '../../data/financialBaselines.js';
 import { calculateLongTermRentForRange } from '../../lib/bookingDates.js';
@@ -7,7 +8,7 @@ import { useMemo } from 'react';
 export default function useStatistics({ bookings, bookingsWithWithholding, getBookingStayCategory, statsRange, customStatsStart, customStatsEnd }) {
   const calculateStats = (rangeKey, customStart, customEnd) => {
     const netForBooking = (booking) => {
-      const isLong = (booking.stayCategory || '').toLowerCase() === 'long' || booking.isLongTerm;
+      const isLong = classifyStay(booking) === 'long' && booking.monthlyRentVnd != null && booking.monthlyRentVnd !== '';
       if (isLong) {
         return calculateLongTermRentForRange(booking, rangeStart, rangeEnd);
       }
@@ -84,7 +85,7 @@ export default function useStatistics({ bookings, bookingsWithWithholding, getBo
     const roomNightsAvailable = Math.max(1, countAvailableRoomNights(ALL_ROOMS, rangeStartStr, formatDate(rangeEnd)));
     const roomNightsBooked = active.reduce((sum, b) => sum + (b._overlapNights || 0), 0);
     const revenue = active.reduce((sum, b) => {
-    const isLong = (b.stayCategory || '').toLowerCase() === 'long' || b.isLongTerm;
+    const isLong = classifyStay(b) === 'long' && b.monthlyRentVnd != null && b.monthlyRentVnd !== '';
     if (isLong) {
         return sum + calculateLongTermRentForRange(b, rangeStart, rangeEnd);
     }
@@ -283,12 +284,12 @@ export default function useStatistics({ bookings, bookingsWithWithholding, getBo
         if (overlap <= 0) return;
         nights += overlap;
         const totalNights = b.nights || calculateNights(b.checkIn, b.checkOut) || 1;
-        const netValue = ((b.stayCategory || '').toLowerCase() === 'long' || b.isLongTerm)
+        const netValue = (classifyStay(b) === 'long' && b.monthlyRentVnd != null && b.monthlyRentVnd !== '')
           ? calculateLongTermRentForRange(b, mStart, mEnd)
           : netForBooking(b);
         const withheldValue = b._withholding?.status === 'computed' ? (b._withholding.totalWithheld || 0) : 0;
         const prorateFactor = overlap / totalNights;
-        revenueMonth += ((b.stayCategory || '').toLowerCase() === 'long' || b.isLongTerm)
+        revenueMonth += (classifyStay(b) === 'long' && b.monthlyRentVnd != null && b.monthlyRentVnd !== '')
           ? netValue
           : (netValue * prorateFactor);
         withheldMonth += withheldValue * prorateFactor;

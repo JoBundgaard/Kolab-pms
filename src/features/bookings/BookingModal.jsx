@@ -1,3 +1,4 @@
+import { classifyStay, rentDuration } from '../../../functions/lib/rentMonths.mjs';
 import CustomDatePicker from '../../components/common/CustomDatePicker.jsx';
 import { COLORS, DEFAULT_CHECKIN_TIME, DEFAULT_CHECKOUT_TIME, SERVICE_PRESETS } from '../../config/pms.js';
 import { PROPERTIES } from '../../config/properties.js';
@@ -12,11 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, calendarBlocks, checkBookingConflict, isSaving, currentUser, onLookupGuest, onOpenCalendar }) => {
   const modalContentRef = useRef(null);
-  const deriveStayCategory = useCallback((nights) => {
-      if (nights >= 31) return 'long';
-      if (nights >= 7) return 'medium';
-      return 'short';
-  }, []);
+  const deriveStayCategory = useCallback((checkIn, checkOut) => classifyStay({ checkIn, checkOut }), []);
 
   const [formData, setFormData] = useState({
     guestName: '',
@@ -142,8 +139,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
 
   useEffect(() => {
     if (booking) {
-      const bookingNights = booking.nights || calculateNights(booking.checkIn, booking.checkOut);
-      const inferredCategory = booking.stayCategory || deriveStayCategory(bookingNights);
+      const inferredCategory = classifyStay(booking);
       setFormData({
         ...booking,
         guestEmail: booking.guestEmail || booking.email || '',
@@ -175,14 +171,14 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
         actualCheckoutDate: getBookingEarlyCheckoutMeta(booking).actualCheckoutDate,
         earlyTerminationReimbursed: getBookingEarlyCheckoutMeta(booking).reimbursed,
       });
-      setCategoryManual(!!booking.stayCategory);
+      setCategoryManual(false);
       const normalizedServices = Array.isArray(booking.services) ? booking.services.map(normalizeServiceEntry) : [];
       setServices(normalizedServices);
     } else {
       const defaultCheckIn = formatDate(new Date());
       const defaultCheckOut = formatDate(new Date(Date.now() + 86400000));
       const defaultNights = calculateNights(defaultCheckIn, defaultCheckOut);
-      const inferredCategory = deriveStayCategory(defaultNights);
+      const inferredCategory = deriveStayCategory(defaultCheckIn, defaultCheckOut);
       setFormData({
         guestName: '',
         guestEmail: '',
@@ -232,8 +228,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
       const calculatedNights = calculateNights(formData.checkIn, formData.checkOut);
       setNights(calculatedNights);
       setFormData(prev => ({ ...prev, nights: calculatedNights }));
-      if (!categoryManual) {
-        const inferredCategory = deriveStayCategory(calculatedNights);
+      if (!categoryManual || classifyStay({ checkIn: formData.checkIn, checkOut: formData.checkOut }) === 'long') {
+        const inferredCategory = deriveStayCategory(formData.checkIn, formData.checkOut);
         setFormData(prev => ({
           ...prev,
           stayCategory: inferredCategory,
@@ -482,7 +478,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
       ? (formData.monthlyRentVnd === '' ? null : Number(formData.monthlyRentVnd))
       : null;
 
-    const inferredCategory = formData.stayCategory || deriveStayCategory(formData.nights);
+    const inferredCategory = formData.stayCategory || deriveStayCategory(formData.checkIn, formData.checkOut);
     const isLongTermCategory = ['medium', 'long'].includes(inferredCategory);
     const finalWeeklyDay = isLongTermCategory ? formData.weeklyCleaningDay || 'monday' : '';
     const normalizedBikeCount = formData.bikeParkingNeeded
@@ -758,6 +754,10 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
   };
 
   const selectedRoom = availableRoomOptions.find((room) => room.id === formData.roomId);
+  const duration = rentDuration(formData.checkIn, formData.checkOut);
+  const durationLabel = formData.stayCategory === 'long' && duration.months > 0
+    ? `${duration.months} month${duration.months === 1 ? '' : 's'}${duration.nights ? ` + ${duration.nights} prorated night${duration.nights === 1 ? '' : 's'}` : ''}`
+    : `${nights} night${nights === 1 ? '' : 's'}`;
   const stayCategoryLabel = formData.stayCategory === 'short'
     ? 'Short Term'
     : formData.stayCategory === 'medium'
@@ -829,7 +829,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:min-w-[520px]">
                   <div className="rounded-2xl border border-white/10 bg-white/8 px-3 py-3">
                     <div className="text-[11px] uppercase tracking-[0.18em] text-white/55">Stay</div>
-                    <div className="mt-1 font-semibold">{nights > 0 ? `${nights} night${nights !== 1 ? 's' : ''}` : 'Select dates'}</div>
+                    <div className="mt-1 font-semibold">{nights > 0 ? durationLabel : 'Select dates'}</div>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-white/8 px-3 py-3">
                     <div className="text-[11px] uppercase tracking-[0.18em] text-white/55">Category</div>
@@ -1014,7 +1014,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                     <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
                       <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 border ${nights > 0 ? 'border-slate-200 bg-slate-50' : 'border-red-200 bg-red-50 text-red-600'}`}>
                         <Clock size={14} />
-                        {nights} night{nights !== 1 ? 's' : ''}
+                        {durationLabel}
                       </span>
                       <span className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1.5">
                         {stayCategoryLabel}
@@ -1093,8 +1093,8 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                           {[
                             { value: 'short', label: 'Short Term', helper: '1-6 nights' },
-                            { value: 'medium', label: 'Medium Term', helper: '7-30 nights' },
-                            { value: 'long', label: 'Long Term', helper: '31+ nights' },
+                            { value: 'medium', label: 'Medium Term', helper: '7 nights to under 1 month' },
+                            { value: 'long', label: 'Long Term', helper: '1 calendar month or more' },
                           ].map((opt) => {
                             const active = formData.stayCategory === opt.value;
                             return (
@@ -1630,7 +1630,7 @@ const BookingModal = ({ isOpen, onClose, onSave, booking, rooms, allBookings, ca
                             onChange={handleChange}
                             min="0"
                           />
-                          <p className="text-xs text-slate-500 mt-1">Full calendar months are charged at this exact rate. Partial months use the actual number of days in that month.</p>
+                          <p className="text-xs text-slate-500 mt-1">Each calendar month from arrival costs one monthly rent. Extra nights are prorated using the actual length of that rent month.</p>
                           <p className="text-xs font-semibold text-slate-600 mt-1">Estimated total for selected dates: {formatCurrencyVND(longStayEstimatedTotal)}</p>
                         </div>
 

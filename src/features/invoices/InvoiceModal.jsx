@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Download, Plus, Trash2, X } from 'lucide-react';
 import GuestBookingSelect from '../../components/GuestBookingSelect.jsx';
-import { downloadInvoice, invoiceAddress, invoiceFromBooking, invoiceMoney, invoicePeriod, invoiceSubtotal } from '../../lib/invoice.js';
+import { downloadInvoice, invoiceAddress, invoiceFromBooking, invoiceMoney, invoicePeriod, invoiceQuantity, invoiceSubtotal } from '../../lib/invoice.js';
 
 const inputClass = 'w-full rounded border border-slate-300 bg-white p-2 text-sm text-slate-800';
 export default function InvoiceModal({ isOpen, onClose, bookings }) {
@@ -49,12 +49,13 @@ export default function InvoiceModal({ isOpen, onClose, bookings }) {
                 <div className="grid grid-cols-2 gap-3">
                   <label className="text-sm">From<input type="date" className={inputClass} value={item.startDate} onChange={(e) => updateItem(index, 'startDate', e.target.value)} /></label>
                   <label className="text-sm">To<input type="date" className={inputClass} value={item.endDate} onChange={(e) => updateItem(index, 'endDate', e.target.value)} /></label>
-                  <label className="text-sm">Qty (nights)<input type="number" min="1" step="1" className={inputClass} value={item.quantity} onChange={(e) => updateItem(index, 'quantity', e.target.value)} /></label>
+                  <label className="text-sm">Quantity<input type="number" min="1" step="1" className={inputClass} value={item.quantity} onChange={(e) => updateItem(index, 'quantity', e.target.value)} /></label>
+                  <label className="text-sm">Unit<select className={inputClass} value={item.unit || 'night'} onChange={(e) => updateItem(index, 'unit', e.target.value)}><option value="night">Nights</option><option value="month">Months</option></select></label>
                   <label className="text-sm">Total price ({data.currency})<input type="number" min="0" step={data.currency === 'VND' ? '1' : '0.01'} className={inputClass} value={item.amount} onChange={(e) => updateItem(index, 'amount', e.target.value)} /></label>
                 </div>
                 <div className="flex items-center justify-between text-xs text-slate-500"><span>Unit price: {money(item.quantity > 0 ? item.amount / item.quantity : 0)}</span><button disabled={data.items.length === 1} onClick={() => update('items', data.items.filter((_, i) => i !== index))} aria-label={`Remove line item ${index + 1}`} className="p-1 text-red-600 disabled:opacity-30"><Trash2 size={16} /></button></div>
               </fieldset>)}
-              <button onClick={() => update('items', [...data.items, { description: '', startDate: '', endDate: '', quantity: 1, amount: 0 }])} className="flex items-center gap-2 text-sm font-semibold text-[#30492f]"><Plus size={16} />Add line item</button>
+              <button onClick={() => update('items', [...data.items, { description: '', startDate: '', endDate: '', quantity: 1, unit: 'night', amount: 0 }])} className="flex items-center gap-2 text-sm font-semibold text-[#30492f]"><Plus size={16} />Add line item</button>
               <label className="block text-sm">Payable now ({data.currency})<input type="number" min="0" max={subtotal} step={data.currency === 'VND' ? '1' : '0.01'} placeholder="Enter agreed deposit" className={inputClass} value={data.payableNow} onChange={(e) => update('payableNow', e.target.value)} /></label>
               <label className="block text-sm">Cancellation Policy<textarea rows={9} className={inputClass} value={data.policy} onChange={(e) => update('policy', e.target.value)} /></label>
             </div>
@@ -63,7 +64,7 @@ export default function InvoiceModal({ isOpen, onClose, bookings }) {
                 <header className="bg-[#30492f] px-10 py-8 text-[#fffbe3]"><h1 className="text-xl font-bold">INVOICE</h1><p className="text-sm">Kolab Living</p><p className="mt-1 whitespace-pre-line text-[10px]">{invoiceAddress}</p></header>
                 <div className="px-8 py-7">
                   <div className="grid grid-cols-[1fr_1.2fr_0.8fr] gap-4 break-words"><div><b>Invoice for</b><p className="mt-1">{data.guestName}</p></div><div><b>Payable to</b><p className="mt-1">Kolab Living Company Limited</p><p className="whitespace-pre-line">{invoiceAddress}</p></div><div><b>Invoice #</b><p className="mt-1">{data.invoiceNumber}</p></div></div>
-                  <table className="mt-9 w-full border-t border-[#c7c7b9] text-left"><thead><tr>{['Description', 'Qty', 'Unit price', 'Total price'].map((label, i) => <th key={label} className={`py-4 ${i ? 'text-right pl-2' : ''}`}>{label}</th>)}</tr></thead><tbody>{data.items.map((item, i) => <tr key={i}><td className="pb-3 pr-2"><p className="break-words">{item.description}</p><p className="text-[9px]">{invoicePeriod(item)}</p></td><td className="pb-3 text-right">{item.quantity}</td><td className="pb-3 pl-2 text-right whitespace-nowrap">{money(item.quantity > 0 ? item.amount / item.quantity : 0)}</td><td className="pb-3 pl-2 text-right whitespace-nowrap">{money(item.amount)}</td></tr>)}</tbody></table>
+                  <table className="mt-9 w-full border-t border-[#c7c7b9] text-left"><thead><tr>{['Description', 'Qty', 'Unit price', 'Total price'].map((label, i) => <th key={label} className={`py-4 ${i ? 'text-right pl-2' : ''}`}>{label}</th>)}</tr></thead><tbody>{data.items.map((item, i) => <tr key={i}><td className="pb-3 pr-2"><p className="break-words">{item.description}</p><p className="text-[9px]">{invoicePeriod(item)}</p></td><td className="pb-3 text-right">{invoiceQuantity(item)}</td><td className="pb-3 pl-2 text-right whitespace-nowrap">{money(item.quantity > 0 ? item.amount / item.quantity : 0)}</td><td className="pb-3 pl-2 text-right whitespace-nowrap">{money(item.amount)}</td></tr>)}</tbody></table>
                   <dl className="ml-auto mt-9 w-fit min-w-[55%] border-t border-[#c7c7b9] pt-1 text-right font-bold">{[['Subtotal', money(subtotal)], ['Payable now:', data.payableNow === '' ? '—' : money(data.payableNow)], ['Payment on arrival:', data.payableNow === '' ? '—' : money(subtotal - Number(data.payableNow))]].map(([label, value]) => <div key={label} className="flex justify-between gap-5 py-0.5"><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
                   <div className="mt-3 min-h-48 border-t border-[#c7c7b9] pt-2"><b>Cancellation Policy:</b><p className="mt-4 whitespace-pre-line text-[10px] leading-relaxed">{data.policy}</p></div>
                 </div>
