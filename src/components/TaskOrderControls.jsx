@@ -39,10 +39,10 @@ export default function TaskOrderControls({ task, tasks, group, onMove, onPrevie
     if (direction < 0 && index > 0) onMove(tasks[index - 1].id, group);
     if (direction > 0 && index < tasks.length - 1) onMove(tasks[index + 2]?.id || null, group);
   };
-  return <div className="flex items-center gap-1 flex-wrap">
+  return <div className="task-order-controls flex shrink-0 items-center gap-0.5 text-slate-500">
     <button type="button" aria-label={`Drag ${task.roomLabel} to reorder; arrow keys also move priority`}
       style={{ touchAction: 'none', WebkitTouchCallout: 'none' }}
-      className={`min-w-11 min-h-11 rounded-lg border select-none cursor-grab active:cursor-grabbing ${active ? 'bg-lime-100 border-green-700' : 'bg-white border-slate-200'}`}
+      className={`task-order-button rounded-md border border-transparent select-none cursor-grab active:cursor-grabbing ${active ? 'bg-lime-100 border-green-700' : 'bg-transparent hover:bg-white hover:border-slate-200'}`}
       onContextMenu={(event) => event.preventDefault()}
       onDragStart={(event) => event.preventDefault()}
       onKeyDown={(event) => { if (['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); moveOne(event.key === 'ArrowUp' ? -1 : 1); } }}
@@ -70,7 +70,7 @@ export default function TaskOrderControls({ task, tasks, group, onMove, onPrevie
       }}
       onPointerCancel={cancel} onLostPointerCapture={() => { if (drag.current) cancel(); }}
     >⋮⋮</button>
-    <button type="button" aria-label={`Move ${task.roomLabel} up`} disabled={index <= 0} onClick={() => moveOne(-1)} className="min-w-11 min-h-11 border rounded-lg bg-white disabled:opacity-30">↑</button>
-    <button type="button" aria-label={`Move ${task.roomLabel} down`} disabled={index === tasks.length - 1} onClick={() => moveOne(1)} className="min-w-11 min-h-11 border rounded-lg bg-white disabled:opacity-30">↓</button>
+    <button type="button" aria-label={`Move ${task.roomLabel} up`} disabled={index <= 0} onClick={() => moveOne(-1)} className="task-order-button rounded-md border border-transparent hover:border-slate-200 hover:bg-white disabled:opacity-25 disabled:cursor-default">↑</button>
+    <button type="button" aria-label={`Move ${task.roomLabel} down`} disabled={index === tasks.length - 1} onClick={() => moveOne(1)} className="task-order-button rounded-md border border-transparent hover:border-slate-200 hover:bg-white disabled:opacity-25 disabled:cursor-default">↓</button>
   </div>;
 }

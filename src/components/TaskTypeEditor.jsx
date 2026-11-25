@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function TaskTypeEditor({ task, onUpdateTask }) {
+export default function TaskTypeEditor({ task, onUpdateTask, compact = false }) {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState(task.type);
   const [description, setDescription] = useState(task.description || '');
@@ -8,7 +8,7 @@ export default function TaskTypeEditor({ task, onUpdateTask }) {
   const [error, setError] = useState('');
   const labels = { checkout: 'Checkout clean', check_room: 'Room check', weekly: 'Weekly clean', custom: 'Custom' };
   return <>
-    <button type="button" className="min-h-11 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-left" aria-label={`Change cleaning type for ${task.roomLabel}`} onClick={() => { setType(task.type); setDescription(task.description || ''); setError(''); setOpen(true); }}>{labels[task.type] || task.type} ▾</button>
+    <button type="button" className={`min-h-11 rounded-lg border px-2 text-xs font-semibold text-left ${compact ? "border-transparent bg-white/60 text-slate-700 hover:border-slate-300 hover:bg-white" : "border-slate-200 bg-white"}`} aria-label={`Change cleaning type for ${task.roomLabel}`} onClick={() => { setType(task.type); setDescription(task.description || ''); setError(''); setOpen(true); }}>{labels[task.type] || task.type} ▾</button>
     {open && <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`Change cleaning type for ${task.roomLabel}`}>
       <form className="bg-white rounded-2xl p-5 w-full max-w-sm space-y-4 text-sm text-slate-800" onSubmit={async (event) => {
         event.preventDefault(); setSaving(true); setError('');

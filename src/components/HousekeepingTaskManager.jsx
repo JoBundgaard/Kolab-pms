@@ -179,21 +179,21 @@ export default function HousekeepingTaskManager({
                       title="Drag to reorder cleaning priority"
                     >
                       <td className="col-span-2 px-4 py-3">
-                        <div className="font-semibold text-slate-800 flex items-center gap-2">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-[28px] leading-tight font-bold tracking-tight text-slate-900">{task.roomLabel || 'Room'}</div>
+                            <div className="mt-0.5 text-xs text-slate-500">{task.propertyName || 'Property'}</div>
+                            {task.description && <div className="mt-1 text-xs text-slate-600">{task.description}</div>}
+                          </div>
                           <TaskOrderControls task={task} tasks={orderedTasks} group={selectedDate}
                             onMove={(targetId) => reorderByDrag(task.id, targetId)}
                             onPreview={(target) => { setDragTaskId(target ? task.id : null); setDragOverTaskId(target?.targetId || null); }} />
-                          <span>{task.roomLabel || 'Room'}</span>
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {task.propertyName || 'Property'}
-                          {task.description ? ` · ${task.description}` : ''}
                         </div>
                         {roomRecurringTodos.length > 0 && (
                           <div className="mt-2 space-y-1.5">
                             {roomRecurringTodos.map((todo) => (
-                              <div key={todo.id} className="text-xs rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
-                                <div className="font-semibold text-slate-700">Todo: {todo.description}</div>
+                              <div key={todo.id} className="text-xs border-l-2 border-slate-200 pl-2 py-1">
+                                <div className="font-semibold text-slate-700">{todo.description}</div>
                                 <div className="mt-1 flex items-center gap-1.5">
                                   <button
                                     type="button"

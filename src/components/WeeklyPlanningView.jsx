@@ -280,12 +280,15 @@ export default function WeeklyPlanningView({
                         className={[
                           'rounded-lg border p-2 text-xs transition-opacity select-none',
                           style.card,
-                          'cursor-grab active:cursor-grabbing',
                           isInsertionTarget ? 'border-t-4 border-t-[#26402E]' : '',
                           isBeingDragged ? 'opacity-30' : 'opacity-100',
                         ].join(' ')}
                       >
-                        <div className="flex flex-col gap-1">
+                        <div className="flex flex-wrap items-start justify-between gap-1">
+                          <div className="min-w-0">
+                            <div className="text-[28px] leading-tight font-bold tracking-tight text-slate-900 break-words">{task.roomLabel}</div>
+                            <div className="mt-0.5 text-slate-500 text-[11px]">{task.propertyName}</div>
+                          </div>
                           <TaskOrderControls task={task} tasks={dayTasks} group={dayIndex}
                             onMove={(targetId, group) => requestMove({ ...task, fromDayIndex: dayIndex }, Number(group), targetId)}
                             onPreview={(target) => {
@@ -293,37 +296,38 @@ export default function WeeklyPlanningView({
                               setDragOverDay(target ? Number(target.group) : null);
                               setDropTargetId(target?.targetId || null);
                             }} />
-                          <div className="min-w-0 flex-1">
-                            <div className="font-semibold text-slate-800 truncate">{task.roomLabel}</div>
-                            <div className="text-slate-500 truncate text-[10px]">{task.propertyName}</div>
-                          </div>
                         </div>
-                        {canReschedule && (
-                          <select
-                            aria-label={`Move ${task.roomLabel} weekly cleaning to another day`}
-                            value=""
-                            onChange={(e) => requestMove({ ...task, fromDayIndex: dayIndex }, Number(e.target.value))}
-                            onDragStart={(e) => e.stopPropagation()}
-                            className="mt-2 min-h-11 w-full rounded border border-sky-200 bg-white text-xs text-slate-700"
-                          >
-                            <option value="" disabled>Move to…</option>
-                            {DAY_SHORT.map((day, index) => index !== dayIndex && (
-                              <option key={day} value={index}>{day}</option>
-                            ))}
-                          </select>
-                        )}
-                        {onUpdateTask && (
-                          <button
-                            type="button"
-                            onClick={() => onUpdateTask(task.id, { skipped: true })}
-                            className="mt-1 min-h-11 text-xs text-slate-600 underline"
-                            aria-label={`Skip ${task.roomLabel} cleaning on ${dateStr}`}
-                          >Skip this cleaning</button>
-                        )}
-                        <div className="mt-1.5">
-                          <TaskTypeEditor task={task} onUpdateTask={onUpdateTask} />
+                        <div className="mt-2">
+                          <TaskTypeEditor task={task} onUpdateTask={onUpdateTask} compact />
                           {task.description && <p className="mt-1 text-slate-600 whitespace-normal">{task.description}</p>}
                         </div>
+                        {(canReschedule || onUpdateTask) && (
+                          <details className="mt-2 border-t border-slate-200/70 pt-1 text-slate-600">
+                            <summary className="min-h-11 flex items-center cursor-pointer text-[11px] font-medium hover:text-slate-900">More actions ▾<span className="sr-only"> for {task.roomLabel} on {dateStr}</span></summary>
+                            {canReschedule && (
+                              <select
+                                aria-label={`Move ${task.roomLabel} weekly cleaning to another day`}
+                                value=""
+                                onChange={(e) => requestMove({ ...task, fromDayIndex: dayIndex }, Number(e.target.value))}
+                                onDragStart={(e) => e.stopPropagation()}
+                                className="mt-2 min-h-11 w-full rounded border border-sky-200 bg-white text-xs text-slate-700"
+                              >
+                                <option value="" disabled>Move to…</option>
+                                {DAY_SHORT.map((day, index) => index !== dayIndex && (
+                                  <option key={day} value={index}>{day}</option>
+                                ))}
+                              </select>
+                            )}
+                            {onUpdateTask && (
+                              <button
+                                type="button"
+                                onClick={() => onUpdateTask(task.id, { skipped: true })}
+                                className="mt-1 min-h-11 text-xs text-slate-600 underline"
+                                aria-label={`Skip ${task.roomLabel} cleaning on ${dateStr}`}
+                              >Skip this cleaning</button>
+                            )}
+                          </details>
+                        )}
                       </div>
                     );
                   })}
