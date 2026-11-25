@@ -1,3 +1,4 @@
+import { auth } from '../firebase.js';
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, Send, X } from 'lucide-react';
 
@@ -46,7 +47,7 @@ export default function Chatbot() {
     try {
       const response = await fetch(CHATBOT_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await auth.currentUser.getIdToken()}` },
         body: JSON.stringify({
           question,
           // Send last 6 messages as context (3 turns), excluding the welcome message

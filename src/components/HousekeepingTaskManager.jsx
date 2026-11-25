@@ -1,59 +1,9 @@
+import { buildHousekeepingWhatsappMessage } from '../lib/housekeepingWhatsapp.js';
 import React, { useMemo, useState } from 'react';
+import TaskOrderControls from './TaskOrderControls.jsx';
+import TaskTypeEditor from './TaskTypeEditor.jsx';
+import { sortWeeklyTasks, reorderWeeklyTasks, weeklyOrderKey } from '../lib/weeklyPlanningOrder.js';
 
-export function buildHousekeepingWhatsappMessage({ tasks = [], recurringDueByRoomId = {}, selectedDate, cleaningStartTime = '' }) {
-  const safeTasks = Array.isArray(tasks) ? tasks.filter(Boolean) : [];
-  const safeRecurringByRoom = recurringDueByRoomId && typeof recurringDueByRoomId === 'object' ? recurringDueByRoomId : {};
-  const dateLabel = (() => {
-    if (!selectedDate) return 'Unknown date';
-    const d = new Date(selectedDate);
-    if (isNaN(d.getTime())) return selectedDate;
-    const day = `${d.getDate()}`.padStart(2, '0');
-    const month = `${d.getMonth() + 1}`.padStart(2, '0');
-    const year = d.getFullYear();
-    return `${day}/${month}/${year}`;
-  })();
-  const startTimeLabel = cleaningStartTime || 'Not set';
-
-  const relevant = safeTasks.filter((t) => (t?.status || 'dirty') !== 'clean');
-  if (relevant.length === 0) {
-    return `Housekeeping plan (${dateLabel})\nCleaning starts: ${startTimeLabel}\n\nAll clear.`;
-  }
-
-  const typeLabel = (type) => {
-    if (type === 'checkout') return 'Checkout clean';
-    if (type === 'weekly') return 'Weekly clean';
-    if (type === 'recurring') return 'Recurring clean';
-    if (type === 'touchup') return 'Touch-up';
-    return type || 'Task';
-  };
-
-  const grouped = relevant.reduce((acc, task) => {
-    const prop = task.propertyName || 'Property';
-    if (!acc[prop]) acc[prop] = [];
-    acc[prop].push(task);
-    return acc;
-  }, {});
-
-  const propertyNames = Object.keys(grouped).sort();
-  const lines = [`Housekeeping plan (${dateLabel})`, `Cleaning starts: ${startTimeLabel}`, ''];
-
-  propertyNames.forEach((prop) => {
-    lines.push(`${prop}:`);
-    grouped[prop].forEach((task) => {
-      const prio = task.priority ?? '-';
-      const staff = task.assignedTo || 'Unassigned';
-      const desc = task.description ? ` (${task.description})` : '';
-      const roomTodos = (safeRecurringByRoom[task.roomId] || []).filter((todo) => todo && (todo.status || 'dirty') !== 'clean');
-      const todoSuffix = roomTodos.length > 0
-        ? ` | Todo: ${roomTodos.map((todo) => todo.description || 'Recurring cleaning task').join(', ')}`
-        : '';
-      lines.push(`• ${task.roomLabel || 'Room'} – ${typeLabel(task.type)}${desc} – Prio ${prio} – ${staff}${todoSuffix}`);
-    });
-    lines.push('');
-  });
-
-  return lines.join('\n').trim();
-}
 
 const statusLabel = {
   dirty: 'Dirty',
@@ -70,6 +20,7 @@ const statusStyle = {
 export default function HousekeepingTaskManager({
   tasks = [],
   onUpdateTask,
+  overrides = {},
   recurringDueByRoomId = {},
   onCompleteRecurringTodo,
   onSkipRecurringTodo,
@@ -81,22 +32,13 @@ export default function HousekeepingTaskManager({
   checkins = [],
   checkouts = [],
 }) {
-  const safeTasks = Array.isArray(tasks) ? tasks : [];
+  const safeTasks = useMemo(() => Array.isArray(tasks) ? tasks : [], [tasks]);
   const [copyStatus, setCopyStatus] = useState('idle');
   const [showPreview, setShowPreview] = useState(false);
   const [dragTaskId, setDragTaskId] = useState(null);
   const [dragOverTaskId, setDragOverTaskId] = useState(null);
 
-  const orderedTasks = useMemo(() => {
-    return [...safeTasks].sort((a, b) => {
-      const pa = Number.isFinite(Number(a?.priority)) ? Number(a.priority) : Number.MAX_SAFE_INTEGER;
-      const pb = Number.isFinite(Number(b?.priority)) ? Number(b.priority) : Number.MAX_SAFE_INTEGER;
-      if (pa !== pb) return pa - pb;
-      const roomA = (a?.roomLabel || '').toLowerCase();
-      const roomB = (b?.roomLabel || '').toLowerCase();
-      return roomA.localeCompare(roomB);
-    });
-  }, [safeTasks]);
+  const orderedTasks = useMemo(() => sortWeeklyTasks(safeTasks, overrides[weeklyOrderKey(selectedDate)]?.taskOrder), [safeTasks, overrides, selectedDate]);
 
   const message = useMemo(
     () => buildHousekeepingWhatsappMessage({ tasks: orderedTasks, recurringDueByRoomId, selectedDate, cleaningStartTime }),
@@ -116,21 +58,8 @@ export default function HousekeepingTaskManager({
   };
 
   const reorderByDrag = (sourceId, targetId) => {
-    if (!sourceId || !targetId || sourceId === targetId || !onUpdateTask) return;
-    const sourceIndex = orderedTasks.findIndex((t) => t.id === sourceId);
-    const targetIndex = orderedTasks.findIndex((t) => t.id === targetId);
-    if (sourceIndex < 0 || targetIndex < 0) return;
-
-    const next = [...orderedTasks];
-    const [moved] = next.splice(sourceIndex, 1);
-    next.splice(targetIndex, 0, moved);
-
-    next.forEach((task, idx) => {
-      const nextPriority = idx + 1;
-      if (Number(task.priority) !== nextPriority) {
-        onUpdateTask(task.id, { priority: nextPriority }, task);
-      }
-    });
+    if (!sourceId || !onUpdateTask) return;
+    onUpdateTask(weeklyOrderKey(selectedDate), { taskOrder: reorderWeeklyTasks(orderedTasks, sourceId, targetId) });
   };
 
   const copyToClipboard = async () => {
@@ -183,6 +112,7 @@ export default function HousekeepingTaskManager({
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <span className="px-2 py-1 rounded-full border border-slate-200 bg-white">Check-ins: {checkins.length}</span>
           <span className="px-2 py-1 rounded-full border border-slate-200 bg-white">Check-outs: {checkouts.length}</span>
+          <span className="px-2 py-1 rounded-full border border-slate-200 bg-white">Check rooms: {safeTasks.filter((task) => task.type === 'check_room').length}</span>
           <span className="px-2 py-1 rounded-full border border-slate-200 bg-white">Tasks: {safeTasks.length}</span>
         </div>
         <div className="flex items-center gap-2 text-sm ml-auto">
@@ -219,9 +149,12 @@ export default function HousekeepingTaskManager({
         <div className="p-6 rounded-xl border border-green-200 bg-green-50 text-green-700 text-sm">All clear for this date.</div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-600 text-[11px] uppercase tracking-wide">
+          <div className="p-3 text-xs text-slate-600">Drag the handle or tap arrows to set priority. Order is shared with the weekly view.
+            <button type="button" className="ml-2 min-h-11 underline" onClick={() => onUpdateTask(weeklyOrderKey(selectedDate), { taskOrder: [] })}>Reset property order</button>
+          </div>
+          <div className="overflow-x-auto" data-order-scope data-order-scroll>
+            <table className="w-full text-left text-sm block md:table">
+              <thead className="hidden md:table-header-group bg-slate-50 text-slate-600 text-[11px] uppercase tracking-wide">
                 <tr>
                   <th className="px-4 py-3">Room</th>
                   <th className="px-4 py-3">Type</th>
@@ -231,8 +164,8 @@ export default function HousekeepingTaskManager({
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {orderedTasks.map((task) => {
+              <tbody data-order-group={selectedDate} className="block md:table-row-group divide-y divide-slate-100">
+                {orderedTasks.map((task, index) => {
                   const statusKey = task.status || 'dirty';
                   const statusClass = statusStyle[statusKey] || statusStyle.dirty;
                   const isDragging = dragTaskId === task.id;
@@ -241,44 +174,26 @@ export default function HousekeepingTaskManager({
                   return (
                     <tr
                       key={task.id}
-                      draggable
-                      onDragStart={(e) => {
-                        setDragTaskId(task.id);
-                        e.dataTransfer.effectAllowed = 'move';
-                        e.dataTransfer.setData('text/plain', task.id);
-                      }}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        if (dragTaskId && dragTaskId !== task.id) setDragOverTaskId(task.id);
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const sourceId = e.dataTransfer.getData('text/plain') || dragTaskId;
-                        reorderByDrag(sourceId, task.id);
-                        setDragTaskId(null);
-                        setDragOverTaskId(null);
-                      }}
-                      onDragEnd={() => {
-                        setDragTaskId(null);
-                        setDragOverTaskId(null);
-                      }}
-                      className={`hover:bg-slate-50 ${isDragging ? 'opacity-50' : ''} ${isDropTarget ? 'ring-2 ring-[#26402E]/30 ring-inset bg-[#E2F05D]/15' : ''}`}
+                      data-order-task={task.id}
+                      className={`grid grid-cols-2 md:table-row hover:bg-slate-50 ${isDragging ? 'opacity-50' : ''} ${isDropTarget ? 'ring-2 ring-[#26402E]/30 ring-inset bg-[#E2F05D]/15' : ''}`}
                       title="Drag to reorder cleaning priority"
                     >
-                      <td className="px-4 py-3">
-                        <div className="font-semibold text-slate-800 flex items-center gap-2">
-                          <span className="text-slate-400 cursor-grab select-none" aria-hidden>⋮⋮</span>
-                          <span>{task.roomLabel || 'Room'}</span>
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {task.propertyName || 'Property'}
-                          {task.description ? ` · ${task.description}` : ''}
+                      <td className="col-span-2 px-4 py-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-[28px] leading-tight font-bold tracking-tight text-slate-900">{task.roomLabel || 'Room'}</div>
+                            <div className="mt-0.5 text-xs text-slate-500">{task.propertyName || 'Property'}</div>
+                            {task.description && <div className="mt-1 text-xs text-slate-600">{task.description}</div>}
+                          </div>
+                          <TaskOrderControls task={task} tasks={orderedTasks} group={selectedDate}
+                            onMove={(targetId) => reorderByDrag(task.id, targetId)}
+                            onPreview={(target) => { setDragTaskId(target ? task.id : null); setDragOverTaskId(target?.targetId || null); }} />
                         </div>
                         {roomRecurringTodos.length > 0 && (
                           <div className="mt-2 space-y-1.5">
                             {roomRecurringTodos.map((todo) => (
-                              <div key={todo.id} className="text-xs rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
-                                <div className="font-semibold text-slate-700">Todo: {todo.description}</div>
+                              <div key={todo.id} className="text-xs border-l-2 border-slate-200 pl-2 py-1">
+                                <div className="font-semibold text-slate-700">{todo.description}</div>
                                 <div className="mt-1 flex items-center gap-1.5">
                                   <button
                                     type="button"
@@ -300,13 +215,13 @@ export default function HousekeepingTaskManager({
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-xs font-semibold text-slate-700 uppercase">{task.type}</td>
+                      <td className="px-4 py-3"><TaskTypeEditor task={task} onUpdateTask={onUpdateTask} /></td>
                       <td className="px-4 py-3">
                         <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${statusClass}`}>
                           {statusLabel[statusKey] || statusKey}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-sm text-slate-700">{task.priority ?? '-'}</td>
+                      <td className="px-4 py-3 text-sm text-slate-700"><span className="md:hidden">Priority </span>{index + 1}</td>
                       <td className="px-4 py-3">
                         <select
                           value={task.assignedTo || 'Unassigned'}
@@ -319,7 +234,7 @@ export default function HousekeepingTaskManager({
                           ))}
                         </select>
                       </td>
-                      <td className="px-4 py-3 text-right space-x-2">
+                      <td className="col-span-2 px-4 py-3 text-right space-x-2">
                         <button
                           onClick={() => handleStatus(task.id, 'in_progress')}
                           className="px-3 py-1.5 rounded-full border border-amber-200 text-amber-800 text-xs font-semibold bg-white hover:bg-amber-50"
